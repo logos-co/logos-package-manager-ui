@@ -48,41 +48,17 @@ signals:
     void packageInstalled(const QString& packageName);
 
 private:
-    struct PackageInfo {
-        QString name;
-        QString moduleName;
-        QString installedVersion;
-        QString latestVersion;
-        QString description;
-        QStringList files;
-        QString category;
-        QString type;
-        QStringList dependencies;
-        bool isLoaded;
-        bool isSelected;
-    };
-
-    void scanPackagesFolder();
-    void clearPackageList();
-    void addFallbackPackages();
-    void updateFilteredPackages();
-    void selectDependencies(const QString& packageName, QSet<QString>& processedPackages);
-    void updateHasSelectedPackages();
     void subscribeToInstallationEvents();
     void onPackageInstallationFinished(const QString& packageName, bool success, const QString& error);
-    void installNextPackage();
+    QString determineInstallDirectory(const QString& packageType);
 
-    QMap<QString, PackageInfo> m_allPackages;
-    QVariantList m_filteredPackages;
+    QVariantList m_packages;
     QStringList m_categories;
     int m_selectedCategoryIndex;
     QString m_detailsHtml;
     bool m_hasSelectedPackages;
-    bool m_isProcessingDependencies;
     LogosAPI* m_logosAPI;
     
     bool m_isInstalling;
-    QStringList m_pendingPackages;
-    QStringList m_successfulPackages;
-    QStringList m_failedPackages;
+    QSet<QString> m_selectedPackages;
 };
