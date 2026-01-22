@@ -7,9 +7,10 @@
     logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
     logos-liblogos.url = "github:logos-co/logos-liblogos";
     logos-package-manager.url = "github:logos-co/logos-package-manager";
+    logos-capability-module.url = "github:logos-co/logos-capability-module";
   };
 
-  outputs = { self, nixpkgs, logos-cpp-sdk, logos-liblogos, logos-package-manager }:
+  outputs = { self, nixpkgs, logos-cpp-sdk, logos-liblogos, logos-package-manager, logos-capability-module }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
@@ -17,10 +18,11 @@
         logosSdk = logos-cpp-sdk.packages.${system}.default;
         logosLiblogos = logos-liblogos.packages.${system}.default;
         logosPackageManager = logos-package-manager.packages.${system}.default;
+        logosCapabilityModule = logos-capability-module.packages.${system}.default;
       });
     in
     {
-      packages = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManager }: 
+      packages = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManager, logosCapabilityModule }: 
         let
           # Common configuration
           common = import ./nix/default.nix { 
@@ -32,10 +34,17 @@
           lib = import ./nix/lib.nix { 
             inherit pkgs common src logosPackageManager logosSdk; 
           };
+          
+          # App package
+          app = import ./nix/app.nix { 
+            inherit pkgs common src logosLiblogos logosSdk logosPackageManager logosCapabilityModule;
+            logosPackageManagerUI = lib;
+          };
         in
         {
           # Individual outputs
           logos-package-manager-ui-lib = lib;
+          app = app;
           lib = lib;
 
           # Default package
@@ -43,7 +52,7 @@
         }
       );
 
-      devShells = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManager }: {
+      devShells = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManager, logosCapabilityModule }: {
         default = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.cmake
@@ -53,6 +62,7 @@
           buildInputs = [
             pkgs.qt6.qtbase
             pkgs.qt6.qtremoteobjects
+            pkgs.qt6.qtdeclarative
             pkgs.zstd
             pkgs.krb5
             pkgs.abseil-cpp

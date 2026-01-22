@@ -16,6 +16,6 @@ public:
     ~PackageManagerUIPlugin();
 
     // IComponent implementation
-    QWidget* createWidget(LogosAPI* logosAPI = nullptr) override;
+    Q_INVOKABLE QWidget* createWidget(LogosAPI* logosAPI = nullptr) override;
     void destroyWidget(QWidget* widget) override;
 };

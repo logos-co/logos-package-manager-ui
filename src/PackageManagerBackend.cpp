@@ -21,6 +21,11 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     , m_logosAPI(logosAPI)
     , m_isInstalling(false)
 {
+    // Create our own LogosAPI instance if not provided (matches ChatWidget pattern)
+    if (!m_logosAPI) {
+        m_logosAPI = new LogosAPI("core", this);
+    }
+    
     subscribeToInstallationEvents();
     reload();
 }
