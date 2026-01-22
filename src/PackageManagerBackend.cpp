@@ -18,18 +18,23 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     , m_selectedCategoryIndex(0)
     , m_detailsHtml("Select a package to view its details.")
     , m_hasSelectedPackages(false)
-    , m_isProcessingDependencies(false)
     , m_logosAPI(logosAPI)
     , m_isInstalling(false)
+    , m_totalPackagesToInstall(0)
+    , m_packagesInstalled(0)
 {
-    m_categories << "All";
+    // Create our own LogosAPI instance if not provided (matches ChatWidget pattern)
+    if (!m_logosAPI) {
+        m_logosAPI = new LogosAPI("core", this);
+    }
+    
     subscribeToInstallationEvents();
-    scanPackagesFolder();
+    reload();
 }
 
 QVariantList PackageManagerBackend::packages() const
 {
-    return m_filteredPackages;
+    return m_packages;
 }
 
 QStringList PackageManagerBackend::categories() const
@@ -47,7 +52,7 @@ void PackageManagerBackend::setSelectedCategoryIndex(int index)
     if (m_selectedCategoryIndex != index && index >= 0 && index < m_categories.size()) {
         m_selectedCategoryIndex = index;
         emit selectedCategoryIndexChanged();
-        updateFilteredPackages();
+        reload();  // Reload with new category filter
     }
 }
 
@@ -68,7 +73,48 @@ bool PackageManagerBackend::isInstalling() const
 
 void PackageManagerBackend::reload()
 {
-    scanPackagesFolder();
+    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
+        qDebug() << "LogosAPI not connected, cannot reload packages";
+        return;
+    }
+    
+    LogosModules logos(m_logosAPI);
+    
+    // Get categories first
+    m_categories = logos.package_manager.getCategories();
+    emit categoriesChanged();
+    
+    // Get filtered packages based on current category
+    QString selectedCategory = m_categories.value(m_selectedCategoryIndex, "All");
+    QJsonArray packagesArray = logos.package_manager.getPackages(selectedCategory);
+    
+    // Convert to QVariantList for QML
+    m_packages.clear();
+    for (const QJsonValue& value : packagesArray) {
+        QJsonObject obj = value.toObject();
+        QVariantMap pkg;
+        pkg["name"] = obj.value("name").toString();
+        pkg["moduleName"] = obj.value("moduleName").toString();
+        pkg["installedVersion"] = "";  // Not used in new flow
+        pkg["latestVersion"] = "";  // Not used in new flow
+        pkg["description"] = obj.value("description").toString();
+        pkg["type"] = obj.value("type").toString();
+        pkg["category"] = obj.value("category").toString();
+        pkg["isSelected"] = m_selectedPackages.contains(obj.value("name").toString());
+        pkg["installed"] = obj.value("installed").toBool();
+        
+        // Store dependencies and files
+        QJsonArray depsArray = obj.value("dependencies").toArray();
+        QStringList deps;
+        for (const QJsonValue& dep : depsArray) {
+            deps.append(dep.toString());
+        }
+        pkg["dependencies"] = deps;
+        
+        m_packages.append(pkg);
+    }
+    
+    emit packagesChanged();
 }
 
 void PackageManagerBackend::subscribeToInstallationEvents()
@@ -99,79 +145,51 @@ void PackageManagerBackend::subscribeToInstallationEvents()
 
 void PackageManagerBackend::onPackageInstallationFinished(const QString& packageName, bool success, const QString& error)
 {
+    qDebug() << "Package installation finished:" << packageName << success << error;
+    
+    m_packagesInstalled++;
+    
     if (success) {
-        m_successfulPackages << packageName;
         emit packageInstalled(packageName);
+        m_detailsHtml = QString("<h3>Installation Progress</h3><p>Successfully installed: <b>%1</b></p><p>Progress: %2/%3 packages</p>")
+            .arg(packageName)
+            .arg(m_packagesInstalled)
+            .arg(m_totalPackagesToInstall);
     } else {
         QString failureReason = error.isEmpty() ? "installation failed" : error;
-        m_failedPackages << packageName + " (" + failureReason + ")";
+        m_detailsHtml = QString("<h3>Installation Failed</h3><p>Failed to install: <b>%1</b></p><p>Error: %2</p><p>Progress: %3/%4 packages</p>")
+            .arg(packageName)
+            .arg(failureReason)
+            .arg(m_packagesInstalled)
+            .arg(m_totalPackagesToInstall);
     }
     
-    installNextPackage();
-}
-
-void PackageManagerBackend::installNextPackage()
-{
-    if (m_pendingPackages.isEmpty()) {
-        m_isInstalling = false;
-        emit isInstallingChanged();
-        
-        QString resultText = "<h3>Installation Results</h3>";
-
-        if (!m_successfulPackages.isEmpty()) {
-            resultText += "<p><b>Successfully installed:</b></p><ul>";
-            for (const QString& plugin : m_successfulPackages) {
-                resultText += "<li>" + plugin + "</li>";
-            }
-            resultText += "</ul>";
-        }
-
-        if (!m_failedPackages.isEmpty()) {
-            resultText += "<p><b>Failed to install:</b></p><ul>";
-            for (const QString& plugin : m_failedPackages) {
-                resultText += "<li>" + plugin + "</li>";
-            }
-            resultText += "</ul>";
-        }
-
-        if (!m_successfulPackages.isEmpty()) {
-            emit packagesInstalled();
-        }
-
-        m_detailsHtml = resultText;
-        emit detailsHtmlChanged();
-
-        scanPackagesFolder();
-        return;
-    }
-    
-    QString packageName = m_pendingPackages.takeFirst();
-    
-    if (!m_allPackages.contains(packageName)) {
-        m_failedPackages << packageName + " (package not found)";
-        installNextPackage();
-        return;
-    }
-    
-    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
-        m_failedPackages << packageName + " (package_manager not connected)";
-        installNextPackage();
-        return;
-    }
-    
-    m_detailsHtml = QString("<h3>Installing...</h3><p>Installing package: <b>%1</b></p><p>%2 package(s) remaining in queue.</p>")
-        .arg(packageName)
-        .arg(m_pendingPackages.size());
     emit detailsHtmlChanged();
     
-    LogosModules logos(m_logosAPI);
-    
-    // Determine package type to route to correct directory
-    QString packageType = m_allPackages[packageName].type;
-    bool isUiPlugin = (packageType.compare("ui", Qt::CaseInsensitive) == 0);
-    
+    // Check if all packages have been processed
+    if (m_packagesInstalled >= m_totalPackagesToInstall) {
+        m_isInstalling = false;
+        emit isInstallingChanged();
+        emit packagesInstalled();
+        
+        // Update final status message
+        m_detailsHtml = QString("<h3>Installation Complete</h3><p>Finished installing %1 package(s).</p>")
+            .arg(m_totalPackagesToInstall);
+        emit detailsHtmlChanged();
+        
+        // Refresh package list to show newly installed packages
+        QTimer::singleShot(500, this, [this]() {
+            reload();
+        });
+    }
+}
+
+QString PackageManagerBackend::determineInstallDirectory(const QString& packageType)
+{
     QDir appDir(QCoreApplication::applicationDirPath());
     appDir.cdUp();
+    
+    bool isUiPlugin = (packageType.compare("ui", Qt::CaseInsensitive) == 0);
     
     QString installDir;
     if (isUiPlugin) {
@@ -194,7 +212,7 @@ void PackageManagerBackend::installNextPackage()
 #endif
     }
     
-    logos.package_manager.installPackageAsync(packageName, installDir);
+    return installDir;
 }
 
 void PackageManagerBackend::install()
@@ -205,30 +223,37 @@ void PackageManagerBackend::install()
         return;
     }
     
-    m_pendingPackages.clear();
-    m_successfulPackages.clear();
-    m_failedPackages.clear();
-    
-    for (auto it = m_allPackages.begin(); it != m_allPackages.end(); ++it) {
-        if (it.value().isSelected) {
-            m_pendingPackages << it.key();
-        }
-    }
-
-    if (m_pendingPackages.isEmpty()) {
+    if (m_selectedPackages.isEmpty()) {
         m_detailsHtml = "No packages selected. Select at least one package to install.";
+        emit detailsHtmlChanged();
+        return;
+    }
+    
+    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
+        m_detailsHtml = "<p><b>Error:</b> package_manager not connected</p>";
         emit detailsHtmlChanged();
         return;
     }
 
     m_isInstalling = true;
+    m_totalPackagesToInstall = m_selectedPackages.size();
+    m_packagesInstalled = 0;
     emit isInstallingChanged();
     
     m_detailsHtml = QString("<h3>Starting Installation...</h3><p>%1 package(s) to install.</p>")
-        .arg(m_pendingPackages.size());
+        .arg(m_selectedPackages.size());
     emit detailsHtmlChanged();
     
-    installNextPackage();
+    LogosModules logos(m_logosAPI);
+    
+    // Determine install directory (first package's type determines directory)
+    QString installDir = determineInstallDirectory("");
+    
+    // Call installPackageAsync for each package individually
+    // (workaround for ModuleProxy QStringList conversion bug)
+    for (const QString& packageName : m_selectedPackages) {
+        logos.package_manager.installPackageAsync(packageName, installDir);
+    }
 }
 
 void PackageManagerBackend::testPluginCall()
@@ -246,21 +271,17 @@ void PackageManagerBackend::testPluginCall()
 
 void PackageManagerBackend::selectPackage(int index)
 {
-    if (index < 0 || index >= m_filteredPackages.size()) {
+    if (index < 0 || index >= m_packages.size()) {
         return;
     }
 
-    QVariantMap pkg = m_filteredPackages[index].toMap();
+    QVariantMap pkg = m_packages[index].toMap();
     QString packageName = pkg["name"].toString();
-    QString installedVer = pkg["installedVersion"].toString();
-    QString latestVer = pkg["latestVersion"].toString();
     QString description = pkg["description"].toString();
     QString type = pkg["type"].toString();
     QString moduleName = pkg["moduleName"].toString();
     QString category = pkg["category"].toString();
-
-    if (m_allPackages.contains(packageName)) {
-        const PackageInfo& info = m_allPackages[packageName];
+    bool installed = pkg["installed"].toBool();
 
         QString detailText = QString("<h2>%1</h2>").arg(packageName);
         
@@ -278,25 +299,15 @@ void PackageManagerBackend::selectPackage(int index)
             detailText += QString("<p><b>Category:</b> %1</p>").arg(category);
         }
         
-        if (!installedVer.isEmpty()) {
-            detailText += QString("<p><b>Installed Version:</b> %1</p>").arg(installedVer);
-        }
-        if (!latestVer.isEmpty()) {
-            detailText += QString("<p><b>Latest Version:</b> %1</p>").arg(latestVer);
-        }
+    if (installed) {
+        detailText += QString("<p><b>Status:</b> Installed</p>");
+    }
 
-        if (!info.files.isEmpty()) {
-            detailText += "<p><b>Files:</b></p><ul>";
-            for (const QString& file : info.files) {
-                detailText += QString("<li>%1</li>").arg(file);
-            }
-            detailText += "</ul>";
-        }
-
-        if (!info.dependencies.isEmpty()) {
+    QVariantList dependencies = pkg["dependencies"].toList();
+    if (!dependencies.isEmpty()) {
             detailText += "<p><b>Dependencies:</b></p><ul>";
-            for (const QString& dependency : info.dependencies) {
-                detailText += QString("<li>%1</li>").arg(dependency);
+        for (const QVariant& dependency : dependencies) {
+            detailText += QString("<li>%1</li>").arg(dependency.toString());
             }
             detailText += "</ul>";
         } else {
@@ -304,263 +315,32 @@ void PackageManagerBackend::selectPackage(int index)
         }
 
         m_detailsHtml = detailText;
-    } else {
-        QString detailText = QString("<h2>%1</h2>").arg(packageName);
-        detailText += QString("<p><b>Description:</b> %1</p>").arg(description);
-        detailText += QString("<p><b>Installed Version:</b> %1</p>").arg(installedVer);
-        detailText += QString("<p><b>Latest Version:</b> %1</p>").arg(latestVer);
-
-        if (packageName == "0ad") {
-            detailText += QString("<p>0 A.D. (pronounced \"zero eye-dee\") is a free, open-source, cross-platform "
-                                "real-time strategy (RTS) game of ancient warfare.</p>");
-        }
-
-        m_detailsHtml = detailText;
-    }
-
     emit detailsHtmlChanged();
 }
 
 void PackageManagerBackend::togglePackage(int index, bool checked)
 {
-    if (index < 0 || index >= m_filteredPackages.size() || m_isProcessingDependencies) {
+    if (index < 0 || index >= m_packages.size()) {
         return;
     }
 
-    QVariantMap pkg = m_filteredPackages[index].toMap();
+    QVariantMap pkg = m_packages[index].toMap();
     QString packageName = pkg["name"].toString();
 
-    if (m_allPackages.contains(packageName)) {
-        m_allPackages[packageName].isSelected = checked;
-
         if (checked) {
-            m_isProcessingDependencies = true;
-            QSet<QString> processedPackages;
-            selectDependencies(packageName, processedPackages);
-            m_isProcessingDependencies = false;
-        }
-
-        updateFilteredPackages();
-        updateHasSelectedPackages();
-    }
-}
-
-void PackageManagerBackend::scanPackagesFolder()
-{
-    clearPackageList();
-
-    QJsonArray packagesArray;
-    if (m_logosAPI && m_logosAPI->getClient("package_manager")->isConnected()) {
-        LogosModules logos(m_logosAPI);
-        QDir appDir(QCoreApplication::applicationDirPath());
-        appDir.cdUp();
-        QString modulesDir = QDir::cleanPath(appDir.absolutePath() + "/modules");
-        logos.package_manager.setPluginsDirectory(modulesDir);
-        packagesArray = logos.package_manager.getPackages();
-        qDebug() << "LogosAPI: Retrieved" << packagesArray.size() << "packages from package_manager";
+        m_selectedPackages.insert(packageName);
     } else {
-        qDebug() << "LogosAPI not connected, cannot get packages from package_manager";
-        addFallbackPackages();
-        updateFilteredPackages();
-        return;
+        m_selectedPackages.remove(packageName);
     }
 
-    if (packagesArray.isEmpty()) {
-        addFallbackPackages();
-        updateFilteredPackages();
-        return;
-    }
-
-    QSet<QString> categorySet;
-
-    for (const QJsonValue& value : packagesArray) {
-        QJsonObject obj = value.toObject();
-        QString name = obj.value("name").toString();
-        QString description = obj.value("description").toString();
-        QString type = obj.value("type").toString();
-        QString moduleName = obj.value("moduleName").toString();
-        QString category = obj.value("category").toString();
-        
-        QStringList files;
-        QJsonArray filesArray = obj.value("files").toArray();
-        for (const QJsonValue& fileVal : filesArray) {
-            files.append(fileVal.toString());
-        }
-
-        QStringList dependencies;
-        QJsonArray dependenciesArray = obj.value("dependencies").toArray();
-        for (const QJsonValue& depVal : dependenciesArray) {
-            dependencies.append(depVal.toString());
-        }
-
-        bool isInstalled = obj.value("installed").toBool(false);
-
-        QString installedVersion = "";
-        QString latestVersion = "";
-        
-        if (category.isEmpty()) {
-            category = "Module";
-        }
-        categorySet.insert(category);
-
-        if (type.isEmpty()) {
-            type = "Plugin";
-        }
-
-        PackageInfo info;
-        info.name = name;
-        info.moduleName = moduleName.isEmpty() ? name : moduleName;
-        info.installedVersion = installedVersion;
-        info.latestVersion = latestVersion;
-        info.description = description;
-        info.files = files;
-        info.isLoaded = isInstalled;
-        info.isSelected = false;
-        info.category = category;
-        info.type = type;
-        info.dependencies = dependencies;
-        m_allPackages[name] = info;
-    }
-
-    QStringList sortedCategories;
-    for (const QString& category : categorySet) {
-        if (!category.isEmpty()) {
-            QString capitalizedCategory = category;
-            capitalizedCategory[0] = capitalizedCategory[0].toUpper();
-            sortedCategories.append(capitalizedCategory);
-        }
-    }
-    std::sort(sortedCategories.begin(), sortedCategories.end());
-    
-    m_categories.clear();
-    m_categories << "All";
-    m_categories.append(sortedCategories);
-    emit categoriesChanged();
-
-    if (m_allPackages.isEmpty()) {
-        addFallbackPackages();
-    }
-
-    updateFilteredPackages();
-    m_isProcessingDependencies = false;
-}
-
-void PackageManagerBackend::clearPackageList()
-{
-    m_allPackages.clear();
-    m_filteredPackages.clear();
-    m_categories.clear();
-    m_categories << "All";
-    m_selectedCategoryIndex = 0;
-    emit categoriesChanged();
-    emit selectedCategoryIndexChanged();
-}
-
-void PackageManagerBackend::addFallbackPackages()
-{
-    auto addPkg = [this](const QString& name, const QString& installedVer, 
-                         const QString& latestVer, const QString& type, 
-                         const QString& desc, bool selected = false) {
-        PackageInfo info;
-        info.name = name;
-        info.moduleName = name;
-        info.installedVersion = installedVer;
-        info.latestVersion = latestVer;
-        info.type = type;
-        info.description = desc;
-        info.isLoaded = selected;
-        info.isSelected = selected;
-        info.category = type;
-        info.dependencies = QStringList();
-        m_allPackages[name] = info;
-    };
-
-    addPkg("0ad", "0.0.23.1-4ubuntu3", "0.0.23.1-4ubuntu3", "Game", "Real-time strategy game of ancient warfare", true);
-    addPkg("0ad-data", "0.0.23.1-1", "0.0.23.1-1", "Data", "Real-time strategy game of ancient warfare");
-    addPkg("0ad-data-common", "0.0.23.1-1", "0.0.23.1-1", "Data", "Real-time strategy game of ancient warfare");
-    addPkg("0install", "2.15.1-1", "2.15.1-1", "System", "cross-distribution packaging system");
-    addPkg("0install-core", "2.15.1-1", "2.15.1-1", "System", "cross-distribution packaging system");
-    addPkg("0xffff", "0.8-1", "0.8-1", "Utility", "Open Free Fiasco Firmware");
-    addPkg("2048-qt", "0.1.6-2build1", "0.1.6-2build1", "Game", "mathematics based puzzle game");
-
-    QSet<QString> categorySet;
-    for (auto it = m_allPackages.begin(); it != m_allPackages.end(); ++it) {
-        if (!it.value().category.isEmpty()) {
-            categorySet.insert(it.value().category);
-        }
-    }
-    
-    QStringList sortedCategories;
-    for (const QString& cat : categorySet) {
-        sortedCategories.append(cat);
-    }
-    std::sort(sortedCategories.begin(), sortedCategories.end());
-    
-    m_categories.clear();
-    m_categories << "All";
-    m_categories.append(sortedCategories);
-    emit categoriesChanged();
-}
-
-void PackageManagerBackend::updateFilteredPackages()
-{
-    m_filteredPackages.clear();
-
-    QString selectedCategory = m_categories.value(m_selectedCategoryIndex, "All");
-    bool showAll = (selectedCategory.compare("All", Qt::CaseInsensitive) == 0);
-
-    for (auto it = m_allPackages.begin(); it != m_allPackages.end(); ++it) {
-        const PackageInfo& info = it.value();
-        
-        if (showAll || info.category.compare(selectedCategory, Qt::CaseInsensitive) == 0) {
-            QVariantMap pkg;
-            pkg["name"] = info.name;
-            pkg["moduleName"] = info.moduleName;
-            pkg["installedVersion"] = info.installedVersion;
-            pkg["latestVersion"] = info.latestVersion;
-            pkg["type"] = info.type;
-            pkg["description"] = info.description;
-            pkg["category"] = info.category;
-            pkg["isSelected"] = info.isSelected;
-            m_filteredPackages.append(pkg);
-        }
-    }
-
+    // Update the package's selected state
+    pkg["isSelected"] = checked;
+    m_packages[index] = pkg;
     emit packagesChanged();
-}
-
-void PackageManagerBackend::selectDependencies(const QString& packageName, QSet<QString>& processedPackages)
-{
-    if (processedPackages.contains(packageName)) {
-        return;
-    }
-
-    processedPackages.insert(packageName);
-
-    if (!m_allPackages.contains(packageName)) {
-        return;
-    }
-
-    PackageInfo& info = m_allPackages[packageName];
-    info.isSelected = true;
-
-    for (const QString& dependency : info.dependencies) {
-        selectDependencies(dependency, processedPackages);
-    }
-}
-
-void PackageManagerBackend::updateHasSelectedPackages()
-{
-    bool anySelected = false;
-    for (auto it = m_allPackages.begin(); it != m_allPackages.end(); ++it) {
-        if (it.value().isSelected) {
-            anySelected = true;
-            break;
-        }
-    }
-
-    if (m_hasSelectedPackages != anySelected) {
-        m_hasSelectedPackages = anySelected;
+    
+    bool hasSelected = !m_selectedPackages.isEmpty();
+    if (m_hasSelectedPackages != hasSelected) {
+        m_hasSelectedPackages = hasSelected;
         emit hasSelectedPackagesChanged();
     }
 }
