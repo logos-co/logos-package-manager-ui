@@ -61,4 +61,6 @@ private:
     
     bool m_isInstalling;
     QSet<QString> m_selectedPackages;
+    int m_totalPackagesToInstall;
+    int m_packagesInstalled;
 };

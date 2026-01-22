@@ -20,6 +20,8 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     , m_hasSelectedPackages(false)
     , m_logosAPI(logosAPI)
     , m_isInstalling(false)
+    , m_totalPackagesToInstall(0)
+    , m_packagesInstalled(0)
 {
     // Create our own LogosAPI instance if not provided (matches ChatWidget pattern)
     if (!m_logosAPI) {
@@ -145,27 +147,41 @@ void PackageManagerBackend::onPackageInstallationFinished(const QString& package
 {
     qDebug() << "Package installation finished:" << packageName << success << error;
     
+    m_packagesInstalled++;
+    
     if (success) {
         emit packageInstalled(packageName);
-        m_detailsHtml = QString("<h3>Installation Complete</h3><p>Successfully installed: <b>%1</b></p>")
-            .arg(packageName);
+        m_detailsHtml = QString("<h3>Installation Progress</h3><p>Successfully installed: <b>%1</b></p><p>Progress: %2/%3 packages</p>")
+            .arg(packageName)
+            .arg(m_packagesInstalled)
+            .arg(m_totalPackagesToInstall);
     } else {
         QString failureReason = error.isEmpty() ? "installation failed" : error;
-        m_detailsHtml = QString("<h3>Installation Failed</h3><p>Failed to install: <b>%1</b></p><p>Error: %2</p>")
+        m_detailsHtml = QString("<h3>Installation Failed</h3><p>Failed to install: <b>%1</b></p><p>Error: %2</p><p>Progress: %3/%4 packages</p>")
             .arg(packageName)
-            .arg(failureReason);
+            .arg(failureReason)
+            .arg(m_packagesInstalled)
+            .arg(m_totalPackagesToInstall);
     }
     
     emit detailsHtmlChanged();
     
-    // Check if this was the last package - the event is emitted for each package
-    // When all done, m_isInstalling will be set to false in the final event
-    QTimer::singleShot(500, this, [this]() {
-        if (!m_isInstalling) {
-            emit packagesInstalled();
-            reload();  // Refresh package list
-        }
-    });
+    // Check if all packages have been processed
+    if (m_packagesInstalled >= m_totalPackagesToInstall) {
+        m_isInstalling = false;
+        emit isInstallingChanged();
+        emit packagesInstalled();
+        
+        // Update final status message
+        m_detailsHtml = QString("<h3>Installation Complete</h3><p>Finished installing %1 package(s).</p>")
+            .arg(m_totalPackagesToInstall);
+        emit detailsHtmlChanged();
+        
+        // Refresh package list to show newly installed packages
+        QTimer::singleShot(500, this, [this]() {
+            reload();
+        });
+    }
 }
 
 QString PackageManagerBackend::determineInstallDirectory(const QString& packageType)
@@ -220,6 +236,8 @@ void PackageManagerBackend::install()
     }
 
     m_isInstalling = true;
+    m_totalPackagesToInstall = m_selectedPackages.size();
+    m_packagesInstalled = 0;
     emit isInstallingChanged();
     
     m_detailsHtml = QString("<h3>Starting Installation...</h3><p>%1 package(s) to install.</p>")
@@ -231,10 +249,11 @@ void PackageManagerBackend::install()
     // Determine install directory (first package's type determines directory)
     QString installDir = determineInstallDirectory("");
     
-    // Convert QSet to QStringList
-    QStringList packageList = m_selectedPackages.values();
-    
-    logos.package_manager.installPackagesAsync(packageList, installDir);
+    // Call installPackageAsync for each package individually
+    // (workaround for ModuleProxy QStringList conversion bug)
+    for (const QString& packageName : m_selectedPackages) {
+        logos.package_manager.installPackageAsync(packageName, installDir);
+    }
 }
 
 void PackageManagerBackend::testPluginCall()
