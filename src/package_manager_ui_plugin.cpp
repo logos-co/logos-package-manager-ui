@@ -1,9 +1,11 @@
 #include "package_manager_ui_plugin.h"
 #include "PackageManagerBackend.h"
+#include "PackageTypes.h"
 
 #include <QQuickWidget>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QQmlEngine>
 
 PackageManagerUIPlugin::PackageManagerUIPlugin(QObject* parent)
     : QObject(parent)
@@ -21,6 +23,15 @@ QWidget* PackageManagerUIPlugin::createWidget(LogosAPI* logosAPI)
     QQuickWidget* quickWidget = new QQuickWidget();
     quickWidget->setMinimumSize(800, 600);
     quickWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
+
+    // Register PackageTypes before creating QML engine context
+    qmlRegisterUncreatableMetaObject(
+        PackageTypes::staticMetaObject,
+        "PackageManager",
+        1, 0,
+        "PackageTypes",
+        "PackageTypes is a namespace for enums only"
+    );
 
     PackageManagerBackend* backend = new PackageManagerBackend(logosAPI, quickWidget);
     quickWidget->rootContext()->setContextProperty("backend", backend);
