@@ -4,6 +4,7 @@
 #include <QJsonArray>
 #include <QCoreApplication>
 #include <QDir>
+#include <QPointer>
 #include <QTimer>
 #include <QStandardPaths>
 #include "logos_sdk.h"
@@ -128,7 +129,12 @@ void PackageManagerBackend::subscribeToInstallationEvents()
     }
     
     LogosModules logos(m_logosAPI);
-    logos.package_manager.on("packageInstallationFinished", [this](const QVariantList& data) {
+    // The event subscription outlives this QObject; guard against use-after-free.
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_manager.on("packageInstallationFinished", [self](const QVariantList& data) {
+        if (!self) {
+            return;
+        }
         if (data.size() < 3) {
             return;
         }
@@ -136,8 +142,12 @@ void PackageManagerBackend::subscribeToInstallationEvents()
         bool success = data[1].toBool();
         QString error = data[2].toString();
         
-        QTimer::singleShot(0, this, [this, packageName, success, error]() {
-            onPackageInstallationFinished(packageName, success, error);
+        // Run in the Qt event loop, but never use a deleted QObject as the timer context.
+        QTimer::singleShot(0, QCoreApplication::instance(), [self, packageName, success, error]() {
+            if (!self) {
+                return;
+            }
+            self->onPackageInstallationFinished(packageName, success, error);
         });
     });
 }
