@@ -87,6 +87,8 @@ endif()
 set(SOURCES
     src/package_manager_ui_plugin.cpp
     src/PackageManagerBackend.cpp
+    src/PackageListModel.cpp
+    src/PackageTypes.cpp
     src/package_manager_ui_resources.qrc
 )
 
