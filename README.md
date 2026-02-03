@@ -104,7 +104,7 @@ result/
 - Qt6 Declarative (qtdeclarative)
 - logos-liblogos
 - logos-cpp-sdk (for header generation)
-- logos-package-manager
+- logos-package-manager-module
 - logos-capability-module
 - zstd
 - krb5

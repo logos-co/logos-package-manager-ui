@@ -6,23 +6,23 @@
     nixpkgs.follows = "logos-liblogos/nixpkgs";
     logos-cpp-sdk.url = "github:logos-co/logos-cpp-sdk";
     logos-liblogos.url = "github:logos-co/logos-liblogos";
-    logos-package-manager.url = "github:logos-co/logos-package-manager";
+    logos-package-manager-module.url = "github:logos-co/logos-package-manager-module";
     logos-capability-module.url = "github:logos-co/logos-capability-module";
   };
 
-  outputs = { self, nixpkgs, logos-cpp-sdk, logos-liblogos, logos-package-manager, logos-capability-module }:
+  outputs = { self, nixpkgs, logos-cpp-sdk, logos-liblogos, logos-package-manager-module, logos-capability-module }:
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
         pkgs = import nixpkgs { inherit system; };
         logosSdk = logos-cpp-sdk.packages.${system}.default;
         logosLiblogos = logos-liblogos.packages.${system}.default;
-        logosPackageManager = logos-package-manager.packages.${system}.default;
+        logosPackageManagerModule = logos-package-manager-module.packages.${system}.default;
         logosCapabilityModule = logos-capability-module.packages.${system}.default;
       });
     in
     {
-      packages = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManager, logosCapabilityModule }: 
+      packages = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManagerModule, logosCapabilityModule }: 
         let
           # Common configuration
           common = import ./nix/default.nix { 
@@ -32,12 +32,12 @@
           
           # Library package
           lib = import ./nix/lib.nix { 
-            inherit pkgs common src logosPackageManager logosSdk; 
+            inherit pkgs common src logosPackageManagerModule logosSdk; 
           };
           
           # App package
           app = import ./nix/app.nix { 
-            inherit pkgs common src logosLiblogos logosSdk logosPackageManager logosCapabilityModule;
+            inherit pkgs common src logosLiblogos logosSdk logosPackageManagerModule logosCapabilityModule;
             logosPackageManagerUI = lib;
           };
         in
@@ -52,7 +52,7 @@
         }
       );
 
-      devShells = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManager, logosCapabilityModule }: {
+      devShells = forAllSystems ({ pkgs, logosSdk, logosLiblogos, logosPackageManagerModule, logosCapabilityModule }: {
         default = pkgs.mkShell {
           nativeBuildInputs = [
             pkgs.cmake
