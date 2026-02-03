@@ -1,5 +1,5 @@
 # Builds the logos-package-manager-ui library
-{ pkgs, common, src, logosPackageManager, logosSdk }:
+{ pkgs, common, src, logosPackageManagerModule, logosSdk }:
 
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-lib";
@@ -20,15 +20,15 @@ pkgs.stdenv.mkDerivation {
     # Create generated_code directory for generated files
     mkdir -p ./generated_code
     
-    # Copy include files from logos-package-manager result
-    echo "Copying include files from logos-package-manager..."
-    if [ -d "${logosPackageManager}/include" ]; then
-      echo "Found include directory in logos-package-manager"
-      cp -r "${logosPackageManager}/include"/* ./generated_code/
+    # Copy include files from logos-package-manager-module result
+    echo "Copying include files from logos-package-manager-module..."
+    if [ -d "${logosPackageManagerModule}/include" ]; then
+      echo "Found include directory in logos-package-manager-module"
+      cp -r "${logosPackageManagerModule}/include"/* ./generated_code/
       echo "Copied include files:"
       ls -la ./generated_code/
     else
-      echo "Warning: No include directory found in logos-package-manager"
+      echo "Warning: No include directory found in logos-package-manager-module"
     fi
     
     # Run logos-cpp-generator with metadata.json and --general-only flag

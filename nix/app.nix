@@ -1,5 +1,5 @@
 # Builds the logos-package-manager-ui-app standalone application
-{ pkgs, common, src, logosLiblogos, logosSdk, logosPackageManager, logosCapabilityModule, logosPackageManagerUI }:
+{ pkgs, common, src, logosLiblogos, logosSdk, logosPackageManagerModule, logosCapabilityModule, logosPackageManagerUI }:
 
 pkgs.stdenv.mkDerivation rec {
   pname = "logos-package-manager-ui-app";
@@ -124,14 +124,14 @@ pkgs.stdenv.mkDerivation rec {
     echo "liblogos: ${logosLiblogos}"
     echo "cpp-sdk: ${logosSdk}"
     echo "capability-module: ${logosCapabilityModule}"
-    echo "package-manager: ${logosPackageManager}"
+    echo "package-manager-module: ${logosPackageManagerModule}"
     echo "package-manager-ui: ${logosPackageManagerUI}"
     
     # Verify that the built components exist
     test -d "${logosLiblogos}" || (echo "liblogos not found" && exit 1)
     test -d "${logosSdk}" || (echo "cpp-sdk not found" && exit 1)
     test -d "${logosCapabilityModule}" || (echo "capability-module not found" && exit 1)
-    test -d "${logosPackageManager}" || (echo "package-manager not found" && exit 1)
+    test -d "${logosPackageManagerModule}" || (echo "package-manager-module not found" && exit 1)
     test -d "${logosPackageManagerUI}" || (echo "package-manager-ui not found" && exit 1)
     
     cmake -S app -B build \
@@ -203,8 +203,8 @@ pkgs.stdenv.mkDerivation rec {
     fi
 
     # Copy package_manager module plugin into the modules directory
-    if [ -f "${logosPackageManager}/lib/package_manager_plugin.$OS_EXT" ]; then
-      cp -L "${logosPackageManager}/lib/package_manager_plugin.$OS_EXT" "$out/modules/"
+    if [ -f "${logosPackageManagerModule}/lib/package_manager_plugin.$OS_EXT" ]; then
+      cp -L "${logosPackageManagerModule}/lib/package_manager_plugin.$OS_EXT" "$out/modules/"
       echo "Installed package_manager_plugin.$OS_EXT"
     fi
 
@@ -221,7 +221,7 @@ Logos Package Manager UI App - Build Information
 liblogos: ${logosLiblogos}
 cpp-sdk: ${logosSdk}
 capability-module: ${logosCapabilityModule}
-package-manager: ${logosPackageManager}
+package-manager-module: ${logosPackageManagerModule}
 package-manager-ui: ${logosPackageManagerUI}
 
 Runtime Layout:
