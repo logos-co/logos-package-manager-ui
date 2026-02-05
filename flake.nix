@@ -30,9 +30,15 @@
           };
           src = ./.;
           
-          # Library package
+          # Library package (development build)
           lib = import ./nix/lib.nix { 
             inherit pkgs common src logosPackageManagerModule logosSdk; 
+          };
+          
+          # Library package (distributed build for DMG/AppImage)
+          libDistributed = import ./nix/lib.nix { 
+            inherit pkgs common src logosPackageManagerModule logosSdk;
+            distributed = true;
           };
           
           # App package
@@ -46,6 +52,9 @@
           logos-package-manager-ui-lib = lib;
           app = app;
           lib = lib;
+          
+          # Distributed build (for DMG/AppImage)
+          distributed = libDistributed;
 
           # Default package
           default = lib;
