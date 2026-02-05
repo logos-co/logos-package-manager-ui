@@ -1,5 +1,5 @@
 # Builds the logos-package-manager-ui library
-{ pkgs, common, src, logosPackageManagerModule, logosSdk }:
+{ pkgs, common, src, logosPackageManagerModule, logosSdk, distributed ? false }:
 
 pkgs.stdenv.mkDerivation {
   pname = "${common.pname}-lib";
@@ -93,6 +93,7 @@ pkgs.stdenv.mkDerivation {
       -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+      -DLOGOS_DISTRIBUTED_BUILD=${if distributed then "ON" else "OFF"} \
       -DLOGOS_CPP_SDK_ROOT=$(pwd)/logos-cpp-sdk \
       -DLOGOS_LIBLOGOS_ROOT=${toString common.env.LOGOS_LIBLOGOS_ROOT}
     
