@@ -426,11 +426,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1770837874,
-        "narHash": "sha256-wr75lv1q4U1FS5+l/6ypwzJFJe06l2RyUvx1npoRS88=",
+        "lastModified": 1771871578,
+        "narHash": "sha256-6Mu3cmdhd8e7i+n8OWcaIBye+i12gwlwt1fhd9QCbCI=",
         "owner": "logos-co",
         "repo": "logos-liblogos",
-        "rev": "e3741c01fd3abf6b7bd9ff2fa8edf89c41fc0cea",
+        "rev": "19d29d4ef99292d9285b3a561cb7ea8029be3b74",
         "type": "github"
       },
       "original": {
@@ -477,11 +477,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1770837874,
-        "narHash": "sha256-wr75lv1q4U1FS5+l/6ypwzJFJe06l2RyUvx1npoRS88=",
+        "lastModified": 1771871578,
+        "narHash": "sha256-6Mu3cmdhd8e7i+n8OWcaIBye+i12gwlwt1fhd9QCbCI=",
         "owner": "logos-co",
         "repo": "logos-liblogos",
-        "rev": "e3741c01fd3abf6b7bd9ff2fa8edf89c41fc0cea",
+        "rev": "19d29d4ef99292d9285b3a561cb7ea8029be3b74",
         "type": "github"
       },
       "original": {
@@ -656,16 +656,15 @@
         ]
       },
       "locked": {
-        "lastModified": 1771379159,
-        "narHash": "sha256-8P8QQeDnW/xvns07gQuU9a1xU8gl7wirKNz8BOEgel8=",
+        "lastModified": 1771887671,
+        "narHash": "sha256-eIzmR3N5QnR5lcBT3N58v49ggl9MzUYSRgQznex1ayM=",
         "owner": "logos-co",
         "repo": "logos-package",
-        "rev": "7743f6910af37ff4e098c5c3ea317842f30a826e",
+        "rev": "d9a741359b17b928afae59cf3c6ee00057b7d93e",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "add-manifest-json-getter",
         "repo": "logos-package",
         "type": "github"
       }
@@ -682,11 +681,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1771492854,
-        "narHash": "sha256-7UBKRtI+yIGTs9Q6/ee5lN4PNgkHWqZfRCiGFzDX1Iw=",
+        "lastModified": 1771888531,
+        "narHash": "sha256-QOQ21+2Fofk6adVS/TYQckw0BkwuZCNsKyAwNmV7xoE=",
         "owner": "logos-co",
         "repo": "logos-package-manager-module",
-        "rev": "c8789613bbc08338ec03d64c907363901645f7cd",
+        "rev": "3469805bb119d5a01d1fdf30bafcdb94bea3c6f5",
         "type": "github"
       },
       "original": {

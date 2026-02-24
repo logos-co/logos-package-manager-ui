@@ -253,3 +253,13 @@ else()
         SUFFIX ".so"
     )
 endif()
+
+# Copy icons directory to output dir (alongside the plugin) for runtime/distribution
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/icons)
+    add_custom_command(TARGET package_manager_ui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/icons
+            $<TARGET_FILE_DIR:package_manager_ui>/icons
+        COMMENT "Copying icons directory to output"
+    )
+endif()
