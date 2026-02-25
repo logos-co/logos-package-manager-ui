@@ -269,11 +269,11 @@
         "nixpkgs": "nixpkgs_3"
       },
       "locked": {
-        "lastModified": 1770132997,
-        "narHash": "sha256-Iv0QMXMD6kf+y2Qx37jXR7Ik6h1dqOzuxBzCdc5S6KA=",
+        "lastModified": 1772028960,
+        "narHash": "sha256-BDWFjaKeoJW8oWDlPphNINt5U3P1xt1z1Y4f9jyC7uU=",
         "owner": "logos-co",
         "repo": "logos-cpp-sdk",
-        "rev": "30ef7986f4b65b7dcf43af84bb073233b1b77821",
+        "rev": "95f763b48d74bcdc63093b05159f43500cab139e",
         "type": "github"
       },
       "original": {
@@ -681,16 +681,15 @@
         ]
       },
       "locked": {
-        "lastModified": 1771888531,
-        "narHash": "sha256-QOQ21+2Fofk6adVS/TYQckw0BkwuZCNsKyAwNmV7xoE=",
+        "lastModified": 1772035982,
+        "narHash": "sha256-8wTp9oR2oBesld3woYx2OXXhKBtAo/6qkTbHMsAI3f4=",
         "owner": "logos-co",
         "repo": "logos-package-manager-module",
-        "rev": "3469805bb119d5a01d1fdf30bafcdb94bea3c6f5",
+        "rev": "1dbbc2452aa965f35cc7bb2e75242ad8f21e0d4d",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "properly-handle-portable-modules",
         "repo": "logos-package-manager-module",
         "type": "github"
       }
