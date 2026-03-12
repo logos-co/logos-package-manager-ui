@@ -2,6 +2,7 @@
 #include <QDebug>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QVariant>
 #include <QCoreApplication>
 #include <QDir>
 #include <QPointer>
@@ -69,25 +70,42 @@ void PackageManagerBackend::setIsInstalling(bool installing)
 
 void PackageManagerBackend::reload()
 {
-    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
+    LogosAPIClient* client = m_logosAPI ? m_logosAPI->getClient("package_manager") : nullptr;
+    if (!m_logosAPI || !client || !client->isConnected()) {
         qDebug() << "LogosAPI not connected, cannot reload packages";
         return;
     }
-    
-    LogosModules logos(m_logosAPI);
-    
-    // Ensure directories are set before checking installed state
-    // Without this the correct installed state is not known for the packages
     ensureDirectoriesSet();
-    
-    // Get categories first
-    m_categories = logos.package_manager.getCategories();
-    emit categoriesChanged();
-    
-    // Get filtered packages based on current category
+
+    QPointer<PackageManagerBackend> self(this);
+    client->invokeRemoteMethodAsync("package_manager", "getCategories", QVariantList(), [this, self, client](QVariant catV) {
+        if (!self) return;
+        if (catV.canConvert<QStringList>()) {
+            m_categories = catV.toStringList();
+        } else {
+            m_categories.clear();
+            for (const QVariant& v : catV.toList())
+                m_categories << v.toString();
+        }
+        emit categoriesChanged();
+        reloadPackages(client);
+    });
+}
+
+void PackageManagerBackend::reloadPackages(LogosAPIClient* client)
+{
+    if (!client) return;
     QString selectedCategory = m_categories.value(m_selectedCategoryIndex, "All");
-    QJsonArray packagesArray = logos.package_manager.getPackages(selectedCategory);
-    
+    QPointer<PackageManagerBackend> self(this);
+    client->invokeRemoteMethodAsync("package_manager", "getPackages", QVariant(selectedCategory), [this, self](QVariant pkgV) {
+        if (!self) return;
+        QJsonArray arr = pkgV.canConvert<QJsonArray>() ? pkgV.toJsonArray() : QJsonArray::fromVariantList(pkgV.toList());
+        setPackagesFromJsonArray(arr);
+    });
+}
+
+void PackageManagerBackend::setPackagesFromJsonArray(const QJsonArray& packagesArray)
+{
     QList<QVariantMap> packages;
     for (const QJsonValue& value : packagesArray) {
         QJsonObject obj = value.toObject();

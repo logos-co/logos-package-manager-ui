@@ -4,6 +4,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
+#include <QJsonArray>
 #include "logos_api.h"
 #include "logos_api_client.h"
 #include "PackageListModel.h"
@@ -52,6 +53,8 @@ private:
     QString determineInstallDirectory(const QString& packageType);
     void ensureDirectoriesSet();
     void setIsInstalling(bool installing);
+    void setPackagesFromJsonArray(const QJsonArray& packagesArray);
+    void reloadPackages(class LogosAPIClient* client);
 
     PackageListModel* m_packageModel;
     QStringList m_categories;
