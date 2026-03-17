@@ -299,6 +299,31 @@ void PackageManagerBackend::testPluginCall()
     }
 }
 
+void PackageManagerBackend::testEvent()
+{
+    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
+        emit testEventResult("package_manager not connected", true);
+        return;
+    }
+
+    LogosModules logos(m_logosAPI);
+
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_manager.on("testEventResponse", [self](const QVariantList& data) {
+        if (!self) return;
+        QString msg = data.value(0).toString();
+        QString timestamp = data.value(1).toString();
+        QString result = QString("[LogosObject] Event received!\n  message: %1\n  timestamp: %2").arg(msg, timestamp);
+        QTimer::singleShot(0, QCoreApplication::instance(), [self, result]() {
+            if (!self) return;
+            emit self->testEventResult(result, false);
+        });
+    });
+
+    qDebug() << "[LogosObject] testEvent: subscribed + calling testEvent on module";
+    logos.package_manager.testEvent("hello from UI");
+}
+
 void PackageManagerBackend::requestPackageDetails(int index)
 {
     QVariantMap pkg = m_packageModel->packageAt(index);

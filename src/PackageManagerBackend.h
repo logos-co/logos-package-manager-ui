@@ -32,6 +32,7 @@ public slots:
     void reload();
     void install();
     void testPluginCall();
+    void testEvent();
     void requestPackageDetails(int index);
     void togglePackage(int index, bool checked);
 
@@ -45,6 +46,7 @@ signals:
     void installationProgressUpdated(int progressType, const QString& packageName, int completed, int total, bool success, const QString& error);
     void packageDetailsLoaded(const QVariantMap& details);
     void testPluginResult(const QString& msg, bool error);
+    void testEventResult(const QString& msg, bool error);
 
 private:
     void subscribeToInstallationEvents();
