@@ -16,7 +16,8 @@ public:
         CategoryRole,
         IsSelectedRole,
         InstallStatusRole,
-        DependenciesRole
+        DependenciesRole,
+        IsVariantAvailableRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);

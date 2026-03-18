@@ -102,7 +102,8 @@ void PackageManagerBackend::reload()
         pkg["installStatus"] = obj.value("installed").toBool()
             ? static_cast<int>(PackageTypes::Installed)
             : static_cast<int>(PackageTypes::NotInstalled);
-        
+        pkg["isVariantAvailable"] = obj.value("isVariantAvailable").toBool(true);
+
         // Store dependencies and files
         QJsonArray depsArray = obj.value("dependencies").toArray();
         QStringList deps;

@@ -39,6 +39,8 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
             return package.value("installStatus", 0);
         case DependenciesRole:
             return package.value("dependencies");
+        case IsVariantAvailableRole:
+            return package.value("isVariantAvailable", false);
         default:
             return QVariant();
     }
@@ -55,6 +57,7 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
     roles[IsSelectedRole] = "isSelected";
     roles[InstallStatusRole] = "installStatus";
     roles[DependenciesRole] = "dependencies";
+    roles[IsVariantAvailableRole] = "isVariantAvailable";
     return roles;
 }
 
@@ -66,10 +69,12 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
     beginResetModel();
     m_packages = packages;
 
-    // Restore selections for packages that still exist; ensure every package has isSelected (bool)
+    // Restore selections for packages that still exist; ensure every package has isSelected (bool).
+    // Never restore selection for packages without an available variant.
     for (int i = 0; i < m_packages.size(); ++i) {
         QString name = m_packages[i].value("name").toString();
-        m_packages[i]["isSelected"] = selectedNames.contains(name);
+        bool available = m_packages[i].value("isVariantAvailable", false).toBool();
+        m_packages[i]["isSelected"] = available && selectedNames.contains(name);
     }
 
     endResetModel();
