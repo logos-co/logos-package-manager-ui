@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QStandardPaths>
 #include "logos_sdk.h"
+#include "logos_value.h"
+#include "logos_value_qt.h"
 
 PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent)
     : QObject(parent)
@@ -80,13 +82,17 @@ void PackageManagerBackend::reload()
     // Without this the correct installed state is not known for the packages
     ensureDirectoriesSet();
     
-    // Get categories first
-    m_categories = logos.package_manager.getCategories();
+    // Get categories first (returns std::vector<std::string>)
+    auto nativeCategories = logos.package_manager.getCategories();
+    m_categories.clear();
+    for (const auto& c : nativeCategories)
+        m_categories.append(QString::fromStdString(c));
     emit categoriesChanged();
     
-    // Get filtered packages based on current category
+    // Get filtered packages based on current category (returns LogosValue)
     QString selectedCategory = m_categories.value(m_selectedCategoryIndex, "All");
-    QJsonArray packagesArray = logos.package_manager.getPackages(selectedCategory);
+    LogosValue packagesLV = logos.package_manager.getPackages(selectedCategory.toStdString());
+    QJsonArray packagesArray = QJsonArray::fromVariantList(logosValueToQVariant(packagesLV).toList());
     
     QList<QVariantMap> packages;
     for (const QJsonValue& value : packagesArray) {
@@ -94,8 +100,8 @@ void PackageManagerBackend::reload()
         QVariantMap pkg;
         pkg["name"] = obj.value("name").toString();
         pkg["moduleName"] = obj.value("moduleName").toString();
-        pkg["installedVersion"] = "";  // Not used in new flow
-        pkg["latestVersion"] = "";  // Not used in new flow
+        pkg["installedVersion"] = "";
+        pkg["latestVersion"] = "";
         pkg["description"] = obj.value("description").toString();
         pkg["type"] = obj.value("type").toString();
         pkg["category"] = obj.value("category").toString();
@@ -103,7 +109,6 @@ void PackageManagerBackend::reload()
             ? static_cast<int>(PackageTypes::Installed)
             : static_cast<int>(PackageTypes::NotInstalled);
         
-        // Store dependencies and files
         QJsonArray depsArray = obj.value("dependencies").toArray();
         QStringList deps;
         for (const QJsonValue& dep : depsArray) {
@@ -131,22 +136,16 @@ void PackageManagerBackend::subscribeToInstallationEvents()
     LogosModules logos(m_logosAPI);
     // The event subscription outlives this QObject; guard against use-after-free.
     QPointer<PackageManagerBackend> self(this);
-    logos.package_manager.on("packageInstallationFinished", [self](const QVariantList& data) {
-        if (!self) {
-            return;
-        }
-        if (data.size() < 3) {
-            return;
-        }
-        QString packageName = data[0].toString();
+    logos.package_manager.on("packageInstallationFinished",
+        [self](const std::string&, const std::vector<LogosValue>& data) {
+        if (!self) return;
+        if (data.size() < 3) return;
+        QString packageName = QString::fromStdString(data[0].toString());
         bool success = data[1].toBool();
-        QString error = data[2].toString();
+        QString error = QString::fromStdString(data[2].toString());
         
-        // Run in the Qt event loop, but never use a deleted QObject as the timer context.
         QTimer::singleShot(0, QCoreApplication::instance(), [self, packageName, success, error]() {
-            if (!self) {
-                return;
-            }
+            if (!self) return;
             self->onPackageInstallationFinished(packageName, success, error);
         });
     });
@@ -243,8 +242,8 @@ void PackageManagerBackend::ensureDirectoriesSet()
     QString pluginsDir = determineInstallDirectory("ui");  // UI plugins
     
     qDebug() << "Setting package manager directories - modules:" << modulesDir << ", plugins:" << pluginsDir;
-    logos.package_manager.setPluginsDirectory(modulesDir);
-    logos.package_manager.setUiPluginsDirectory(pluginsDir);
+    logos.package_manager.setPluginsDirectory(modulesDir.toStdString());
+    logos.package_manager.setUiPluginsDirectory(pluginsDir.toStdString());
 }
 
 void PackageManagerBackend::install()
@@ -283,7 +282,7 @@ void PackageManagerBackend::install()
     
     for (const QString& packageName : selectedNames) {
         m_packageModel->updatePackageInstallation(packageName, static_cast<int>(PackageTypes::Installing));
-        logos.package_manager.installPackageAsync(packageName, installDir);
+        logos.package_manager.installPackageAsync(packageName.toStdString(), installDir.toStdString());
     }
 }
 
@@ -291,8 +290,8 @@ void PackageManagerBackend::testPluginCall()
 {
     if (m_logosAPI && m_logosAPI->getClient("package_manager")->isConnected()) {
         LogosModules logos(m_logosAPI);
-        const QString result = logos.package_manager.testPluginCall("my test string");
-        emit testPluginResult(result, false);
+        const std::string result = logos.package_manager.testPluginCall("my test string");
+        emit testPluginResult(QString::fromStdString(result), false);
     } else {
         emit testPluginResult("package_manager not connected", true);
     }
@@ -308,10 +307,11 @@ void PackageManagerBackend::testEvent()
     LogosModules logos(m_logosAPI);
 
     QPointer<PackageManagerBackend> self(this);
-    logos.package_manager.on("testEventResponse", [self](const QVariantList& data) {
+    logos.package_manager.on("testEventResponse",
+        [self](const std::string&, const std::vector<LogosValue>& data) {
         if (!self) return;
-        QString msg = data.value(0).toString();
-        QString timestamp = data.value(1).toString();
+        QString msg = data.size() > 0 ? QString::fromStdString(data[0].toString()) : QString();
+        QString timestamp = data.size() > 1 ? QString::fromStdString(data[1].toString()) : QString();
         QString result = QString("[LogosObject] Event received!\n  message: %1\n  timestamp: %2").arg(msg, timestamp);
         QTimer::singleShot(0, QCoreApplication::instance(), [self, result]() {
             if (!self) return;

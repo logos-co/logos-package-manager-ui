@@ -176,6 +176,7 @@ target_include_directories(package_manager_ui PRIVATE
 if(_cpp_sdk_is_source)
     target_include_directories(package_manager_ui PRIVATE 
         ${LOGOS_CPP_SDK_ROOT}/cpp
+        ${LOGOS_CPP_SDK_ROOT}/cpp/native
         ${LOGOS_CPP_SDK_ROOT}/cpp/generated
     )
 else()
@@ -183,6 +184,7 @@ else()
         ${LOGOS_CPP_SDK_ROOT}/include
         ${LOGOS_CPP_SDK_ROOT}/include/cpp
         ${LOGOS_CPP_SDK_ROOT}/include/core
+        ${LOGOS_CPP_SDK_ROOT}/include/cpp/native
         ${GENERATED_LOGOS_SDK_DIR}
     )
 endif()
