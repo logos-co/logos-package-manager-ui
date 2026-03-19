@@ -324,7 +324,7 @@ Rectangle {
 
                                 HeaderColumn {
                                     headerText: "Status"
-                                    columnWidth: 80
+                                    columnWidth: 90
                                 }
                             }
                         }
@@ -359,8 +359,10 @@ Rectangle {
 
                                         CheckBox {
                                             anchors.centerIn: parent
-                                            enabled: model.installStatus !== PackageTypes.Installed && 
-						     model.installStatus !== PackageTypes.Installing
+                                            property bool isDisabled: !model.isVariantAvailable ||
+                                                                      model.installStatus === PackageTypes.Installed ||
+                                                                      model.installStatus === PackageTypes.Installing
+                                            enabled: !isDisabled
                                             checked: model.isSelected
                                             onCheckedChanged: {
                                                 if (checked !== model.isSelected) {
@@ -374,10 +376,8 @@ Rectangle {
                                                 x: parent.leftPadding
                                                 y: parent.height / 2 - height / 2
                                                 radius: 3
-                                                color: (model.installStatus === PackageTypes.Installed || 
-							model.installStatus === PackageTypes.Installing) ? "#3d3d3d" : (parent.checked ? "#4A90E2" : "#2d2d2d")
-                                                border.color: (model.installStatus === PackageTypes.Installed || 
-							       model.installStatus === PackageTypes.Installing) ? "#4d4d4d" : (parent.checked ? "#4A90E2" : "#5d5d5d")
+                                                color: parent.isDisabled ? "#3d3d3d" : (parent.checked ? "#4A90E2" : "#2d2d2d")
+                                                border.color: parent.isDisabled ? "#4d4d4d" : (parent.checked ? "#4A90E2" : "#5d5d5d")
 
                                                 Text {
                                                     anchors.centerIn: parent
@@ -406,33 +406,37 @@ Rectangle {
                                     }
 
                                     Rectangle {
-                                        Layout.preferredWidth: 80
+                                        Layout.preferredWidth: 90
                                         Layout.fillHeight: true
                                         color: "transparent"
-                                        
+
                                         Rectangle {
                                             anchors.left: parent.left
                                             anchors.leftMargin: 10
                                             anchors.verticalCenter: parent.verticalCenter
-                                            width: 70
+                                            width: 80
                                             height: 20
                                             radius: 3
-                                            color: model.installStatus === PackageTypes.Installing ? "#5c4a1a" : 
-						   (model.installStatus === PackageTypes.Installed ? "#2d5016" : 
-						    (model.installStatus === PackageTypes.Failed ? "#5c1a1a" : "#4d4d4d"))
-                                            border.color: model.installStatus === PackageTypes.Installing ? "#C9A227" : 
-							  (model.installStatus === PackageTypes.Installed ? "#4CAF50" : 
-							  (model.installStatus === PackageTypes.Failed ? "#C62828" : "#666666"))
+                                            color: !model.isVariantAvailable ? "#4d3a1a" :
+                                                   (model.installStatus === PackageTypes.Installing ? "#5c4a1a" :
+                                                   (model.installStatus === PackageTypes.Installed ? "#2d5016" :
+                                                   (model.installStatus === PackageTypes.Failed ? "#5c1a1a" : "#4d4d4d")))
+                                            border.color: !model.isVariantAvailable ? "#8B6914" :
+                                                          (model.installStatus === PackageTypes.Installing ? "#C9A227" :
+                                                          (model.installStatus === PackageTypes.Installed ? "#4CAF50" :
+                                                          (model.installStatus === PackageTypes.Failed ? "#C62828" : "#666666")))
                                             border.width: 1
-                                            
+
                                             Text {
                                                 anchors.centerIn: parent
-                                                text: model.installStatus === PackageTypes.Installing ? "Installing…" : 
-						      (model.installStatus === PackageTypes.Installed ? "Installed" : 
-						      (model.installStatus === PackageTypes.Failed ? "Failed" : "Not Installed"))
-                                                color: model.installStatus === PackageTypes.Installing ? "#E6C547" : 
-						       (model.installStatus === PackageTypes.Installed ? "#8BC34A" : 
-						       (model.installStatus === PackageTypes.Failed ? "#EF5350" : "#999999"))
+                                                text: !model.isVariantAvailable ? "Not Available" :
+                                                      (model.installStatus === PackageTypes.Installing ? "Installing…" :
+                                                      (model.installStatus === PackageTypes.Installed ? "Installed" :
+                                                      (model.installStatus === PackageTypes.Failed ? "Failed" : "Not Installed")))
+                                                color: !model.isVariantAvailable ? "#C9A227" :
+                                                       (model.installStatus === PackageTypes.Installing ? "#E6C547" :
+                                                       (model.installStatus === PackageTypes.Installed ? "#8BC34A" :
+                                                       (model.installStatus === PackageTypes.Failed ? "#EF5350" : "#999999")))
                                                 font.pixelSize: 11
                                             }
                                         }
