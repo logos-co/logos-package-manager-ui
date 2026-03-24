@@ -31,8 +31,6 @@ public:
 public slots:
     void reload();
     void install();
-    void testPluginCall();
-    void testEvent();
     void requestPackageDetails(int index);
     void togglePackage(int index, bool checked);
 
@@ -41,18 +39,18 @@ signals:
     void selectedCategoryIndexChanged();
     void hasSelectedPackagesChanged();
     void isInstallingChanged();
-        
+
     void errorOccurred(int errorType);
     void installationProgressUpdated(int progressType, const QString& packageName, int completed, int total, bool success, const QString& error);
     void packageDetailsLoaded(const QVariantMap& details);
-    void testPluginResult(const QString& msg, bool error);
-    void testEventResult(const QString& msg, bool error);
 
 private:
-    void subscribeToInstallationEvents();
-    void onPackageInstallationFinished(const QString& packageName, bool success, const QString& error);
-    QString determineInstallDirectory(const QString& packageType);
-    void ensureDirectoriesSet();
+    void setPackagesFromVariantList(const QVariantList& packagesArray,
+                                    const QVariantList& installedPackages,
+                                    const QStringList& validVariants);
+    void processDownloadResults(const QVariantList& results);
+    void installNextPackage(const QVariantList& results, int index, int completed, int totalPackages);
+    void finishInstallation(int completed);
     void setIsInstalling(bool installing);
 
     PackageListModel* m_packageModel;

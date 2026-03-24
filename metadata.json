@@ -1,12 +1,13 @@
 {
   "name": "package_manager_ui",
   "version": "1.0.0",
-  "description": "Package Manager UI plugin for managing plugins and packages",
+  "description": "Package Manager UI - Online catalog and download/install interface",
   "author": "Logos Core Team",
   "type": "ui",
   "main": "package_manager_ui",
   "dependencies": [
-    "package_manager"
+    "package_manager",
+    "package_downloader"
   ],
   "category": "ui",
   "build": {
