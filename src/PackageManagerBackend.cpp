@@ -1,12 +1,8 @@
 #include "PackageManagerBackend.h"
 #include <QDebug>
-#include <QJsonObject>
-#include <QJsonArray>
-#include <QCoreApplication>
-#include <QDir>
+#include <QVariant>
 #include <QPointer>
-#include <QTimer>
-#include <QStandardPaths>
+#include <QSet>
 #include "logos_sdk.h"
 
 PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent)
@@ -16,12 +12,10 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     , m_logosAPI(logosAPI)
     , m_isInstalling(false)
 {
-    // Create our own LogosAPI instance if not provided (matches ChatWidget pattern)
     if (!m_logosAPI) {
         m_logosAPI = new LogosAPI("core", this);
     }
-    
-    subscribeToInstallationEvents();
+
     reload();
 }
 
@@ -45,7 +39,7 @@ void PackageManagerBackend::setSelectedCategoryIndex(int index)
     if (m_selectedCategoryIndex != index && index >= 0 && index < m_categories.size()) {
         m_selectedCategoryIndex = index;
         emit selectedCategoryIndexChanged();
-        reload();  // Reload with new category filter
+        reload();
     }
 }
 
@@ -69,184 +63,178 @@ void PackageManagerBackend::setIsInstalling(bool installing)
 
 void PackageManagerBackend::reload()
 {
-    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
-        qDebug() << "LogosAPI not connected, cannot reload packages";
+    if (!m_logosAPI
+        || !m_logosAPI->getClient("package_downloader")->isConnected()
+        || !m_logosAPI->getClient("package_manager")->isConnected()) {
+        qDebug() << "package_downloader or package_manager not connected, cannot reload packages";
         return;
     }
-    
-    LogosModules logos(m_logosAPI);
-    
-    // Ensure directories are set before checking installed state
-    // Without this the correct installed state is not known for the packages
-    ensureDirectoriesSet();
-    
-    // Get categories first
-    m_categories = logos.package_manager.getCategories();
-    emit categoriesChanged();
-    
-    // Get filtered packages based on current category
-    QString selectedCategory = m_categories.value(m_selectedCategoryIndex, "All");
-    QJsonArray packagesArray = logos.package_manager.getPackages(selectedCategory);
-    
-    QList<QVariantMap> packages;
-    for (const QJsonValue& value : packagesArray) {
-        QJsonObject obj = value.toObject();
-        QVariantMap pkg;
-        pkg["name"] = obj.value("name").toString();
-        pkg["moduleName"] = obj.value("moduleName").toString();
-        pkg["installedVersion"] = "";  // Not used in new flow
-        pkg["latestVersion"] = "";  // Not used in new flow
-        pkg["description"] = obj.value("description").toString();
-        pkg["type"] = obj.value("type").toString();
-        pkg["category"] = obj.value("category").toString();
-        pkg["installStatus"] = obj.value("installed").toBool()
-            ? static_cast<int>(PackageTypes::Installed)
-            : static_cast<int>(PackageTypes::NotInstalled);
-        pkg["isVariantAvailable"] = obj.value("isVariantAvailable").toBool(true);
 
-        // Store dependencies and files
-        QJsonArray depsArray = obj.value("dependencies").toArray();
-        QStringList deps;
-        for (const QJsonValue& dep : depsArray) {
-            deps.append(dep.toString());
-        }
-        pkg["dependencies"] = deps;
-        
-        packages.append(pkg);
-    }
-    
-    m_packageModel->setPackages(packages);
-}
+    ++m_reloadGeneration;
+    int currentGeneration = m_reloadGeneration;
 
-void PackageManagerBackend::subscribeToInstallationEvents()
-{
-    if (!m_logosAPI) {
-        return;
-    }
-    
-    LogosAPIClient* client = m_logosAPI->getClient("package_manager");
-    if (!client || !client->isConnected()) {
-        return;
-    }
-    
     LogosModules logos(m_logosAPI);
-    // The event subscription outlives this QObject; guard against use-after-free.
     QPointer<PackageManagerBackend> self(this);
-    logos.package_manager.on("packageInstallationFinished", [self](const QVariantList& data) {
-        if (!self) {
-            return;
-        }
-        if (data.size() < 3) {
-            return;
-        }
-        QString packageName = data[0].toString();
-        bool success = data[1].toBool();
-        QString error = data[2].toString();
-        
-        // Run in the Qt event loop, but never use a deleted QObject as the timer context.
-        QTimer::singleShot(0, QCoreApplication::instance(), [self, packageName, success, error]() {
-            if (!self) {
-                return;
-            }
-            self->onPackageInstallationFinished(packageName, success, error);
+    logos.package_downloader.getCategoriesAsync([self, currentGeneration](QVariant result) {
+        if (!self || self->m_reloadGeneration != currentGeneration) return;
+        QStringList categories = result.toStringList();
+        self->m_categories = categories;
+        emit self->categoriesChanged();
+
+        QString selectedCategory = self->m_categories.value(self->m_selectedCategoryIndex, "All");
+
+        LogosModules logos2(self->m_logosAPI);
+        logos2.package_downloader.getPackagesAsync(selectedCategory, [self, currentGeneration](QVariantList packagesArray) {
+            if (!self || self->m_reloadGeneration != currentGeneration) return;
+
+            LogosModules logos3(self->m_logosAPI);
+            logos3.package_manager.getInstalledPackagesAsync([self, currentGeneration, packagesArray](QVariantList installedPackages) {
+                if (!self || self->m_reloadGeneration != currentGeneration) return;
+
+                LogosModules logos4(self->m_logosAPI);
+                logos4.package_manager.getValidVariantsAsync([self, currentGeneration, packagesArray, installedPackages](QVariant result) {
+                    if (!self || self->m_reloadGeneration != currentGeneration) return;
+                    QStringList validVariants = result.toStringList();
+                    self->setPackagesFromVariantList(packagesArray, installedPackages, validVariants);
+                });
+            });
         });
     });
 }
 
-void PackageManagerBackend::onPackageInstallationFinished(const QString& packageName, bool success, const QString& error)
+void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packagesArray,
+                                                        const QVariantList& installedPackages,
+                                                        const QStringList& validVariants)
 {
-    qDebug() << "Package installation finished:" << packageName << success << error;
-
-    m_packageModel->updatePackageInstallation(
-        packageName, success ? static_cast<int>(PackageTypes::Installed) : static_cast<int>(PackageTypes::Failed));
-
-    int completed = m_packageModel->getCompletedInstallCount();
-    int totalPackages = m_packageModel->getSelectedCount();
-    
-    if (success) {
-        emit installationProgressUpdated(
-            static_cast<int>(PackageTypes::InProgress),
-            packageName,
-            completed,
-            totalPackages,
-            true,
-            ""
-        );
-    } else {
-        QString failureReason = error.isEmpty() ? "installation failed" : error;
-        emit installationProgressUpdated(
-            static_cast<int>(PackageTypes::ProgressFailed),
-            packageName,
-            completed,
-            totalPackages,
-            false,
-            failureReason
-        );
+    QSet<QString> installedNames;
+    for (const QVariant& val : installedPackages) {
+        QVariantMap obj = val.toMap();
+        QString installedName = obj.value("name").toString();
+        if (!installedName.isEmpty()) {
+            installedNames.insert(installedName);
+        }
     }
-    
-    if (completed >= totalPackages) {
-        m_packageModel->clearAllSelections();
-        emit hasSelectedPackagesChanged();
-        
-        setIsInstalling(false);
-        
-        emit installationProgressUpdated(
-            static_cast<int>(PackageTypes::Completed),
-            "",
-            completed,
-            completed,
-            true,
-            ""
-        );
+
+    QList<QVariantMap> packages;
+    for (const QVariant& value : packagesArray) {
+        QVariantMap obj = value.toMap();
+        QVariantMap pkg;
+        QString name = obj.value("name").toString();
+        pkg["name"] = name;
+        pkg["moduleName"] = obj.value("moduleName").toString();
+        pkg["installedVersion"] = "";
+        pkg["latestVersion"] = "";
+        pkg["description"] = obj.value("description").toString();
+        pkg["type"] = obj.value("type").toString();
+        pkg["category"] = obj.value("category").toString();
+
+        QString moduleName = obj.value("moduleName").toString();
+        pkg["installStatus"] = installedNames.contains(moduleName)
+            ? static_cast<int>(PackageTypes::Installed)
+            : static_cast<int>(PackageTypes::NotInstalled);
+
+        // Determine variant availability by checking if any of the package's
+        // variants match the platform's valid variants
+        QVariantList packageVariants = obj.value("variants").toList();
+        bool variantAvailable = false;
+        for (const QVariant& pv : packageVariants) {
+            if (validVariants.contains(pv.toString())) {
+                variantAvailable = true;
+                break;
+            }
+        }
+        pkg["isVariantAvailable"] = variantAvailable;
+
+        QVariantList depsArray = obj.value("dependencies").toList();
+        QStringList deps;
+        for (const QVariant& dep : depsArray) {
+            deps.append(dep.toString());
+        }
+        pkg["dependencies"] = deps;
+
+        packages.append(pkg);
     }
+
+    m_packageModel->setPackages(packages);
 }
 
-QString PackageManagerBackend::determineInstallDirectory(const QString& packageType)
-{
-    QDir appDir(QCoreApplication::applicationDirPath());
-    appDir.cdUp();
-    
-    bool isUiPlugin = (packageType.compare("ui", Qt::CaseInsensitive) == 0);
-    
-    QString installDir;
-    if (isUiPlugin) {
-        // UI plugins go to /plugins directory
-#ifdef LOGOS_DISTRIBUTED_BUILD
-        // For distributed builds (DMG/AppImage), use Application Support
-        installDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/plugins";
-#else
-        // For development builds (nix), use bundled plugins directory
-        installDir = QDir::cleanPath(appDir.absolutePath() + "/plugins");
-#endif
-    } else {
-        // Core modules go to /modules directory
-#ifdef LOGOS_DISTRIBUTED_BUILD
-        // For distributed builds (DMG/AppImage), use Application Support
-        installDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/modules";
-#else
-        // For development builds (nix), use bundled modules directory
-        installDir = QDir::cleanPath(appDir.absolutePath() + "/modules");
-#endif
-    }
-    
-    return installDir;
-}
-
-void PackageManagerBackend::ensureDirectoriesSet()
+void PackageManagerBackend::processDownloadResults(const QVariantList& results)
 {
     if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
+        qWarning() << "package_manager not connected, cannot install downloaded packages";
+        finishInstallation(0);
         return;
     }
-    
-    LogosModules logos(m_logosAPI);
-    
-    QString modulesDir = determineInstallDirectory("");  // Core modules
-    QString pluginsDir = determineInstallDirectory("ui");  // UI plugins
-    
-    qDebug() << "Setting package manager directories - modules:" << modulesDir << ", plugins:" << pluginsDir;
-    logos.package_manager.setPluginsDirectory(modulesDir);
-    logos.package_manager.setUiPluginsDirectory(pluginsDir);
+
+    int totalPackages = m_packageModel ? m_packageModel->getSelectedCount() : results.size();
+    installNextPackage(results, 0, 0, totalPackages);
 }
+
+void PackageManagerBackend::installNextPackage(const QVariantList& results, int index, int completed, int totalPackages)
+{
+    // Skip failed downloads
+    while (index < results.size()) {
+        QVariantMap dl = results[index].toMap();
+        QString packageName = dl.value("name").toString();
+        QString filePath = dl.value("path").toString();
+        QString error = dl.value("error").toString();
+
+        if (filePath.isEmpty()) {
+            qWarning() << "Download failed for" << packageName << ":" << error;
+            m_packageModel->updatePackageInstallation(
+                packageName, static_cast<int>(PackageTypes::Failed));
+            completed++;
+            emit installationProgressUpdated(
+                static_cast<int>(PackageTypes::ProgressFailed),
+                packageName, completed, totalPackages, false, error);
+            index++;
+            continue;
+        }
+
+        // Install this package async
+        qDebug() << "Download complete for" << packageName << "at" << filePath << "— installing...";
+        LogosModules logos(m_logosAPI);
+        QPointer<PackageManagerBackend> self(this);
+        logos.package_manager.installPluginAsync(filePath, false,
+            [self, results, packageName, index, completed, totalPackages](QVariantMap installResult) {
+                if (!self) return;
+                bool success = !installResult.value("path").toString().isEmpty()
+                            && !installResult.contains("error");
+
+                if (success) {
+                    self->m_packageModel->updatePackageInstallation(
+                        packageName, static_cast<int>(PackageTypes::Installed));
+                } else {
+                    self->m_packageModel->updatePackageInstallation(
+                        packageName, static_cast<int>(PackageTypes::Failed));
+                }
+
+                int newCompleted = completed + 1;
+                QString error = installResult.value("error").toString();
+                emit self->installationProgressUpdated(
+                    success ? static_cast<int>(PackageTypes::InProgress)
+                            : static_cast<int>(PackageTypes::ProgressFailed),
+                    packageName, newCompleted, totalPackages, success,
+                    success ? "" : error);
+
+                self->installNextPackage(results, index + 1, newCompleted, totalPackages);
+            });
+        return;
+    }
+
+    // All packages processed
+    finishInstallation(completed);
+}
+
+void PackageManagerBackend::finishInstallation(int completed)
+{
+    m_packageModel->clearAllSelections();
+    emit hasSelectedPackagesChanged();
+    setIsInstalling(false);
+    emit installationProgressUpdated(
+        static_cast<int>(PackageTypes::Completed), "", completed, completed, true, "");
+}
+
 
 void PackageManagerBackend::install()
 {
@@ -254,74 +242,36 @@ void PackageManagerBackend::install()
         emit errorOccurred(static_cast<int>(PackageTypes::InstallationAlreadyInProgress));
         return;
     }
-    
+
     if (m_packageModel->getSelectedCount() == 0) {
         emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
         return;
     }
-    
-    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
+
+    if (!m_logosAPI
+        || !m_logosAPI->getClient("package_downloader")->isConnected()
+        || !m_logosAPI->getClient("package_manager")->isConnected()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
         return;
     }
 
     setIsInstalling(true);
-    
+
     QStringList selectedNames = m_packageModel->getSelectedPackageNames();
     emit installationProgressUpdated(
-        static_cast<int>(PackageTypes::Started),
-        "",
-        0,
-        selectedNames.size(),
-        true,
-        ""
-    );
-    
-    LogosModules logos(m_logosAPI);
-    
-    // Determine install directory (first package's type determines directory)
-    QString installDir = determineInstallDirectory("");
-    
+        static_cast<int>(PackageTypes::Started), "", 0, selectedNames.size(), true, "");
+
     for (const QString& packageName : selectedNames) {
         m_packageModel->updatePackageInstallation(packageName, static_cast<int>(PackageTypes::Installing));
-        logos.package_manager.installPackageAsync(packageName, installDir);
-    }
-}
-
-void PackageManagerBackend::testPluginCall()
-{
-    if (m_logosAPI && m_logosAPI->getClient("package_manager")->isConnected()) {
-        LogosModules logos(m_logosAPI);
-        const QString result = logos.package_manager.testPluginCall("my test string");
-        emit testPluginResult(result, false);
-    } else {
-        emit testPluginResult("package_manager not connected", true);
-    }
-}
-
-void PackageManagerBackend::testEvent()
-{
-    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
-        emit testEventResult("package_manager not connected", true);
-        return;
     }
 
+    // Download all packages async; when done, process results (install each)
     LogosModules logos(m_logosAPI);
-
     QPointer<PackageManagerBackend> self(this);
-    logos.package_manager.on("testEventResponse", [self](const QVariantList& data) {
+    logos.package_downloader.downloadPackagesAsync(selectedNames, [self](QVariantList results) {
         if (!self) return;
-        QString msg = data.value(0).toString();
-        QString timestamp = data.value(1).toString();
-        QString result = QString("[LogosObject] Event received!\n  message: %1\n  timestamp: %2").arg(msg, timestamp);
-        QTimer::singleShot(0, QCoreApplication::instance(), [self, result]() {
-            if (!self) return;
-            emit self->testEventResult(result, false);
-        });
+        self->processDownloadResults(results);
     });
-
-    qDebug() << "[LogosObject] testEvent: subscribed + calling testEvent on module";
-    logos.package_manager.testEvent("hello from UI");
 }
 
 void PackageManagerBackend::requestPackageDetails(int index)
@@ -330,7 +280,7 @@ void PackageManagerBackend::requestPackageDetails(int index)
     if (pkg.isEmpty()) {
         return;
     }
-    
+
     emit packageDetailsLoaded(pkg);
 }
 

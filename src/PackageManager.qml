@@ -154,52 +154,6 @@ Rectangle {
             }
 
             Button {
-                text: "Test Call2"
-                enabled: !backend.isInstalling
-                onClicked: backend.testPluginCall()
-
-                contentItem: Text {
-                    text: parent.text
-                    font.pixelSize: 13
-                    color: parent.enabled ? "#ffffff" : "#808080"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    implicitWidth: 100
-                    implicitHeight: 32
-                    color: parent.enabled ? (parent.pressed ? "#3d3d3d" : "#4d4d4d") : "#2d2d2d"
-                    radius: 4
-                    border.color: parent.enabled ? "#5d5d5d" : "#3d3d3d"
-                    border.width: 1
-                }
-            }
-
-            Button {
-                text: "Test Event"
-                enabled: !backend.isInstalling
-                onClicked: backend.testEvent()
-
-                contentItem: Text {
-                    text: parent.text
-                    font.pixelSize: 13
-                    color: parent.enabled ? "#ffffff" : "#808080"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    implicitWidth: 100
-                    implicitHeight: 32
-                    color: parent.enabled ? (parent.pressed ? "#2a4a6a" : "#3a5a7a") : "#2d2d2d"
-                    radius: 4
-                    border.color: parent.enabled ? "#4a7aaa" : "#3d3d3d"
-                    border.width: 1
-                }
-            }
-
-            Button {
                 text: backend.isInstalling ? "Installing..." : "Install"
                 enabled: backend.hasSelectedPackages && !backend.isInstalling
                 onClicked: backend.install()
