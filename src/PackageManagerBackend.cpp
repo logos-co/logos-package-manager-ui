@@ -63,17 +63,20 @@ void PackageManagerBackend::setIsInstalling(bool installing)
 
 void PackageManagerBackend::reload()
 {
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        qDebug() << "package_downloader not connected, cannot reload packages";
+    if (!m_logosAPI
+        || !m_logosAPI->getClient("package_downloader")->isConnected()
+        || !m_logosAPI->getClient("package_manager")->isConnected()) {
+        qDebug() << "package_downloader or package_manager not connected, cannot reload packages";
         return;
     }
 
+    ++m_reloadGeneration;
+    int currentGeneration = m_reloadGeneration;
+
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
-
-    // Fetch categories async, then packages, then installed + variants from package_manager
-    logos.package_downloader.getCategoriesAsync([self](QVariant result) {
-        if (!self) return;
+    logos.package_downloader.getCategoriesAsync([self, currentGeneration](QVariant result) {
+        if (!self || self->m_reloadGeneration != currentGeneration) return;
         QStringList categories = result.toStringList();
         self->m_categories = categories;
         emit self->categoriesChanged();
@@ -81,17 +84,16 @@ void PackageManagerBackend::reload()
         QString selectedCategory = self->m_categories.value(self->m_selectedCategoryIndex, "All");
 
         LogosModules logos2(self->m_logosAPI);
-        logos2.package_downloader.getPackagesAsync(selectedCategory, [self](QVariantList packagesArray) {
-            if (!self) return;
+        logos2.package_downloader.getPackagesAsync(selectedCategory, [self, currentGeneration](QVariantList packagesArray) {
+            if (!self || self->m_reloadGeneration != currentGeneration) return;
 
-            // Now fetch installed packages and valid variants from package_manager
             LogosModules logos3(self->m_logosAPI);
-            logos3.package_manager.getInstalledPackagesAsync([self, packagesArray](QVariantList installedPackages) {
-                if (!self) return;
+            logos3.package_manager.getInstalledPackagesAsync([self, currentGeneration, packagesArray](QVariantList installedPackages) {
+                if (!self || self->m_reloadGeneration != currentGeneration) return;
 
                 LogosModules logos4(self->m_logosAPI);
-                logos4.package_manager.getValidVariantsAsync([self, packagesArray, installedPackages](QVariant result) {
-                    if (!self) return;
+                logos4.package_manager.getValidVariantsAsync([self, currentGeneration, packagesArray, installedPackages](QVariant result) {
+                    if (!self || self->m_reloadGeneration != currentGeneration) return;
                     QStringList validVariants = result.toStringList();
                     self->setPackagesFromVariantList(packagesArray, installedPackages, validVariants);
                 });
@@ -104,11 +106,13 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
                                                         const QVariantList& installedPackages,
                                                         const QStringList& validVariants)
 {
-    // Build a set of installed package names for quick lookup
     QSet<QString> installedNames;
     for (const QVariant& val : installedPackages) {
         QVariantMap obj = val.toMap();
-        installedNames.insert(obj.value("name").toString());
+        QString installedName = obj.value("name").toString();
+        if (!installedName.isEmpty()) {
+            installedNames.insert(installedName);
+        }
     }
 
     QList<QVariantMap> packages;
@@ -124,8 +128,6 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
         pkg["type"] = obj.value("type").toString();
         pkg["category"] = obj.value("category").toString();
 
-        // Determine install status from package-manager's installed list
-        // Compare using moduleName which matches the name in manifest.json
         QString moduleName = obj.value("moduleName").toString();
         pkg["installStatus"] = installedNames.contains(moduleName)
             ? static_cast<int>(PackageTypes::Installed)
@@ -160,11 +162,12 @@ void PackageManagerBackend::processDownloadResults(const QVariantList& results)
 {
     if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
         qWarning() << "package_manager not connected, cannot install downloaded packages";
-        setIsInstalling(false);
+        finishInstallation(0);
         return;
     }
 
-    installNextPackage(results, 0, 0, results.size());
+    int totalPackages = m_packageModel ? m_packageModel->getSelectedCount() : results.size();
+    installNextPackage(results, 0, 0, totalPackages);
 }
 
 void PackageManagerBackend::installNextPackage(const QVariantList& results, int index, int completed, int totalPackages)
@@ -245,7 +248,9 @@ void PackageManagerBackend::install()
         return;
     }
 
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
+    if (!m_logosAPI
+        || !m_logosAPI->getClient("package_downloader")->isConnected()
+        || !m_logosAPI->getClient("package_manager")->isConnected()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
         return;
     }

@@ -58,4 +58,5 @@ private:
     int m_selectedCategoryIndex;
     LogosAPI* m_logosAPI;
     bool m_isInstalling;
+    int m_reloadGeneration = 0;
 };

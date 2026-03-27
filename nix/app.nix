@@ -1,5 +1,5 @@
 # Builds the logos-package-manager-ui-app standalone application
-{ pkgs, common, src, logosLiblogos, logosSdk, logosPackageManagerModule, logosCapabilityModule, logosPackageManagerUI }:
+{ pkgs, common, src, logosLiblogos, logosSdk, logosPackageManagerModule, logosPackageDownloaderModule, logosCapabilityModule, logosPackageManagerUI }:
 
 pkgs.stdenv.mkDerivation rec {
   pname = "logos-package-manager-ui-app";
@@ -125,6 +125,7 @@ pkgs.stdenv.mkDerivation rec {
     echo "cpp-sdk: ${logosSdk}"
     echo "capability-module: ${logosCapabilityModule}"
     echo "package-manager-module: ${logosPackageManagerModule}"
+    echo "package-downloader-module: ${logosPackageDownloaderModule}"
     echo "package-manager-ui: ${logosPackageManagerUI}"
     
     # Verify that the built components exist
@@ -132,6 +133,7 @@ pkgs.stdenv.mkDerivation rec {
     test -d "${logosSdk}" || (echo "cpp-sdk not found" && exit 1)
     test -d "${logosCapabilityModule}" || (echo "capability-module not found" && exit 1)
     test -d "${logosPackageManagerModule}" || (echo "package-manager-module not found" && exit 1)
+    test -d "${logosPackageDownloaderModule}" || (echo "package-downloader-module not found" && exit 1)
     test -d "${logosPackageManagerUI}" || (echo "package-manager-ui not found" && exit 1)
     
     cmake -S app -B build \
@@ -208,6 +210,12 @@ pkgs.stdenv.mkDerivation rec {
       echo "Installed package_manager_plugin.$OS_EXT"
     fi
 
+    # Copy package_downloader module plugin into the modules directory
+    if [ -f "${logosPackageDownloaderModule}/lib/package_downloader_plugin.$OS_EXT" ]; then
+      cp -L "${logosPackageDownloaderModule}/lib/package_downloader_plugin.$OS_EXT" "$out/modules/"
+      echo "Installed package_downloader_plugin.$OS_EXT"
+    fi
+
     # Copy package_manager_ui Qt plugin to root directory (not modules, as it's loaded differently)
     if [ -f "${logosPackageManagerUI}/lib/package_manager_ui.$OS_EXT" ]; then
       cp -L "${logosPackageManagerUI}/lib/package_manager_ui.$OS_EXT" "$out/"
@@ -222,6 +230,7 @@ liblogos: ${logosLiblogos}
 cpp-sdk: ${logosSdk}
 capability-module: ${logosCapabilityModule}
 package-manager-module: ${logosPackageManagerModule}
+package-downloader-module: ${logosPackageDownloaderModule}
 package-manager-ui: ${logosPackageManagerUI}
 
 Runtime Layout:

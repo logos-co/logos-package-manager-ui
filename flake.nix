@@ -45,7 +45,7 @@
 
           # App package
           app = import ./nix/app.nix {
-            inherit pkgs common src logosLiblogos logosSdk logosPackageManagerModule logosCapabilityModule;
+            inherit pkgs common src logosLiblogos logosSdk logosPackageManagerModule logosPackageDownloaderModule logosCapabilityModule;
             logosPackageManagerUI = lib;
           };
         in
