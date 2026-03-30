@@ -1,29 +1,19 @@
 {
   "name": "package_manager_ui",
   "version": "1.0.0",
-  "description": "Package Manager UI - Online catalog and download/install interface",
-  "author": "Logos Core Team",
   "type": "ui",
-  "main": "package_manager_ui",
-  "dependencies": [
-    "package_manager",
-    "package_downloader"
-  ],
   "category": "ui",
-  "build": {
-    "type": "cmake",
-    "files": [
-      "src/package_manager_ui_plugin.cpp",
-      "src/package_manager_ui_plugin.h",
-      "src/PackageManagerBackend.cpp",
-      "src/PackageManagerBackend.h",
-      "src/PackageManager.qml",
-      "src/package_manager_ui_resources.qrc"
-    ]
-  },
-  "capabilities": [
-    "ui_components",
-    "package_management"
-  ],
-  "icon": "icons/modules.png"
+  "description": "Package Manager UI plugin for managing plugins and packages",
+  "main": "package_manager_ui_plugin",
+  "icon": "src/icons/modules.png",
+  "dependencies": ["package_manager", "package_downloader"],
+
+  "nix": {
+    "packages": {
+      "build": [],
+      "runtime": ["qt6.qtdeclarative", "zstd", "krb5", "abseil-cpp"]
+    },
+    "external_libraries": [],
+    "cmake": { "find_packages": [], "extra_sources": [] }
+  }
 }
