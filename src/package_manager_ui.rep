@@ -1,0 +1,41 @@
+#include <QVariantMap>
+#include <QStringList>
+
+class PackageManagerUi
+{
+    ENUM InstallStatus {
+        NotInstalled = 0,
+        Installing   = 1,
+        Installed    = 2,
+        Failed       = 3
+    }
+
+    ENUM ErrorType {
+        NoError                       = 0,
+        InstallationAlreadyInProgress = 2,
+        NoPackagesSelected            = 3,
+        PackageManagerNotConnected    = 4
+    }
+
+    ENUM ProgressType {
+        IdleState      = 0,
+        Started        = 2,
+        InProgress     = 3,
+        Completed      = 4,
+        ProgressFailed = 5
+    }
+
+    PROP(QStringList categories)
+    PROP(int selectedCategoryIndex)
+    PROP(bool hasSelectedPackages READONLY)
+    PROP(bool isInstalling READONLY)
+
+    SLOT(void reload())
+    SLOT(void install())
+    SLOT(void requestPackageDetails(int index))
+    SLOT(void togglePackage(int index, bool checked))
+
+    SIGNAL(errorOccurred(int errorType))
+    SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
+    SIGNAL(packageDetailsLoaded(QVariantMap details))
+}

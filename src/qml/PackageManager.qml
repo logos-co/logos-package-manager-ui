@@ -1,72 +1,62 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import PackageManager 1.0
+/* Enums (InstallStatus, ErrorType, ProgressType) from package_manager_ui.rep,
+registered with QML by the replica factory plugin. */
+import Logos.PackageManagerUi 1.0
 
 // TODO: this file should be refactored to be smaller and split into reusable components, use Controls etc..
 Rectangle {
     id: root
 
-    color: "#1e1e1e"
-
     QtObject {
-        id: _d
+        id: d
+            readonly property var backend: logos.module(mod)
+            readonly property var packagesModel: logos.model(mod, "packages")
+            readonly property string mod: "package_manager_ui"
             property string detailsText: "Select a package to view its details."
     }
-    
+
+    color: "#1e1e1e"
+
     Connections {
-        target: backend
-        
+        target: d.backend
+        ignoreUnknownSignals: true
+
         function onErrorOccurred(errorType) {
             switch(errorType) {
-                case PackageTypes.InstallationAlreadyInProgress:
-                    _d.detailsText = "Error: Installation already in progress.\nPlease wait for it to complete."
+                case PackageManagerUi.InstallationAlreadyInProgress:
+                    d.detailsText = "Error: Installation already in progress.\nPlease wait for it to complete."
                     break
-                case PackageTypes.NoPackagesSelected:
-                    _d.detailsText = "Error: No packages selected.\nSelect at least one package to install."
+                case PackageManagerUi.NoPackagesSelected:
+                    d.detailsText = "Error: No packages selected.\nSelect at least one package to install."
                     break
-                case PackageTypes.PackageManagerNotConnected:
-                    _d.detailsText = "Error: Package manager not connected"
+                case PackageManagerUi.PackageManagerNotConnected:
+                    d.detailsText = "Error: Package manager not connected"
                     break
             }
         }
         
         function onInstallationProgressUpdated(progressType, packageName, completed, total, success, error) {
             switch(progressType) {
-                case PackageTypes.Started:
-                    _d.detailsText = "Starting Installation...\n" + total + " package(s) queued."
+                case PackageManagerUi.Started:
+                    d.detailsText = "Starting Installation...\n" + total + " package(s) queued."
                     break
-                case PackageTypes.InProgress:
+                case PackageManagerUi.InProgress:
                     if (success) {
-                        _d.detailsText = "Successfully installed: " + packageName + "\nProgress: " + completed + "/" + total + " packages"
+                        d.detailsText = "Successfully installed: " + packageName + "\nProgress: " + completed + "/" + total + " packages"
                     }
                     break
-                case PackageTypes.ProgressFailed:
-                    _d.detailsText = "Failed to install: " + packageName + "\nError: " + error + "\nProgress: " + completed + "/" + total + " packages"
+                case PackageManagerUi.ProgressFailed:
+                    d.detailsText = "Failed to install: " + packageName + "\nError: " + error + "\nProgress: " + completed + "/" + total + " packages"
                     break
-                case PackageTypes.Completed:
-                    _d.detailsText = "Installation Complete\nFinished installing " + completed + " package(s)."
+                case PackageManagerUi.Completed:
+                    d.detailsText = "Installation Complete\nFinished installing " + completed + " package(s)."
                     break
             }
         }
         
-        function onTestPluginResult(msg, error) {
-            if (error) {
-                _d.detailsText = "Test Call Error: " + msg
-            } else {
-                _d.detailsText = "Test Call Result:\n" + msg
-            }
-        }
-
-        function onTestEventResult(msg, error) {
-            if (error) {
-                _d.detailsText = "Test Event Error: " + msg
-            } else {
-                _d.detailsText = "Test Event Result:\n" + msg
-            }
-        }
-        
-        function onPackageDetailsLoaded(details) {
+function onPackageDetailsLoaded(details) {
             // Format package details as plain text
             var text = details.name + "\n\n"
             
@@ -86,11 +76,11 @@ Rectangle {
             
             // Status
             var status = details.installStatus
-            if (status === PackageTypes.Installed) {
+            if (status === PackageManagerUi.Installed) {
                 text += "Status: Installed\n"
-            } else if (status === PackageTypes.Installing) {
+            } else if (status === PackageManagerUi.Installing) {
                 text += "Status: Installing…\n"
-            } else if (status === PackageTypes.Failed) {
+            } else if (status === PackageManagerUi.Failed) {
                 text += "Status: Failed\n"
             }
             
@@ -105,7 +95,7 @@ Rectangle {
                 text += "\nDependencies: None\n"
             }
             
-            _d.detailsText = text
+            d.detailsText = text
         }
     }
 
@@ -132,8 +122,8 @@ Rectangle {
 
             Button {
                 text: "Reload"
-                enabled: !backend.isInstalling
-                onClicked: backend.reload()
+                enabled: !(d.backend && d.backend.isInstalling)
+                onClicked: if (d.backend) d.backend.reload()
 
                 contentItem: Text {
                     text: parent.text
@@ -154,9 +144,9 @@ Rectangle {
             }
 
             Button {
-                text: backend.isInstalling ? "Installing..." : "Install"
-                enabled: backend.hasSelectedPackages && !backend.isInstalling
-                onClicked: backend.install()
+                text: (d.backend && d.backend.isInstalling) ? "Installing..." : "Install"
+                enabled: (d.backend && d.backend.hasSelectedPackages) && !(d.backend && d.backend.isInstalling)
+                onClicked: if (d.backend) d.backend.install()
 
                 contentItem: Row {
                     spacing: 6
@@ -170,7 +160,7 @@ Rectangle {
                         color: "transparent"
                         border.color: "#ffffff"
                         border.width: 2
-                        visible: backend.isInstalling
+                        visible: (d.backend && d.backend.isInstalling)
                         
                         Rectangle {
                             width: 4
@@ -187,12 +177,12 @@ Rectangle {
                             to: 360
                             duration: 1000
                             loops: Animation.Infinite
-                            running: backend.isInstalling
+                            running: (d.backend && d.backend.isInstalling)
                         }
                     }
                     
                     Text {
-                        text: backend.isInstalling ? "Installing..." : "Install"
+                        text: (d.backend && d.backend.isInstalling) ? "Installing..." : "Install"
                         font.pixelSize: 13
                         color: parent.parent.enabled ? "#ffffff" : "#808080"
                         verticalAlignment: Text.AlignVCenter
@@ -200,7 +190,7 @@ Rectangle {
                 }
 
                 background: Rectangle {
-                    implicitWidth: backend.isInstalling ? 130 : 100
+                    implicitWidth: (d.backend && d.backend.isInstalling) ? 130 : 100
                     implicitHeight: 32
                     color: parent.enabled ? (parent.pressed ? "#1a7f37" : "#238636") : "#2d2d2d"
                     radius: 4
@@ -230,15 +220,15 @@ Rectangle {
                 ListView {
                     id: categoryList
                     anchors.fill: parent
-                    model: backend.categories
-                    currentIndex: backend.selectedCategoryIndex
+                    model: d.backend ? d.backend.categories : []
+                    currentIndex: d.backend ? d.backend.selectedCategoryIndex : 0
 
                     delegate: Rectangle {
                         width: ListView.view.width
                         height: 40
                         color: ListView.isCurrentItem ? "#3d3d3d" : (mouseArea.containsMouse ? "#353535" : "transparent")
                         radius: 3
-                        enabled: !backend.isInstalling
+                        enabled: !(d.backend && d.backend.isInstalling)
 
                         Text {
                             anchors.fill: parent
@@ -253,7 +243,7 @@ Rectangle {
                             id: mouseArea
                             anchors.fill: parent
                             hoverEnabled: true
-                            onClicked: backend.selectedCategoryIndex = index
+                            onClicked: if (d.backend) d.backend.pushSelectedCategoryIndex(index)
                             enabled: parent.enabled
                         }
                     }
@@ -325,13 +315,13 @@ Rectangle {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             clip: true
-                            model: backend.packages
+                            model: d.packagesModel
 
                             delegate: Rectangle {
                                 width: ListView.view.width
                                 height: 35
                                 color: index % 2 === 0 ? "#333333" : "#2a2a2a"
-                                enabled: !backend.isInstalling
+                                enabled: !(d.backend && d.backend.isInstalling)
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -344,14 +334,14 @@ Rectangle {
 
                                         CheckBox {
                                             anchors.centerIn: parent
-                                            property bool isDisabled: !model.isVariantAvailable ||
-                                                                      model.installStatus === PackageTypes.Installed ||
-                                                                      model.installStatus === PackageTypes.Installing
+                                            property bool isDisabled: (model.isVariantAvailable !== true) ||
+                                                                      ((model.installStatus | 0) === PackageManagerUi.Installed) ||
+                                                                      ((model.installStatus | 0) === PackageManagerUi.Installing)
                                             enabled: !isDisabled
-                                            checked: model.isSelected
+                                            checked: model.isSelected === true
                                             onCheckedChanged: {
                                                 if (checked !== model.isSelected) {
-                                                    backend.togglePackage(index, checked)
+                                                    if (d.backend) d.backend.togglePackage(index, checked)
                                                 }
                                             }
 
@@ -376,17 +366,17 @@ Rectangle {
                                     }
 
                                     DataCell {
-                                        cellText: model.name
+                                        cellText: model.name || ""
                                         columnWidth: 150
                                     }
 
                                     DataCell {
-                                        cellText: model.type
+                                        cellText: model.type || ""
                                         columnWidth: 80
                                     }
 
                                     DataCell {
-                                        cellText: model.description
+                                        cellText: model.description || ""
                                         fillWidth: true
                                     }
 
@@ -402,26 +392,26 @@ Rectangle {
                                             width: 80
                                             height: 20
                                             radius: 3
-                                            color: !model.isVariantAvailable ? "#4d3a1a" :
-                                                   (model.installStatus === PackageTypes.Installing ? "#5c4a1a" :
-                                                   (model.installStatus === PackageTypes.Installed ? "#2d5016" :
-                                                   (model.installStatus === PackageTypes.Failed ? "#5c1a1a" : "#4d4d4d")))
-                                            border.color: !model.isVariantAvailable ? "#8B6914" :
-                                                          (model.installStatus === PackageTypes.Installing ? "#C9A227" :
-                                                          (model.installStatus === PackageTypes.Installed ? "#4CAF50" :
-                                                          (model.installStatus === PackageTypes.Failed ? "#C62828" : "#666666")))
+                                            color: !(model.isVariantAvailable === true) ? "#4d3a1a" :
+                                                   ((model.installStatus | 0) === PackageManagerUi.Installing ? "#5c4a1a" :
+                                                   ((model.installStatus | 0) === PackageManagerUi.Installed ? "#2d5016" :
+                                                   ((model.installStatus | 0) === PackageManagerUi.Failed ? "#5c1a1a" : "#4d4d4d")))
+                                            border.color: !(model.isVariantAvailable === true) ? "#8B6914" :
+                                                          ((model.installStatus | 0) === PackageManagerUi.Installing ? "#C9A227" :
+                                                          ((model.installStatus | 0) === PackageManagerUi.Installed ? "#4CAF50" :
+                                                          ((model.installStatus | 0) === PackageManagerUi.Failed ? "#C62828" : "#666666")))
                                             border.width: 1
 
                                             Text {
                                                 anchors.centerIn: parent
-                                                text: !model.isVariantAvailable ? "Not Available" :
-                                                      (model.installStatus === PackageTypes.Installing ? "Installing…" :
-                                                      (model.installStatus === PackageTypes.Installed ? "Installed" :
-                                                      (model.installStatus === PackageTypes.Failed ? "Failed" : "Not Installed")))
-                                                color: !model.isVariantAvailable ? "#C9A227" :
-                                                       (model.installStatus === PackageTypes.Installing ? "#E6C547" :
-                                                       (model.installStatus === PackageTypes.Installed ? "#8BC34A" :
-                                                       (model.installStatus === PackageTypes.Failed ? "#EF5350" : "#999999")))
+                                                text: !(model.isVariantAvailable === true) ? "Not Available" :
+                                                      ((model.installStatus | 0) === PackageManagerUi.Installing ? "Installing…" :
+                                                      ((model.installStatus | 0) === PackageManagerUi.Installed ? "Installed" :
+                                                      ((model.installStatus | 0) === PackageManagerUi.Failed ? "Failed" : "Not Installed")))
+                                                color: !(model.isVariantAvailable === true) ? "#C9A227" :
+                                                       ((model.installStatus | 0) === PackageManagerUi.Installing ? "#E6C547" :
+                                                       ((model.installStatus | 0) === PackageManagerUi.Installed ? "#8BC34A" :
+                                                       ((model.installStatus | 0) === PackageManagerUi.Failed ? "#EF5350" : "#999999")))
                                                 font.pixelSize: 11
                                             }
                                         }
@@ -430,7 +420,7 @@ Rectangle {
 
                                 MouseArea {
                                     anchors.fill: parent
-                                    onClicked: backend.requestPackageDetails(index)
+                                    onClicked: if (d.backend) d.backend.requestPackageDetails(index)
                                     z: -1
                                 }
                             }
@@ -450,7 +440,7 @@ Rectangle {
                         anchors.margins: 10
 
                         TextArea {
-                            text: _d.detailsText
+                            text: d.detailsText
                             color: "#ffffff"
                             readOnly: true
                             wrapMode: Text.Wrap
