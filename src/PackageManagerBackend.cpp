@@ -1,22 +1,32 @@
 #include "PackageManagerBackend.h"
 #include <QDebug>
+#include <QTimer>
 #include <QVariant>
 #include <QPointer>
 #include <QSet>
 #include "logos_sdk.h"
 
 PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent)
-    : QObject(parent)
+    : PackageManagerUiSimpleSource(parent)
     , m_packageModel(new PackageListModel(this))
-    , m_selectedCategoryIndex(0)
     , m_logosAPI(logosAPI)
-    , m_isInstalling(false)
 {
+    // Initialise base-class properties to sane defaults.
+    setSelectedCategoryIndex(0);
+    setHasSelectedPackages(false);
+    setIsInstalling(false);
+
+    // Changing the selected category triggers a reload.
+    connect(this, &PackageManagerUiSimpleSource::selectedCategoryIndexChanged,
+            this, &PackageManagerBackend::reload);
+
     if (!m_logosAPI) {
         m_logosAPI = new LogosAPI("core", this);
     }
 
-    reload();
+    // Defer the first reload until the event loop starts so ui-host can signal
+    // ready and the Package Manager tab appears immediately.
+    QTimer::singleShot(0, this, &PackageManagerBackend::reload);
 }
 
 PackageListModel* PackageManagerBackend::packages() const
@@ -24,41 +34,9 @@ PackageListModel* PackageManagerBackend::packages() const
     return m_packageModel;
 }
 
-QStringList PackageManagerBackend::categories() const
+void PackageManagerBackend::refreshHasSelectedPackages()
 {
-    return m_categories;
-}
-
-int PackageManagerBackend::selectedCategoryIndex() const
-{
-    return m_selectedCategoryIndex;
-}
-
-void PackageManagerBackend::setSelectedCategoryIndex(int index)
-{
-    if (m_selectedCategoryIndex != index && index >= 0 && index < m_categories.size()) {
-        m_selectedCategoryIndex = index;
-        emit selectedCategoryIndexChanged();
-        reload();
-    }
-}
-
-bool PackageManagerBackend::hasSelectedPackages() const
-{
-    return m_packageModel->getSelectedCount() > 0;
-}
-
-bool PackageManagerBackend::isInstalling() const
-{
-    return m_isInstalling;
-}
-
-void PackageManagerBackend::setIsInstalling(bool installing)
-{
-    if (m_isInstalling != installing) {
-        m_isInstalling = installing;
-        emit isInstallingChanged();
-    }
+    setHasSelectedPackages(m_packageModel->getSelectedCount() > 0);
 }
 
 void PackageManagerBackend::reload()
@@ -77,11 +55,10 @@ void PackageManagerBackend::reload()
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.getCategoriesAsync([self, currentGeneration](QVariant result) {
         if (!self || self->m_reloadGeneration != currentGeneration) return;
-        QStringList categories = result.toStringList();
-        self->m_categories = categories;
-        emit self->categoriesChanged();
+        QStringList categoryList = result.toStringList();
+        self->setCategories(categoryList);
 
-        QString selectedCategory = self->m_categories.value(self->m_selectedCategoryIndex, "All");
+        QString selectedCategory = categoryList.value(self->selectedCategoryIndex(), "All");
 
         LogosModules logos2(self->m_logosAPI);
         logos2.package_downloader.getPackagesAsync(selectedCategory, [self, currentGeneration](QVariantList packagesArray) {
@@ -133,8 +110,6 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
             ? static_cast<int>(PackageTypes::Installed)
             : static_cast<int>(PackageTypes::NotInstalled);
 
-        // Determine variant availability by checking if any of the package's
-        // variants match the platform's valid variants
         QVariantList packageVariants = obj.value("variants").toList();
         bool variantAvailable = false;
         for (const QVariant& pv : packageVariants) {
@@ -156,6 +131,7 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
     }
 
     m_packageModel->setPackages(packages);
+    refreshHasSelectedPackages();
 }
 
 void PackageManagerBackend::processDownloadResults(const QVariantList& results)
@@ -172,7 +148,6 @@ void PackageManagerBackend::processDownloadResults(const QVariantList& results)
 
 void PackageManagerBackend::installNextPackage(const QVariantList& results, int index, int completed, int totalPackages)
 {
-    // Skip failed downloads
     while (index < results.size()) {
         QVariantMap dl = results[index].toMap();
         QString packageName = dl.value("name").toString();
@@ -191,7 +166,6 @@ void PackageManagerBackend::installNextPackage(const QVariantList& results, int 
             continue;
         }
 
-        // Install this package async
         qDebug() << "Download complete for" << packageName << "at" << filePath << "— installing...";
         LogosModules logos(m_logosAPI);
         QPointer<PackageManagerBackend> self(this);
@@ -210,35 +184,33 @@ void PackageManagerBackend::installNextPackage(const QVariantList& results, int 
                 }
 
                 int newCompleted = completed + 1;
-                QString error = installResult.value("error").toString();
+                QString err = installResult.value("error").toString();
                 emit self->installationProgressUpdated(
                     success ? static_cast<int>(PackageTypes::InProgress)
                             : static_cast<int>(PackageTypes::ProgressFailed),
                     packageName, newCompleted, totalPackages, success,
-                    success ? "" : error);
+                    success ? "" : err);
 
                 self->installNextPackage(results, index + 1, newCompleted, totalPackages);
             });
         return;
     }
 
-    // All packages processed
     finishInstallation(completed);
 }
 
 void PackageManagerBackend::finishInstallation(int completed)
 {
     m_packageModel->clearAllSelections();
-    emit hasSelectedPackagesChanged();
+    refreshHasSelectedPackages();
     setIsInstalling(false);
     emit installationProgressUpdated(
         static_cast<int>(PackageTypes::Completed), "", completed, completed, true, "");
 }
 
-
 void PackageManagerBackend::install()
 {
-    if (m_isInstalling) {
+    if (isInstalling()) {
         emit errorOccurred(static_cast<int>(PackageTypes::InstallationAlreadyInProgress));
         return;
     }
@@ -265,7 +237,6 @@ void PackageManagerBackend::install()
         m_packageModel->updatePackageInstallation(packageName, static_cast<int>(PackageTypes::Installing));
     }
 
-    // Download all packages async; when done, process results (install each)
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadPackagesAsync(selectedNames, [self](QVariantList results) {
@@ -280,12 +251,11 @@ void PackageManagerBackend::requestPackageDetails(int index)
     if (pkg.isEmpty()) {
         return;
     }
-
     emit packageDetailsLoaded(pkg);
 }
 
 void PackageManagerBackend::togglePackage(int index, bool checked)
 {
     m_packageModel->updatePackageSelection(index, checked);
-    emit hasSelectedPackagesChanged();
+    refreshHasSelectedPackages();
 }

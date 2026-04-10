@@ -1,11 +1,12 @@
 {
   "name": "package_manager_ui",
   "version": "1.0.0",
-  "type": "ui",
+  "type": "ui_qml",
   "category": "ui",
   "description": "Package Manager UI plugin for managing plugins and packages",
   "main": "package_manager_ui_plugin",
   "icon": "src/icons/modules.png",
+  "view": "qml/PackageManager.qml",
   "dependencies": ["package_manager", "package_downloader"],
 
   "nix": {

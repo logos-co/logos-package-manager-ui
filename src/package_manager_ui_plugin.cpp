@@ -1,46 +1,19 @@
 #include "package_manager_ui_plugin.h"
 #include "PackageManagerBackend.h"
-#include "PackageTypes.h"
 
-#include <QQuickWidget>
-#include <QQmlContext>
-#include <QQuickStyle>
-#include <QQmlEngine>
+#include <QDebug>
 
-PackageManagerUIPlugin::PackageManagerUIPlugin(QObject* parent)
+PackageManagerUiPlugin::PackageManagerUiPlugin(QObject* parent)
     : QObject(parent)
 {
 }
 
-PackageManagerUIPlugin::~PackageManagerUIPlugin()
+PackageManagerUiPlugin::~PackageManagerUiPlugin() = default;
+
+void PackageManagerUiPlugin::initLogos(LogosAPI* api)
 {
-}
-
-QWidget* PackageManagerUIPlugin::createWidget(LogosAPI* logosAPI)
-{
-    QQuickStyle::setStyle("Basic");
-
-    QQuickWidget* quickWidget = new QQuickWidget();
-    quickWidget->setMinimumSize(800, 600);
-    quickWidget->setResizeMode(QQuickWidget::SizeRootObjectToView);
-
-    // Register PackageTypes before creating QML engine context
-    qmlRegisterUncreatableMetaObject(
-        PackageTypes::staticMetaObject,
-        "PackageManager",
-        1, 0,
-        "PackageTypes",
-        "PackageTypes is a namespace for enums only"
-    );
-
-    PackageManagerBackend* backend = new PackageManagerBackend(logosAPI, quickWidget);
-    quickWidget->rootContext()->setContextProperty("backend", backend);
-    quickWidget->setSource(QUrl("qrc:/PackageManager.qml"));
-
-    return quickWidget;
-}
-
-void PackageManagerUIPlugin::destroyWidget(QWidget* widget)
-{
-    delete widget;
+    if (m_backend) return;
+    m_backend = new PackageManagerBackend(api, this);
+    setBackend(m_backend);
+    qDebug() << "PackageManagerUiPlugin: backend initialized";
 }

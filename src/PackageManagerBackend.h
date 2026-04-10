@@ -8,41 +8,35 @@
 #include "logos_api_client.h"
 #include "PackageListModel.h"
 #include "PackageTypes.h"
+#include "rep_package_manager_ui_source.h"
 
-class PackageManagerBackend : public QObject {
+// PackageManagerBackend is the source-side implementation of the
+// PackageManagerUi .rep interface. Inheriting from the generated
+// PackageManagerUiSimpleSource gives us a single source of truth for the
+// properties / signals / slots and a real static metaobject that can be
+// remoted via QRemoteObjectNode::enableRemoting() when this module runs as
+// a view module.
+//
+// The PackageListModel* is kept as a subclass-only Q_PROPERTY because
+// QAbstractItemModel* can't flow through a .rep — it's remoted separately
+// via QRemoteObjectNode::enableRemoting(model, "packages") on the host
+// side, and exposed to QML through logos.model(...).
+class PackageManagerBackend : public PackageManagerUiSimpleSource {
     Q_OBJECT
     Q_PROPERTY(PackageListModel* packages READ packages CONSTANT)
-    Q_PROPERTY(QStringList categories READ categories NOTIFY categoriesChanged)
-    Q_PROPERTY(int selectedCategoryIndex READ selectedCategoryIndex WRITE setSelectedCategoryIndex NOTIFY selectedCategoryIndexChanged)
-    Q_PROPERTY(bool hasSelectedPackages READ hasSelectedPackages NOTIFY hasSelectedPackagesChanged)
-    Q_PROPERTY(bool isInstalling READ isInstalling NOTIFY isInstallingChanged)
 
 public:
     explicit PackageManagerBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
     ~PackageManagerBackend() = default;
 
     PackageListModel* packages() const;
-    QStringList categories() const;
-    int selectedCategoryIndex() const;
-    void setSelectedCategoryIndex(int index);
-    bool hasSelectedPackages() const;
-    bool isInstalling() const;
 
 public slots:
-    void reload();
-    void install();
-    void requestPackageDetails(int index);
-    void togglePackage(int index, bool checked);
-
-signals:
-    void categoriesChanged();
-    void selectedCategoryIndexChanged();
-    void hasSelectedPackagesChanged();
-    void isInstallingChanged();
-
-    void errorOccurred(int errorType);
-    void installationProgressUpdated(int progressType, const QString& packageName, int completed, int total, bool success, const QString& error);
-    void packageDetailsLoaded(const QVariantMap& details);
+    // Overrides of the pure-virtual slots generated from the .rep.
+    void reload() override;
+    void install() override;
+    void requestPackageDetails(int index) override;
+    void togglePackage(int index, bool checked) override;
 
 private:
     void setPackagesFromVariantList(const QVariantList& packagesArray,
@@ -51,12 +45,9 @@ private:
     void processDownloadResults(const QVariantList& results);
     void installNextPackage(const QVariantList& results, int index, int completed, int totalPackages);
     void finishInstallation(int completed);
-    void setIsInstalling(bool installing);
+    void refreshHasSelectedPackages();
 
     PackageListModel* m_packageModel;
-    QStringList m_categories;
-    int m_selectedCategoryIndex;
     LogosAPI* m_logosAPI;
-    bool m_isInstalling;
     int m_reloadGeneration = 0;
 };
