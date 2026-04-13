@@ -17,7 +17,12 @@ public:
         IsSelectedRole,
         InstallStatusRole,
         DependenciesRole,
-        IsVariantAvailableRole
+        IsVariantAvailableRole,
+        VersionRole,
+        InstalledVersionRole,
+        HashRole,
+        InstalledHashRole,
+        ErrorMessageRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);
@@ -29,7 +34,8 @@ public:
 
     void setPackages(const QList<QVariantMap>& packages);
     void updatePackageSelection(int index, bool isSelected);
-    void updatePackageInstallation(const QString& packageName, int status);
+    void updatePackageInstallation(const QString& packageName, int status,
+                                   const QString& errorMessage = QString());
 
     QStringList getSelectedPackageNames() const;
     int getSelectedCount() const;
