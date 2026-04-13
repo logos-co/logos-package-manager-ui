@@ -4,10 +4,13 @@
 class PackageManagerUi
 {
     ENUM InstallStatus {
-        NotInstalled = 0,
-        Installing   = 1,
-        Installed    = 2,
-        Failed       = 3
+        NotInstalled       = 0,
+        Installing         = 1,
+        Installed          = 2,
+        Failed             = 3,
+        UpgradeAvailable   = 4,
+        DowngradeAvailable = 5,
+        DifferentHash      = 6
     }
 
     ENUM ErrorType {
@@ -27,8 +30,11 @@ class PackageManagerUi
 
     PROP(QStringList categories)
     PROP(int selectedCategoryIndex)
+    PROP(QStringList releases)
+    PROP(int selectedReleaseIndex)
     PROP(bool hasSelectedPackages READONLY)
     PROP(bool isInstalling READONLY)
+    PROP(bool isLoading READONLY)
 
     SLOT(void reload())
     SLOT(void install())

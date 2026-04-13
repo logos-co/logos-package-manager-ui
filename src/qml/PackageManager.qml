@@ -15,6 +15,60 @@ Rectangle {
             readonly property var packagesModel: logos.model(mod, "packages")
             readonly property string mod: "package_manager_ui"
             property string detailsText: "Select a package to view its details."
+
+            function shortHash(h) {
+                if (!h) return ""
+                if (h.length <= 16) return h
+                return h.substring(0, 8) + "…" + h.substring(h.length - 8)
+            }
+
+            function statusBgColor(row) {
+                if (row.isVariantAvailable !== true) return "#4d3a1a"
+                var s = row.installStatus | 0
+                if (s === PackageManagerUi.Installing) return "#5c4a1a"
+                if (s === PackageManagerUi.Installed) return "#2d5016"
+                if (s === PackageManagerUi.Failed) return "#5c1a1a"
+                if (s === PackageManagerUi.UpgradeAvailable) return "#1a3f5c"
+                if (s === PackageManagerUi.DowngradeAvailable) return "#3d1a5c"
+                if (s === PackageManagerUi.DifferentHash) return "#5c3d1a"
+                return "#4d4d4d"
+            }
+
+            function statusBorderColor(row) {
+                if (row.isVariantAvailable !== true) return "#8B6914"
+                var s = row.installStatus | 0
+                if (s === PackageManagerUi.Installing) return "#C9A227"
+                if (s === PackageManagerUi.Installed) return "#4CAF50"
+                if (s === PackageManagerUi.Failed) return "#C62828"
+                if (s === PackageManagerUi.UpgradeAvailable) return "#4A90E2"
+                if (s === PackageManagerUi.DowngradeAvailable) return "#8E4AE2"
+                if (s === PackageManagerUi.DifferentHash) return "#E28E4A"
+                return "#666666"
+            }
+
+            function statusTextColor(row) {
+                if (row.isVariantAvailable !== true) return "#C9A227"
+                var s = row.installStatus | 0
+                if (s === PackageManagerUi.Installing) return "#E6C547"
+                if (s === PackageManagerUi.Installed) return "#8BC34A"
+                if (s === PackageManagerUi.Failed) return "#EF5350"
+                if (s === PackageManagerUi.UpgradeAvailable) return "#7ab8ff"
+                if (s === PackageManagerUi.DowngradeAvailable) return "#C084FF"
+                if (s === PackageManagerUi.DifferentHash) return "#FFB870"
+                return "#999999"
+            }
+
+            function statusText(row) {
+                if (row.isVariantAvailable !== true) return "Not Available"
+                var s = row.installStatus | 0
+                if (s === PackageManagerUi.Installing) return "Installing…"
+                if (s === PackageManagerUi.Installed) return "Installed"
+                if (s === PackageManagerUi.Failed) return "Failed"
+                if (s === PackageManagerUi.UpgradeAvailable) return "Upgrade"
+                if (s === PackageManagerUi.DowngradeAvailable) return "Downgrade"
+                if (s === PackageManagerUi.DifferentHash) return "Different Hash"
+                return "Not Installed"
+            }
     }
 
     color: "#1e1e1e"
@@ -59,31 +113,53 @@ Rectangle {
 function onPackageDetailsLoaded(details) {
             // Format package details as plain text
             var text = details.name + "\n\n"
-            
+
             if (details.moduleName && details.moduleName !== details.name) {
                 text += "Module Name: " + details.moduleName + "\n"
             }
-            
+
             text += "Description: " + (details.description || "No description available") + "\n\n"
-            
+
             if (details.type) {
                 text += "Type: " + details.type + "\n"
             }
-            
+
             if (details.category) {
                 text += "Category: " + details.category + "\n"
             }
-            
-            // Status
-            var status = details.installStatus
+
+            // Status block
+            var status = details.installStatus | 0
+            var releaseVersion = details.version || ""
+            var releaseHash = details.hash || ""
+            var installedVersion = details.installedVersion || ""
+            var installedHash = details.installedHash || ""
+
             if (status === PackageManagerUi.Installed) {
                 text += "Status: Installed\n"
+                if (installedVersion) text += "Installed version: " + installedVersion + "\n"
+                if (installedHash) text += "Installed hash: " + d.shortHash(installedHash) + "\n"
             } else if (status === PackageManagerUi.Installing) {
                 text += "Status: Installing…\n"
             } else if (status === PackageManagerUi.Failed) {
                 text += "Status: Failed\n"
+                if (details.errorMessage) {
+                    text += "Error: " + details.errorMessage + "\n"
+                }
+            } else if (status === PackageManagerUi.UpgradeAvailable
+                       || status === PackageManagerUi.DowngradeAvailable
+                       || status === PackageManagerUi.DifferentHash) {
+                if (status === PackageManagerUi.UpgradeAvailable) text += "Status: Upgrade Available\n"
+                else if (status === PackageManagerUi.DowngradeAvailable) text += "Status: Downgrade Available\n"
+                else text += "Status: Different Hash\n"
+                text += "Installed: " + installedVersion + " (" + d.shortHash(installedHash) + ")\n"
+                text += "Release:   " + releaseVersion + " (" + d.shortHash(releaseHash) + ")\n"
+            } else {
+                text += "Status: Not Installed\n"
+                if (releaseVersion) text += "Release version: " + releaseVersion + "\n"
+                if (releaseHash) text += "Release hash: " + d.shortHash(releaseHash) + "\n"
             }
-            
+
             // Dependencies
             var deps = details.dependencies
             if (deps && deps.length > 0) {
@@ -94,7 +170,7 @@ function onPackageDetailsLoaded(details) {
             } else {
                 text += "\nDependencies: None\n"
             }
-            
+
             d.detailsText = text
         }
     }
@@ -204,6 +280,92 @@ function onPackageDetailsLoaded(details) {
             }
 
             Item { Layout.fillWidth: true }
+
+            Text {
+                text: "Release:"
+                color: "#a0a0a0"
+                font.pixelSize: 13
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            ComboBox {
+                id: releaseCombo
+                model: d.backend ? d.backend.releases : []
+                currentIndex: d.backend ? d.backend.selectedReleaseIndex : 0
+                enabled: !(d.backend && (d.backend.isInstalling || d.backend.isLoading))
+                Layout.minimumWidth: 200
+                Layout.preferredWidth: Math.max(200, releaseMetrics.advanceWidth + 50)
+                implicitHeight: 32
+
+                TextMetrics {
+                    id: releaseMetrics
+                    font.pixelSize: 13
+                    text: releaseCombo.displayText
+                }
+
+                displayText: (d.backend && d.backend.isLoading
+                              && (d.backend.releases ? d.backend.releases.length : 0) <= 1)
+                             ? "Loading releases…"
+                             : currentText
+
+                onActivated: function(index) {
+                    if (d.backend) d.backend.pushSelectedReleaseIndex(index)
+                }
+
+                contentItem: Text {
+                    leftPadding: 10
+                    rightPadding: releaseCombo.indicator ? releaseCombo.indicator.width + 10 : 30
+                    text: releaseCombo.displayText
+                    font.pixelSize: 13
+                    color: releaseCombo.enabled ? "#ffffff" : "#808080"
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideNone
+                }
+
+                background: Rectangle {
+                    color: releaseCombo.enabled
+                           ? (releaseCombo.pressed ? "#3d3d3d" : "#4d4d4d")
+                           : "#2d2d2d"
+                    radius: 4
+                    border.color: releaseCombo.enabled ? "#5d5d5d" : "#3d3d3d"
+                    border.width: 1
+                }
+
+                popup: Popup {
+                    y: releaseCombo.height + 2
+                    width: releaseCombo.width
+                    implicitHeight: contentItem.implicitHeight
+                    padding: 1
+
+                    contentItem: ListView {
+                        clip: true
+                        implicitHeight: contentHeight
+                        model: releaseCombo.popup.visible ? releaseCombo.delegateModel : null
+                        currentIndex: releaseCombo.highlightedIndex
+                    }
+
+                    background: Rectangle {
+                        color: "#2d2d2d"
+                        border.color: "#5d5d5d"
+                        radius: 4
+                    }
+                }
+
+                delegate: ItemDelegate {
+                    width: releaseCombo.width
+                    contentItem: Text {
+                        text: modelData
+                        color: "#ffffff"
+                        font.pixelSize: 13
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+                    highlighted: releaseCombo.highlightedIndex === index
+                    background: Rectangle {
+                        color: highlighted ? "#3d3d3d" : "transparent"
+                    }
+                }
+            }
         }
 
         SplitView {
@@ -255,6 +417,7 @@ function onPackageDetailsLoaded(details) {
                 spacing: 0
 
                 Rectangle {
+                    id: packageListPane
                     Layout.fillWidth: true
                     Layout.preferredHeight: parent.height * 0.6
                     color: "#333333"
@@ -265,6 +428,8 @@ function onPackageDetailsLoaded(details) {
                         anchors.fill: parent
                         anchors.margins: 10
                         spacing: 0
+                        opacity: (d.backend && d.backend.isLoading) ? 0.4 : 1.0
+                        enabled: !(d.backend && d.backend.isLoading)
 
                         Rectangle {
                             Layout.fillWidth: true
@@ -299,7 +464,7 @@ function onPackageDetailsLoaded(details) {
 
                                 HeaderColumn {
                                     headerText: "Status"
-                                    columnWidth: 90
+                                    columnWidth: 120
                                 }
                             }
                         }
@@ -335,8 +500,7 @@ function onPackageDetailsLoaded(details) {
                                         CheckBox {
                                             anchors.centerIn: parent
                                             property bool isDisabled: (model.isVariantAvailable !== true) ||
-                                                                      ((model.installStatus | 0) === PackageManagerUi.Installed) ||
-                                                                      ((model.installStatus | 0) === PackageManagerUi.Installing)
+                                                                      ((model.installStatus | 0) !== PackageManagerUi.NotInstalled)
                                             enabled: !isDisabled
                                             checked: model.isSelected === true
                                             onCheckedChanged: {
@@ -381,7 +545,7 @@ function onPackageDetailsLoaded(details) {
                                     }
 
                                     Rectangle {
-                                        Layout.preferredWidth: 90
+                                        Layout.preferredWidth: 120
                                         Layout.fillHeight: true
                                         color: "transparent"
 
@@ -389,29 +553,17 @@ function onPackageDetailsLoaded(details) {
                                             anchors.left: parent.left
                                             anchors.leftMargin: 10
                                             anchors.verticalCenter: parent.verticalCenter
-                                            width: 80
+                                            width: 100
                                             height: 20
                                             radius: 3
-                                            color: !(model.isVariantAvailable === true) ? "#4d3a1a" :
-                                                   ((model.installStatus | 0) === PackageManagerUi.Installing ? "#5c4a1a" :
-                                                   ((model.installStatus | 0) === PackageManagerUi.Installed ? "#2d5016" :
-                                                   ((model.installStatus | 0) === PackageManagerUi.Failed ? "#5c1a1a" : "#4d4d4d")))
-                                            border.color: !(model.isVariantAvailable === true) ? "#8B6914" :
-                                                          ((model.installStatus | 0) === PackageManagerUi.Installing ? "#C9A227" :
-                                                          ((model.installStatus | 0) === PackageManagerUi.Installed ? "#4CAF50" :
-                                                          ((model.installStatus | 0) === PackageManagerUi.Failed ? "#C62828" : "#666666")))
+                                            color: d.statusBgColor(model)
+                                            border.color: d.statusBorderColor(model)
                                             border.width: 1
 
                                             Text {
                                                 anchors.centerIn: parent
-                                                text: !(model.isVariantAvailable === true) ? "Not Available" :
-                                                      ((model.installStatus | 0) === PackageManagerUi.Installing ? "Installing…" :
-                                                      ((model.installStatus | 0) === PackageManagerUi.Installed ? "Installed" :
-                                                      ((model.installStatus | 0) === PackageManagerUi.Failed ? "Failed" : "Not Installed")))
-                                                color: !(model.isVariantAvailable === true) ? "#C9A227" :
-                                                       ((model.installStatus | 0) === PackageManagerUi.Installing ? "#E6C547" :
-                                                       ((model.installStatus | 0) === PackageManagerUi.Installed ? "#8BC34A" :
-                                                       ((model.installStatus | 0) === PackageManagerUi.Failed ? "#EF5350" : "#999999")))
+                                                text: d.statusText(model)
+                                                color: d.statusTextColor(model)
                                                 font.pixelSize: 11
                                             }
                                         }
@@ -424,6 +576,37 @@ function onPackageDetailsLoaded(details) {
                                     z: -1
                                 }
                             }
+                        }
+                    }
+
+                    // Loading spinner overlay (covers the package list pane only,
+                    // so the category sidebar stays responsive).
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 36
+                        height: 36
+                        radius: 18
+                        color: "transparent"
+                        border.color: "#ffffff"
+                        border.width: 3
+                        visible: d.backend && d.backend.isLoading
+
+                        Rectangle {
+                            width: 6
+                            height: 6
+                            radius: 3
+                            color: "#ffffff"
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: 2
+                        }
+
+                        RotationAnimation on rotation {
+                            from: 0
+                            to: 360
+                            duration: 1000
+                            loops: Animation.Infinite
+                            running: d.backend && d.backend.isLoading
                         }
                     }
                 }

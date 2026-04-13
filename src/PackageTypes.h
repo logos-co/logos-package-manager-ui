@@ -10,7 +10,10 @@ public:
         NotInstalled = 0,
         Installing = 1,
         Installed = 2,
-        Failed = 3
+        Failed = 3,
+        UpgradeAvailable = 4,
+        DowngradeAvailable = 5,
+        DifferentHash = 6
     };
     Q_ENUM(InstallStatus)
 

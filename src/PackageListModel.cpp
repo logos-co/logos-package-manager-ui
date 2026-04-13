@@ -41,6 +41,16 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
             return package.value("dependencies");
         case IsVariantAvailableRole:
             return package.value("isVariantAvailable", false);
+        case VersionRole:
+            return package.value("version");
+        case InstalledVersionRole:
+            return package.value("installedVersion");
+        case HashRole:
+            return package.value("hash");
+        case InstalledHashRole:
+            return package.value("installedHash");
+        case ErrorMessageRole:
+            return package.value("errorMessage");
         default:
             return QVariant();
     }
@@ -58,6 +68,11 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
     roles[InstallStatusRole] = "installStatus";
     roles[DependenciesRole] = "dependencies";
     roles[IsVariantAvailableRole] = "isVariantAvailable";
+    roles[VersionRole] = "version";
+    roles[InstalledVersionRole] = "installedVersion";
+    roles[HashRole] = "hash";
+    roles[InstalledHashRole] = "installedHash";
+    roles[ErrorMessageRole] = "errorMessage";
     return roles;
 }
 
@@ -92,14 +107,16 @@ void PackageListModel::updatePackageSelection(int index, bool isSelected)
     emit dataChanged(modelIndex, modelIndex, {IsSelectedRole});
 }
 
-void PackageListModel::updatePackageInstallation(const QString& packageName, int status)
+void PackageListModel::updatePackageInstallation(const QString& packageName, int status,
+                                                  const QString& errorMessage)
 {
     for (int i = 0; i < m_packages.size(); ++i) {
         if (m_packages[i].value("name").toString() == packageName) {
             m_packages[i]["installStatus"] = status;
+            m_packages[i]["errorMessage"] = errorMessage;
 
             QModelIndex modelIndex = createIndex(i, 0);
-            emit dataChanged(modelIndex, modelIndex, {InstallStatusRole});
+            emit dataChanged(modelIndex, modelIndex, {InstallStatusRole, ErrorMessageRole});
             break;
         }
     }
