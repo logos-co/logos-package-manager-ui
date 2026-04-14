@@ -90,6 +90,35 @@ result/
 └── package_manager_ui.dylib             # Qt plugin (loaded by app)
 ```
 
+## Testing
+
+UI integration tests use [logos-qt-mcp](https://github.com/logos-co/logos-qt-mcp) to drive the plugin UI inside [logos-standalone-app](https://github.com/logos-co/logos-standalone-app) (headless).
+
+### Hermetic CI test (one command)
+
+```bash
+nix build .#integration-test -L
+```
+
+This builds everything (including logos-standalone-app and the QML inspector), launches the plugin in headless mode, and runs the UI tests automatically. No extra inputs needed — the test infrastructure is provided by logos-module-builder via logos-standalone-app.
+
+### Interactive testing
+
+```bash
+# 1. Build the plugin
+nix build
+
+# 2. Build the test framework (one-time)
+nix build .#test-framework -o result-mcp
+
+# 3. Run the plugin in logos-standalone-app (inspector starts on :3768)
+nix run
+
+# 4. Run the tests against the running app
+node tests/ui-tests.mjs
+```
+
+
 ## Requirements
 
 ### Build Tools
