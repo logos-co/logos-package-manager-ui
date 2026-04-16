@@ -135,12 +135,12 @@ Rectangle {
             }
         }
 
-        function onUninstallFinished(name, success, error) {
-            if (success) {
-                d.detailsText = "Uninstalled: " + name
-            } else {
-                d.detailsText = "Failed to uninstall " + name + "\nError: " + error
-            }
+        function onCancellationOccurred(name, message) {
+            // Backend pre-formats `message` (e.g. "Uninstall of 'foo'
+            // cancelled: timeout") so QML renders it as-is, avoiding the
+            // "Failed to install" prefix that the progress channel would
+            // otherwise impose on uninstall/upgrade cancellations.
+            d.detailsText = message
         }
 
         function onInstallationProgressUpdated(progressType, packageName, completed, total, success, error) {

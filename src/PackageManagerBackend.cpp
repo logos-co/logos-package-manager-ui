@@ -635,9 +635,11 @@ void PackageManagerBackend::subscribePackageManagerCancellationEvents()
             if (reason == kReasonUserCancelled) return;  // silent
             const QString msg = QStringLiteral("Uninstall of '%1' cancelled: %2")
                                     .arg(name, reason);
-            emit self->installationProgressUpdated(
-                static_cast<int>(PackageTypes::ProgressFailed),
-                name, 0, 0, false, msg);
+            // Dedicated cancellation channel — routing through
+            // installationProgressUpdated(ProgressFailed, ...) used to make
+            // QML render the message with a hardcoded "Failed to install"
+            // prefix, which was misleading for uninstall cancellations.
+            emit self->cancellationOccurred(name, msg);
         });
 
     logos.package_manager.on("upgradeCancelled",
@@ -656,9 +658,10 @@ void PackageManagerBackend::subscribePackageManagerCancellationEvents()
             if (reason == kReasonUserCancelled) return;  // silent
             const QString msg = QStringLiteral("Upgrade of '%1' (%2) cancelled: %3")
                                     .arg(name, releaseTag, reason);
-            emit self->installationProgressUpdated(
-                static_cast<int>(PackageTypes::ProgressFailed),
-                name, 0, 0, false, msg);
+            // Same rationale as uninstallCancelled above — use the dedicated
+            // cancellation channel so the toast doesn't render as "Failed to
+            // install".
+            emit self->cancellationOccurred(name, msg);
         });
 }
 
@@ -716,58 +719,74 @@ void PackageManagerBackend::subscribePackageManagerUpgradeEvents()
         });
 }
 
-void PackageManagerBackend::onUpgradeUninstallDone(const QString& name,
+void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
                                                     const QString& releaseTag,
                                                     int mode)
 {
+    // The module's upgradeUninstallDone payload carries the moduleName (stable
+    // identifier the gated uninstall/upgrade flow keyed on) as `name`. Map it
+    // back to the catalog `name` here — that's what package_downloader keys
+    // on (see install() → downloadPackagesAsync(tag, selectedNames) where
+    // selectedNames come from getSelectedPackageNames() → catalog names), and
+    // it's what user-visible text should show. Fall back to moduleName if
+    // no catalog row matches (package dropped from the active category filter
+    // between requestUpgrade and upgradeUninstallDone — unlikely but cheap to
+    // handle).
+    const QString mapped = m_packageModel
+        ? m_packageModel->displayNameForModule(moduleName) : QString();
+    const QString displayName = mapped.isEmpty() ? moduleName : mapped;
+
     if (!m_logosAPI
         || !m_logosAPI->getClient("package_downloader")->isConnected()
         || !m_logosAPI->getClient("package_manager")->isConnected()) {
         const QString msg = QStringLiteral("Cannot complete upgrade of '%1': "
-                                           "required modules not connected").arg(name);
+                                           "required modules not connected").arg(displayName);
         emit installationProgressUpdated(
             static_cast<int>(PackageTypes::ProgressFailed),
-            name, 0, 0, false, msg);
+            displayName, 0, 0, false, msg);
         return;
     }
 
-    // Cancel the pending debounced reload — doUninstall already armed it via
-    // the corePluginUninstalled / uiPluginUninstalled event, but we're about
-    // to re-install the new version. Letting the intermediate reload fire
-    // would flash the row as "Not Installed" before the download finishes.
-    // The explicit refreshPackages() at the end of the install callback
-    // brings the catalog fully up to date.
+    // Cancel the pending debounced reload — the file-uninstall event
+    // subscription (corePluginUninstalled / uiPluginUninstalled) already
+    // armed it, but we're about to re-install the new version. Letting
+    // the intermediate reload fire would flash the row as "Not Installed"
+    // before the download finishes. The explicit refreshPackages() at
+    // the end of the install callback brings the catalog fully up to date.
     if (m_refreshDebounceTimer) m_refreshDebounceTimer->stop();
 
     // Visual feedback — flip the row to Installing immediately so the user
     // sees progress rather than a transient "Not Installed" gap.
+    // updatePackageInstallation matches on either name or moduleName.
     m_packageModel->updatePackageInstallation(
-        name, static_cast<int>(PackageTypes::Installing));
+        displayName, static_cast<int>(PackageTypes::Installing));
 
     static const char* modeLabels[] = {"Upgrading", "Downgrading", "Sidegrading"};
     const char* label = (mode >= 0 && mode <= 2) ? modeLabels[mode] : "Upgrading";
     emit installationProgressUpdated(
         static_cast<int>(PackageTypes::InProgress),
-        name, 0, 1, true,
-        QStringLiteral("%1 %2\u2026").arg(label, name));
+        displayName, 0, 1, true,
+        QStringLiteral("%1 %2\u2026").arg(label, displayName));
 
     // Download the new version from the release the user confirmed against.
+    // downloadPackageAsync keys on the catalog name (displayName), not the
+    // backend moduleName.
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
-    logos.package_downloader.downloadPackageAsync(releaseTag, name,
-        [self, releaseTag, name, mode](QVariantMap dlResult) {
+    logos.package_downloader.downloadPackageAsync(releaseTag, displayName,
+        [self, releaseTag, displayName, mode](QVariantMap dlResult) {
             if (!self) return;
             // installOnePackage expects { name, path, error } — the
             // downloadPackage return already has that shape.
             self->installOnePackage(releaseTag, dlResult,
-                [self, name, mode](bool success, const QString& err) {
+                [self, displayName, mode](bool success, const QString& err) {
                     if (!self) return;
                     if (success) {
                         self->m_packageModel->updatePackageInstallation(
-                            name, static_cast<int>(PackageTypes::Installed));
+                            displayName, static_cast<int>(PackageTypes::Installed));
                     } else {
                         self->m_packageModel->updatePackageInstallation(
-                            name, static_cast<int>(PackageTypes::Failed), err);
+                            displayName, static_cast<int>(PackageTypes::Failed), err);
                     }
 
                     static const char* pastLabels[] = {
@@ -778,10 +797,10 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& name,
                     emit self->installationProgressUpdated(
                         success ? static_cast<int>(PackageTypes::Completed)
                                 : static_cast<int>(PackageTypes::ProgressFailed),
-                        name, 1, 1, success,
+                        displayName, 1, 1, success,
                         success ? QStringLiteral("")
                                 : QStringLiteral("%1 of '%2' failed: %3")
-                                      .arg(opLabel, name, err));
+                                      .arg(opLabel, displayName, err));
 
                     // Full catalog refresh — pull updated installType,
                     // installedVersion, installedHash from the on-disk scan.

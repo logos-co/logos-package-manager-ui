@@ -100,8 +100,9 @@ private:
     void subscribePackageManagerCancellationEvents();
 
     // Subscribe to package_manager's on-disk mutation events (file install /
-    // uninstall). Triggers a debounced reload() so the catalog rows flip
-    // status without the user having to click Reload. Both PMU-initiated
+    // uninstall). Triggers a debounced refreshPackages() so the catalog rows
+    // flip status without the user having to click Reload, while avoiding a
+    // full reload() that would reset releases/selection. Both PMU-initiated
     // AND Basecamp-Modules-tab-initiated operations reach us through this
     // one path — the module is the common point every install/uninstall
     // passes through, so one subscription covers both directions.
@@ -116,8 +117,12 @@ private:
 
     // Handler for the upgradeUninstallDone event. Downloads the new version
     // from the specified release and installs it, updating the model row and
-    // emitting progress signals throughout.
-    void onUpgradeUninstallDone(const QString& name,
+    // emitting progress signals throughout. The event payload keys the
+    // package by moduleName (that's what the gated uninstall/upgrade flow
+    // was initiated with); the implementation maps it back to the catalog
+    // `name` via PackageListModel::displayNameForModule before calling the
+    // downloader and formatting user-visible messages.
+    void onUpgradeUninstallDone(const QString& moduleName,
                                 const QString& releaseTag,
                                 int mode);
 
@@ -142,10 +147,10 @@ private:
 
     // Debounces bursts of file-install / file-uninstall events (e.g., an
     // N-package batch install fires N corePluginFileInstalled events rapid-
-    // fire) into a single reload() so we don't fire N concurrent refreshes
-    // against the catalog. Armed from the event subscribers; each restart
-    // cancels the previous pending tick. reload() already has its own
-    // generation counter, so concurrent reloads are safe even if this timer
-    // were removed — but this keeps network traffic down.
+    // fire) into a single refreshPackages() call so we don't fire N
+    // redundant package-list refreshes. Armed from the event subscribers;
+    // each restart cancels the previous pending tick. This coalesces
+    // package refresh work only; it does not imply a full reload() of
+    // releases or selected-release state, and it keeps network traffic down.
     QTimer* m_refreshDebounceTimer = nullptr;
 };

@@ -79,7 +79,12 @@ class PackageManagerUi
     SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
     SIGNAL(packageDetailsLoaded(QVariantMap details))
 
-    // Uninstall completed. On success the package's InstallStatus flips to
-    // NotInstalled in the model.
-    SIGNAL(uninstallFinished(QString name, bool success, QString error))
+    // System-originated cancellation of an in-flight uninstall or upgrade
+    // (e.g. ack-timeout from package_manager when no listener takes over the
+    // gated flow). User-initiated cancels stay silent; this signal is
+    // strictly for "something cancelled the operation but the user didn't
+    // ask for it" toasts. `message` is pre-formatted by the backend
+    // ("Uninstall of 'foo' cancelled: timeout"), so QML can render it
+    // verbatim without knowing which operation it was.
+    SIGNAL(cancellationOccurred(QString name, QString message))
 }

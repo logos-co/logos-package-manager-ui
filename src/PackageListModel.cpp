@@ -91,8 +91,8 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
     // failed-install attempt — the package isn't on disk, so the scan
     // reports it as not-installed and PackageManagerBackend computes
     // status=NotInstalled with errorMessage="". Without this preservation
-    // the Failed row (set by updatePackageInstallation on line 402 of
-    // PackageManagerBackend.cpp) silently reverts the instant
+    // the Failed row (set by PackageManagerBackend::updatePackageInstallation
+    // on the install-failed branch) silently reverts the instant
     // finishInstallation → refreshPackages fires, making the install
     // error impossible to inspect. The Failed state survives until the
     // package is successfully (re)installed (new status != NotInstalled,

@@ -11,9 +11,9 @@ Entry-point flow:
 2. PMU calls `package_manager.requestUninstallAsync` / `requestUpgradeAsync`
 3. `package_manager` module emits `beforeUninstall` / `beforeUpgrade`
 4. Basecamp's PluginManager acks, shows cascade dialog, confirms/cancels
-5. PMU refreshes its package list via existing `uninstallFinished` / install events
+5. On completion, `package_manager` emits `corePluginFileInstalled` / `uiPluginFileInstalled` / `corePluginUninstalled` / `uiPluginUninstalled`, which PMU consumes (debounced) to refresh the catalog rows
 
-PMU subscribes to `uninstallCancelled` / `upgradeCancelled` events for error toast display (filtered: user-initiated cancels are silent; system-originated ones show a toast via `errorOccurred`).
+PMU subscribes to `uninstallCancelled` / `upgradeCancelled` events for error toast display. User-initiated cancels are silent; system-originated cancellations (e.g. the module's ack-timeout when no listener takes over the gated flow) are surfaced via the dedicated `cancellationOccurred(name, message)` signal, which QML renders as a plain toast. The install-progress channel (`installationProgressUpdated`) is reserved for install progress and install failures; routing cancellations through it would render them with a misleading "Failed to install" prefix.
 
 ## How to Build
 
