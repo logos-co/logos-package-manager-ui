@@ -22,7 +22,8 @@ public:
         InstalledVersionRole,
         HashRole,
         InstalledHashRole,
-        ErrorMessageRole
+        ErrorMessageRole,
+        InstallTypeRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);
@@ -42,6 +43,17 @@ public:
     int getCompletedInstallCount() const;
 
     QVariantMap packageAt(int index) const;
+
+    // Map a backend-internal moduleName (e.g. "wallet_module") back to its
+    // user-facing package/display name (e.g. "logos-wallet-module"). Returns
+    // an empty string when no package with that moduleName is known —
+    // PackageManagerBackend::displayNameForModule (the QML-facing slot)
+    // falls back to the moduleName in that case.
+    //
+    // The backend keeps moduleName as the stable identifier for every IPC
+    // call (uninstallPackage/resolveDependents/cascadeUnloadRequested all
+    // key on moduleName); this helper is presentation-layer only.
+    QString displayNameForModule(const QString& moduleName) const;
 
     void clearAllSelections();
 

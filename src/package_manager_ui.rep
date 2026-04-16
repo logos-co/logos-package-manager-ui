@@ -17,7 +17,9 @@ class PackageManagerUi
         NoError                       = 0,
         InstallationAlreadyInProgress = 2,
         NoPackagesSelected            = 3,
-        PackageManagerNotConnected    = 4
+        PackageManagerNotConnected    = 4,
+        UninstallFailed               = 5,
+        PackageNotUninstallable       = 6
     }
 
     ENUM ProgressType {
@@ -41,7 +43,43 @@ class PackageManagerUi
     SLOT(void requestPackageDetails(int index))
     SLOT(void togglePackage(int index, bool checked))
 
+    // Uninstall the package at `index`. Thin wrapper over
+    // package_manager.requestUninstall — the module owns the confirmation
+    // protocol, dependents computation, and destructive file removal; Basecamp
+    // drives the cascade dialog off package_manager's beforeUninstall event.
+    // PMU just initiates the request and surfaces errors; it holds NO pending
+    // state.
+    //
+    // Takes an int index (like upgradePackage/downgradePackage/sidegradePackage)
+    // rather than a name so the backend reads moduleName from its own
+    // PackageListModel. That avoids QRO's role lazy-fetch race — reading
+    // `model.moduleName` from the replica side can return an empty QVariant
+    // briefly after a beginResetModel/endResetModel window, so the QML would
+    // otherwise have to guard every click against an empty string.
+    SLOT(void uninstall(int index))
+
+    // Upgrade / downgrade / sidegrade the package at `index`. Each is a thin
+    // wrapper that forwards to package_manager.requestUpgrade with the mode
+    // encoded as an int. Same contract as uninstall — PMU is stateless; the
+    // module gates the flow and emits beforeUpgrade so Basecamp can show the
+    // cascade dialog.
+    SLOT(void upgradePackage(int index))
+    SLOT(void downgradePackage(int index))
+    SLOT(void sidegradePackage(int index))
+
+    // Map a backend moduleName back to its user-facing package `name` so the
+    // cascade dialog can render dependents using the same label shown in the
+    // Package column. Returns the moduleName unchanged when no catalog row
+    // with that moduleName is in the current list (e.g. a dependent outside
+    // the active category filter). Synchronous slot so QML can call it
+    // inline while building the dependents list for the dialog.
+    SLOT(QString displayNameForModule(QString moduleName))
+
     SIGNAL(errorOccurred(int errorType))
     SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
     SIGNAL(packageDetailsLoaded(QVariantMap details))
+
+    // Uninstall completed. On success the package's InstallStatus flips to
+    // NotInstalled in the model.
+    SIGNAL(uninstallFinished(QString name, bool success, QString error))
 }

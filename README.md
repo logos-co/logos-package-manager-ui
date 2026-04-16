@@ -1,5 +1,20 @@
 # logos-package-manager-ui
 
+A Qt/QML UI plugin that shows installed packages, their status, and available updates. Users can install, upgrade, downgrade, sidegrade, and uninstall packages through this UI.
+
+## Architecture
+
+PackageManagerBackend is a **stateless view** for uninstall/upgrade operations. It does not hold cascade state or drive confirmation dialogs — those concerns live in Basecamp's PluginManager, which owns the single cascade-confirmation dialog and orchestrates the two-phase ack protocol with the `package_manager` module.
+
+Entry-point flow:
+1. User clicks Uninstall/Upgrade in the PMU tab
+2. PMU calls `package_manager.requestUninstallAsync` / `requestUpgradeAsync`
+3. `package_manager` module emits `beforeUninstall` / `beforeUpgrade`
+4. Basecamp's PluginManager acks, shows cascade dialog, confirms/cancels
+5. PMU refreshes its package list via existing `uninstallFinished` / install events
+
+PMU subscribes to `uninstallCancelled` / `upgradeCancelled` events for error toast display (filtered: user-initiated cancels are silent; system-originated ones show a toast via `errorOccurred`).
+
 ## How to Build
 
 ### Using Nix (Recommended)
