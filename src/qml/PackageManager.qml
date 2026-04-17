@@ -69,6 +69,44 @@ Rectangle {
                 if (s === PackageManagerUi.DifferentHash) return "Different Hash"
                 return "Not Installed"
             }
+
+            // Label for the per-row action button. Empty string hides it.
+            // The catalog surfaces three "swap" affordances based on version
+            // comparison (Upgrade/Downgrade/Reinstall) plus Uninstall for any
+            // user-installed package; embedded packages and not-installed rows
+            // show no action button (the batch-install checkbox handles those).
+            function rowActionLabel(row) {
+                var s = row.installStatus | 0
+                if (s === PackageManagerUi.UpgradeAvailable) return "Upgrade"
+                if (s === PackageManagerUi.DowngradeAvailable) return "Downgrade"
+                if (s === PackageManagerUi.DifferentHash) return "Reinstall"
+                if (s === PackageManagerUi.Installed
+                    && row.installType === "user") return "Uninstall"
+                return ""
+            }
+
+            function runRowAction(row, index) {
+                if (!d.backend) return
+                var s = row.installStatus | 0
+                // All four actions are stateless one-shot calls into the
+                // backend, keyed by `index` into the model. The backend
+                // resolves moduleName locally via PackageListModel::packageAt
+                // — reading moduleName through the replica side (`row.moduleName`)
+                // can return empty briefly right after a model reset because
+                // QRO role data is re-synced asynchronously.
+                //
+                // The package_manager module owns the confirmation protocol
+                // and emits beforeUninstall / beforeUpgrade events; Basecamp
+                // catches those and drives the cascade dialog. PMU holds no
+                // dialog state of its own.
+                if (s === PackageManagerUi.UpgradeAvailable)   d.backend.upgradePackage(index)
+                else if (s === PackageManagerUi.DowngradeAvailable) d.backend.downgradePackage(index)
+                else if (s === PackageManagerUi.DifferentHash) d.backend.sidegradePackage(index)
+                else if (s === PackageManagerUi.Installed
+                         && row.installType === "user") {
+                    d.backend.uninstall(index)
+                }
+            }
     }
 
     color: "#1e1e1e"
@@ -88,9 +126,23 @@ Rectangle {
                 case PackageManagerUi.PackageManagerNotConnected:
                     d.detailsText = "Error: Package manager not connected"
                     break
+                case PackageManagerUi.UninstallFailed:
+                    d.detailsText = "Error: Uninstall failed."
+                    break
+                case PackageManagerUi.PackageNotUninstallable:
+                    d.detailsText = "Error: This package is embedded in the build and cannot be uninstalled."
+                    break
             }
         }
-        
+
+        function onCancellationOccurred(name, message) {
+            // Backend pre-formats `message` (e.g. "Uninstall of 'foo'
+            // cancelled: timeout") so QML renders it as-is, avoiding the
+            // "Failed to install" prefix that the progress channel would
+            // otherwise impose on uninstall/upgrade cancellations.
+            d.detailsText = message
+        }
+
         function onInstallationProgressUpdated(progressType, packageName, completed, total, success, error) {
             switch(progressType) {
                 case PackageManagerUi.Started:
@@ -466,6 +518,12 @@ function onPackageDetailsLoaded(details) {
                                     headerText: "Status"
                                     columnWidth: 120
                                 }
+
+                                HeaderColumn {
+                                    headerText: "Actions"
+                                    columnWidth: 110
+                                    centerAlign: true
+                                }
                             }
                         }
 
@@ -499,8 +557,14 @@ function onPackageDetailsLoaded(details) {
 
                                         CheckBox {
                                             anchors.centerIn: parent
+                                            // Selectable = NotInstalled OR Failed. Failed rows
+                                            // need to be retryable — the point of a retry is
+                                            // that a previous attempt left the package absent,
+                                            // which from a "pick what to install" perspective
+                                            // is the same as NotInstalled.
                                             property bool isDisabled: (model.isVariantAvailable !== true) ||
-                                                                      ((model.installStatus | 0) !== PackageManagerUi.NotInstalled)
+                                                                      ((model.installStatus | 0) !== PackageManagerUi.NotInstalled &&
+                                                                       (model.installStatus | 0) !== PackageManagerUi.Failed)
                                             enabled: !isDisabled
                                             checked: model.isSelected === true
                                             onCheckedChanged: {
@@ -565,6 +629,49 @@ function onPackageDetailsLoaded(details) {
                                                 text: d.statusText(model)
                                                 color: d.statusTextColor(model)
                                                 font.pixelSize: 11
+                                            }
+                                        }
+                                    }
+
+                                    // Actions column: per-row action button. Empty label
+                                    // hides the button (rowActionLabel does the gating
+                                    // on installStatus + installType).
+                                    Rectangle {
+                                        Layout.preferredWidth: 110
+                                        Layout.fillHeight: true
+                                        color: "transparent"
+
+                                        Button {
+                                            id: rowActionButton
+                                            anchors.centerIn: parent
+                                            readonly property string label: d.rowActionLabel(model)
+                                            readonly property bool isUninstall: label === "Uninstall"
+                                            visible: label !== ""
+                                            enabled: visible && !(d.backend && d.backend.isInstalling)
+                                            text: label
+                                            onClicked: d.runRowAction(model, index)
+
+                                            contentItem: Text {
+                                                text: rowActionButton.text
+                                                font.pixelSize: 11
+                                                color: rowActionButton.enabled ? "#ffffff" : "#808080"
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+
+                                            background: Rectangle {
+                                                implicitWidth: 90
+                                                implicitHeight: 22
+                                                radius: 3
+                                                color: rowActionButton.enabled
+                                                       ? (rowActionButton.isUninstall
+                                                            ? (rowActionButton.pressed ? "#7a1a1a" : "#a02020")
+                                                            : (rowActionButton.pressed ? "#1a7f37" : "#238636"))
+                                                       : "#2d2d2d"
+                                                border.color: rowActionButton.enabled
+                                                              ? (rowActionButton.isUninstall ? "#c94040" : "#2ea043")
+                                                              : "#3d3d3d"
+                                                border.width: 1
                                             }
                                         }
                                     }

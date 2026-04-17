@@ -21,7 +21,9 @@ public:
         NoError = 0,
         InstallationAlreadyInProgress = 2,
         NoPackagesSelected = 3,
-        PackageManagerNotConnected = 4
+        PackageManagerNotConnected = 4,
+        UninstallFailed = 5,
+        PackageNotUninstallable = 6
     };
     Q_ENUM(ErrorType)
 
