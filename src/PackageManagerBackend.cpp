@@ -23,9 +23,12 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     setIsInstalling(false);
     setIsLoading(false);
 
-    // Changing the selected category triggers a partial reload (catalog only).
+    // Category change is a pure client-side filter over the cached full
+    // catalog — no network round-trip. refreshPackages() already fetches
+    // every package (category="All"); applyCategoryFilter() slices that
+    // cache down to the user's pick and rebuilds the model rows.
     connect(this, &PackageManagerUiSimpleSource::selectedCategoryIndexChanged,
-            this, [this]() { refreshPackages(); });
+            this, [this]() { applyCategoryFilter(); });
 
     // Changing the release triggers a partial reload (no setRelease needed —
     // the tag is passed directly to each downloader call).
@@ -129,6 +132,15 @@ void PackageManagerBackend::reload()
         return;
     }
 
+    // Full reload — drop any Failed-row state from the previous fetch. The
+    // Failed banner refers to a specific install attempt against the
+    // previously selected release; once we're refetching releases + the
+    // catalog from scratch, those errors no longer correspond to the rows
+    // about to land. The refresh-debounce path keeps preserving Failed
+    // (that's the original use case) since file-install events don't change
+    // the release context.
+    if (m_packageModel) m_packageModel->clearFailedRows();
+
     setIsLoading(true);
 
     QPointer<PackageManagerBackend> self(this);
@@ -187,6 +199,11 @@ void PackageManagerBackend::refreshPackages()
 
     const QString tag = currentReleaseTag();
 
+    // Always fetch the UNFILTERED catalog (category="All") so category
+    // switches can be served client-side from m_allPackagesCache without
+    // hitting the network. The categories list itself is re-fetched each
+    // time because it's per-release, but packages are one fat fetch per
+    // release change rather than one per (release, category) pair.
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.getCategoriesAsync(tag, [self, currentGeneration, tag](QVariant result) {
@@ -194,10 +211,8 @@ void PackageManagerBackend::refreshPackages()
         QStringList categoryList = result.toStringList();
         self->setCategories(categoryList);
 
-        QString selectedCategory = categoryList.value(self->selectedCategoryIndex(), "All");
-
         LogosModules logos2(self->m_logosAPI);
-        logos2.package_downloader.getPackagesAsync(tag, selectedCategory, [self, currentGeneration](QVariantList packagesArray) {
+        logos2.package_downloader.getPackagesAsync(tag, QStringLiteral("All"), [self, currentGeneration](QVariantList packagesArray) {
             if (!self || self->m_reloadGeneration != currentGeneration) return;
 
             LogosModules logos3(self->m_logosAPI);
@@ -208,12 +223,45 @@ void PackageManagerBackend::refreshPackages()
                 logos4.package_manager.getValidVariantsAsync([self, currentGeneration, packagesArray, installedPackages](QVariant result) {
                     if (!self || self->m_reloadGeneration != currentGeneration) return;
                     QStringList validVariants = result.toStringList();
-                    self->setPackagesFromVariantList(packagesArray, installedPackages, validVariants);
+                    self->m_allPackagesCache = packagesArray;
+                    self->m_installedPackagesCache = installedPackages;
+                    self->m_validVariantsCache = validVariants;
+                    self->applyCategoryFilter();
                     self->setIsLoading(false);
                 });
             });
         });
     });
+}
+
+void PackageManagerBackend::applyCategoryFilter()
+{
+    // Pure client-side filter over m_allPackagesCache. No network work.
+    // When the selected index is out of bounds (e.g. release change
+    // surfaced a different categories list), .value(idx, "All") falls
+    // back to the "no filter" pseudo-category.
+    //
+    // Comparisons are case-insensitive: category labels originate from
+    // package manifests authored by many hands, so "Networking" /
+    // "networking" / "NETWORKING" should all bucket together rather
+    // than silently diverge based on capitalisation. The "All" sentinel
+    // is matched case-insensitively for the same reason.
+    const QString selected = categories().value(selectedCategoryIndex(), QStringLiteral("All"));
+
+    QVariantList filtered;
+    if (selected.isEmpty() || selected.compare(QStringLiteral("All"), Qt::CaseInsensitive) == 0) {
+        filtered = m_allPackagesCache;
+    } else {
+        filtered.reserve(m_allPackagesCache.size());
+        for (const QVariant& v : m_allPackagesCache) {
+            const QVariantMap pkg = v.toMap();
+            if (pkg.value("category").toString().compare(selected, Qt::CaseInsensitive) == 0) {
+                filtered.append(v);
+            }
+        }
+    }
+
+    setPackagesFromVariantList(filtered, m_installedPackagesCache, m_validVariantsCache);
 }
 
 void PackageManagerBackend::onSelectedReleaseIndexChanged()
@@ -222,6 +270,12 @@ void PackageManagerBackend::onSelectedReleaseIndexChanged()
     if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
         return;
     }
+
+    // Drop Failed-row state from the previously selected release — the
+    // banner refers to an install attempt against THAT release's package,
+    // and the user has just switched contexts. See clearFailedRows() for
+    // the broader rationale.
+    if (m_packageModel) m_packageModel->clearFailedRows();
 
     // No setRelease call needed — the release tag is passed directly to each
     // downloader method call. Just kick off a catalog reload.

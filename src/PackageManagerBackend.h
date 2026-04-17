@@ -81,6 +81,13 @@ private:
     void setPackagesFromVariantList(const QVariantList& packagesArray,
                                     const QVariantList& installedPackages,
                                     const QStringList& validVariants);
+
+    // Apply the current category filter to the cached full package list and
+    // rebuild the model rows. Synchronous — category change does NOT hit
+    // the network; refreshPackages() always fetches with category="All" and
+    // caches the unfiltered response in m_allPackagesCache, and this helper
+    // slices that cache down to the currently-selected category.
+    void applyCategoryFilter();
     void processDownloadResults(const QString& releaseTag, const QVariantList& results);
     void installNextPackage(const QString& releaseTag, const QVariantList& results, int index, int completed, int totalPackages);
     void finishInstallation(int completed);
@@ -144,6 +151,16 @@ private:
     LogosAPI* m_logosAPI;
     int m_reloadGeneration = 0;
     bool m_suppressReleaseChange = false;
+
+    // Cache of the unfiltered catalog response for the currently-selected
+    // release. Populated by refreshPackages() (always fetches with
+    // category="All") and consumed by applyCategoryFilter() to slice down
+    // to the user's current category pick without a round-trip. Cleared
+    // on reload() and on release change (the content it describes belongs
+    // to a specific tag).
+    QVariantList m_allPackagesCache;
+    QVariantList m_installedPackagesCache;
+    QStringList  m_validVariantsCache;
 
     // Debounces bursts of file-install / file-uninstall events (e.g., an
     // N-package batch install fires N corePluginFileInstalled events rapid-

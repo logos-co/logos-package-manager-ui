@@ -86,39 +86,22 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
     // Save currently selected package names before reset
     QStringList selectedNames = getSelectedPackageNames();
 
-    // Snapshot Failed-state so a post-install refresh doesn't clobber the
-    // error the user just saw. The catalog rebuild has no knowledge of the
-    // failed-install attempt — the package isn't on disk, so the scan
-    // reports it as not-installed and PackageManagerBackend computes
-    // status=NotInstalled with errorMessage="". Without this preservation
-    // the Failed row (set by PackageManagerBackend::updatePackageInstallation
-    // on the install-failed branch) silently reverts the instant
-    // finishInstallation → refreshPackages fires, making the install
-    // error impossible to inspect. The Failed state survives until the
-    // package is successfully (re)installed (new status != NotInstalled,
-    // nothing to preserve) or drops out of the catalog entirely.
-    struct PriorFailure { QString errorMessage; };
-    QHash<QString, PriorFailure> priorFailureByName;
-    for (const QVariantMap& pkg : m_packages) {
-        int status = pkg.value("installStatus", 0).toInt();
-        if (status != static_cast<int>(PackageTypes::Failed)) continue;
-        PriorFailure pf{ pkg.value("errorMessage").toString() };
-        // Index under both name and moduleName — the incoming row may be
-        // keyed by either (install path uses the .lgx package name;
-        // uninstall/upgrade paths use moduleName).
-        const QString priorName = pkg.value("name").toString();
-        const QString priorModuleName = pkg.value("moduleName").toString();
-        if (!priorName.isEmpty()) priorFailureByName.insert(priorName, pf);
-        if (!priorModuleName.isEmpty()) priorFailureByName.insert(priorModuleName, pf);
-    }
-
     beginResetModel();
     m_packages = packages;
 
-    // Restore selections for packages that still exist; ensure every package has isSelected (bool).
-    // Never restore selection for packages without an available variant.
-    // Carry forward Failed status + errorMessage for rows that came back
-    // NotInstalled (see snapshot above for why).
+    // Walk incoming rows. For each row:
+    //   * Restore selection (only when the row has an available variant).
+    //   * If the row came in as NotInstalled AND m_failedByKey has an
+    //     entry for its name/moduleName, inject Failed + errorMessage.
+    //     This is what makes the banner survive both post-install refresh
+    //     (disk scan says not installed) AND category filtering (row was
+    //     absent from the previous m_packages, so a per-call snapshot
+    //     would have lost it).
+    //   * If the row came in as anything else (Installed, Installing,
+    //     UpgradeAvailable, ...), the package is no longer in a failed
+    //     state — drop the cache entry so it doesn't resurrect Failed
+    //     later if the row flips back to NotInstalled (e.g. via a
+    //     subsequent uninstall event).
     for (int i = 0; i < m_packages.size(); ++i) {
         QString name = m_packages[i].value("name").toString();
         QString moduleName = m_packages[i].value("moduleName").toString();
@@ -127,14 +110,17 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
 
         int status = m_packages[i].value("installStatus", 0).toInt();
         if (status == static_cast<int>(PackageTypes::NotInstalled)) {
-            auto it = priorFailureByName.constFind(name);
-            if (it == priorFailureByName.constEnd() && !moduleName.isEmpty()) {
-                it = priorFailureByName.constFind(moduleName);
+            auto it = m_failedByKey.constFind(name);
+            if (it == m_failedByKey.constEnd() && !moduleName.isEmpty()) {
+                it = m_failedByKey.constFind(moduleName);
             }
-            if (it != priorFailureByName.constEnd()) {
+            if (it != m_failedByKey.constEnd()) {
                 m_packages[i]["installStatus"] = static_cast<int>(PackageTypes::Failed);
                 m_packages[i]["errorMessage"] = it->errorMessage;
             }
+        } else {
+            if (!name.isEmpty())       m_failedByKey.remove(name);
+            if (!moduleName.isEmpty()) m_failedByKey.remove(moduleName);
         }
     }
 
@@ -169,6 +155,19 @@ void PackageListModel::updatePackageInstallation(const QString& packageName, int
         if (rowName == packageName || rowModuleName == packageName) {
             m_packages[i]["installStatus"] = status;
             m_packages[i]["errorMessage"] = errorMessage;
+
+            // Maintain m_failedByKey in lockstep with the row's status so
+            // Failed survives filter drop-outs AND clears cleanly on
+            // retry / successful install. Indexed under both identifiers
+            // for the same reason setPackages does the dual lookup.
+            if (status == static_cast<int>(PackageTypes::Failed)) {
+                FailedEntry entry{ errorMessage };
+                if (!rowName.isEmpty())       m_failedByKey.insert(rowName,       entry);
+                if (!rowModuleName.isEmpty()) m_failedByKey.insert(rowModuleName, entry);
+            } else {
+                if (!rowName.isEmpty())       m_failedByKey.remove(rowName);
+                if (!rowModuleName.isEmpty()) m_failedByKey.remove(rowModuleName);
+            }
 
             QModelIndex modelIndex = createIndex(i, 0);
             emit dataChanged(modelIndex, modelIndex, {InstallStatusRole, ErrorMessageRole});
@@ -231,6 +230,34 @@ QString PackageListModel::displayNameForModule(const QString& moduleName) const
         }
     }
     return QString();
+}
+
+void PackageListModel::clearFailedRows()
+{
+    // Drop the persistent cache first — otherwise the next setPackages()
+    // would re-inject Failed for any row matching a still-live cache key,
+    // defeating the caller's intent (release changed / full reload).
+    m_failedByKey.clear();
+
+    // Then flip any currently-visible Failed rows back to NotInstalled +
+    // blank errorMessage. We coalesce the resulting dataChanged into a
+    // single contiguous range — Qt views handle multi-range updates
+    // poorly and a single emit covering the affected span is cheap (the
+    // QML view re-evaluates only the changed roles for the rows it paints).
+    int firstChanged = -1;
+    int lastChanged = -1;
+    for (int i = 0; i < m_packages.size(); ++i) {
+        const int status = m_packages[i].value("installStatus", 0).toInt();
+        if (status != static_cast<int>(PackageTypes::Failed)) continue;
+        m_packages[i]["installStatus"] = static_cast<int>(PackageTypes::NotInstalled);
+        m_packages[i]["errorMessage"] = QString();
+        if (firstChanged < 0) firstChanged = i;
+        lastChanged = i;
+    }
+    if (firstChanged < 0) return;  // nothing was Failed in m_packages
+    QModelIndex topLeft = createIndex(firstChanged, 0);
+    QModelIndex bottomRight = createIndex(lastChanged, 0);
+    emit dataChanged(topLeft, bottomRight, {InstallStatusRole, ErrorMessageRole});
 }
 
 void PackageListModel::clearAllSelections()
