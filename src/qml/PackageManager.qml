@@ -1,6 +1,10 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+
+import Logos.Theme
+import Logos.Controls
+
 /* Enums (InstallStatus, ErrorType, ProgressType) from package_manager_ui.rep,
 registered with QML by the replica factory plugin. */
 import Logos.PackageManagerUi 1.0
@@ -22,40 +26,32 @@ Rectangle {
                 return h.substring(0, 8) + "…" + h.substring(h.length - 8)
             }
 
-            function statusBgColor(row) {
-                if (row.isVariantAvailable !== true) return "#4d3a1a"
+            function statusBaseColor(row) {
+                if (row.isVariantAvailable !== true) return Theme.palette.warning
                 var s = row.installStatus | 0
-                if (s === PackageManagerUi.Installing) return "#5c4a1a"
-                if (s === PackageManagerUi.Installed) return "#2d5016"
-                if (s === PackageManagerUi.Failed) return "#5c1a1a"
-                if (s === PackageManagerUi.UpgradeAvailable) return "#1a3f5c"
-                if (s === PackageManagerUi.DowngradeAvailable) return "#3d1a5c"
-                if (s === PackageManagerUi.DifferentHash) return "#5c3d1a"
-                return "#4d4d4d"
-            }
-
-            function statusBorderColor(row) {
-                if (row.isVariantAvailable !== true) return "#8B6914"
-                var s = row.installStatus | 0
-                if (s === PackageManagerUi.Installing) return "#C9A227"
-                if (s === PackageManagerUi.Installed) return "#4CAF50"
-                if (s === PackageManagerUi.Failed) return "#C62828"
-                if (s === PackageManagerUi.UpgradeAvailable) return "#4A90E2"
-                if (s === PackageManagerUi.DowngradeAvailable) return "#8E4AE2"
-                if (s === PackageManagerUi.DifferentHash) return "#E28E4A"
-                return "#666666"
+                if (s === PackageManagerUi.Installing) return Theme.palette.warning
+                if (s === PackageManagerUi.Installed) return Theme.palette.success
+                if (s === PackageManagerUi.Failed) return Theme.palette.error
+                if (s === PackageManagerUi.UpgradeAvailable) return Theme.palette.info
+                if (s === PackageManagerUi.DowngradeAvailable) return Theme.palette.accentBurntOrange
+                if (s === PackageManagerUi.DifferentHash) return Theme.palette.accentOrangeMid
+                return Theme.palette.textTertiary
             }
 
             function statusTextColor(row) {
-                if (row.isVariantAvailable !== true) return "#C9A227"
+                if (row.isVariantAvailable !== true) return Theme.palette.warningHover
                 var s = row.installStatus | 0
-                if (s === PackageManagerUi.Installing) return "#E6C547"
-                if (s === PackageManagerUi.Installed) return "#8BC34A"
-                if (s === PackageManagerUi.Failed) return "#EF5350"
-                if (s === PackageManagerUi.UpgradeAvailable) return "#7ab8ff"
-                if (s === PackageManagerUi.DowngradeAvailable) return "#C084FF"
-                if (s === PackageManagerUi.DifferentHash) return "#FFB870"
-                return "#999999"
+                if (s === PackageManagerUi.Installing) return Theme.palette.warningHover
+                if (s === PackageManagerUi.Installed) return Theme.palette.successHover
+                if (s === PackageManagerUi.Failed) return Theme.palette.errorHover
+                if (s === PackageManagerUi.UpgradeAvailable) return Theme.palette.info
+                if (s === PackageManagerUi.DowngradeAvailable) return Theme.palette.accentOrangeMid
+                if (s === PackageManagerUi.DifferentHash) return Theme.palette.accentOrange
+                return Theme.palette.textSecondary
+            }
+
+            function statusBgColor(row) {
+                return Theme.colors.getColor(d.statusBaseColor(row), 0.18)
             }
 
             function statusText(row) {
@@ -109,7 +105,7 @@ Rectangle {
             }
     }
 
-    color: "#1e1e1e"
+    color: Theme.palette.background
 
     Connections {
         target: d.backend
@@ -229,77 +225,63 @@ function onPackageDetailsLoaded(details) {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 40
-        spacing: 20
+        anchors.margins: Theme.spacing.xxlarge
+        spacing: Theme.spacing.xlarge
 
-        Text {
+        LogosText {
             text: "Package Manager"
-            font.pixelSize: 24
-            font.bold: true
-            color: "#ffffff"
+            font.pixelSize: Theme.typography.titleText
+            font.weight: Theme.typography.weightBold
+            color: Theme.palette.text
         }
 
-        Text {
+        LogosText {
             text: "Manage plugins and packages"
-            font.pixelSize: 14
-            color: "#a0a0a0"
+            font.pixelSize: Theme.typography.primaryText
+            color: Theme.palette.textSecondary
         }
 
         RowLayout {
-            spacing: 10
+            spacing: Theme.spacing.small
 
-            Button {
+            LogosButton {
                 text: "Reload"
                 enabled: !(d.backend && d.backend.isInstalling)
                 onClicked: if (d.backend) d.backend.reload()
-
-                contentItem: Text {
-                    text: parent.text
-                    font.pixelSize: 13
-                    color: parent.enabled ? "#ffffff" : "#808080"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                background: Rectangle {
-                    implicitWidth: 100
-                    implicitHeight: 32
-                    color: parent.enabled ? (parent.pressed ? "#3d3d3d" : "#4d4d4d") : "#2d2d2d"
-                    radius: 4
-                    border.color: parent.enabled ? "#5d5d5d" : "#3d3d3d"
-                    border.width: 1
-                }
+                implicitWidth: 100
+                implicitHeight: 32
             }
 
             Button {
+                id: installButton
                 text: (d.backend && d.backend.isInstalling) ? "Installing..." : "Install"
                 enabled: (d.backend && d.backend.hasSelectedPackages) && !(d.backend && d.backend.isInstalling)
                 onClicked: if (d.backend) d.backend.install()
 
                 contentItem: Row {
-                    spacing: 6
+                    spacing: Theme.spacing.tiny + 2
                     anchors.centerIn: parent
-                    
+
                     Rectangle {
                         id: spinner
                         width: 14
                         height: 14
                         radius: 7
                         color: "transparent"
-                        border.color: "#ffffff"
+                        border.color: Theme.palette.text
                         border.width: 2
                         visible: (d.backend && d.backend.isInstalling)
-                        
+
                         Rectangle {
                             width: 4
                             height: 4
                             radius: 2
-                            color: "#ffffff"
+                            color: Theme.palette.text
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top
                             anchors.topMargin: 1
                         }
-                        
+
                         RotationAnimation on rotation {
                             from: 0
                             to: 360
@@ -308,11 +290,11 @@ function onPackageDetailsLoaded(details) {
                             running: (d.backend && d.backend.isInstalling)
                         }
                     }
-                    
-                    Text {
+
+                    LogosText {
                         text: (d.backend && d.backend.isInstalling) ? "Installing..." : "Install"
-                        font.pixelSize: 13
-                        color: parent.parent.enabled ? "#ffffff" : "#808080"
+                        font.pixelSize: Theme.typography.secondaryText
+                        color: installButton.enabled ? Theme.palette.text : Theme.palette.textMuted
                         verticalAlignment: Text.AlignVCenter
                     }
                 }
@@ -320,11 +302,13 @@ function onPackageDetailsLoaded(details) {
                 background: Rectangle {
                     implicitWidth: (d.backend && d.backend.isInstalling) ? 130 : 100
                     implicitHeight: 32
-                    color: parent.enabled ? (parent.pressed ? "#1a7f37" : "#238636") : "#2d2d2d"
-                    radius: 4
-                    border.color: parent.enabled ? "#2ea043" : "#3d3d3d"
+                    color: installButton.enabled
+                           ? (installButton.pressed ? Theme.palette.successPressed : Theme.palette.success)
+                           : Theme.palette.backgroundSecondary
+                    radius: Theme.spacing.radiusSmall
+                    border.color: installButton.enabled ? Theme.palette.successHover : Theme.palette.borderSubtle
                     border.width: 1
-                    
+
                     Behavior on implicitWidth {
                         NumberAnimation { duration: 150 }
                     }
@@ -333,10 +317,10 @@ function onPackageDetailsLoaded(details) {
 
             Item { Layout.fillWidth: true }
 
-            Text {
+            LogosText {
                 text: "Release:"
-                color: "#a0a0a0"
-                font.pixelSize: 13
+                color: Theme.palette.textSecondary
+                font.pixelSize: Theme.typography.secondaryText
                 verticalAlignment: Text.AlignVCenter
             }
 
@@ -351,7 +335,7 @@ function onPackageDetailsLoaded(details) {
 
                 TextMetrics {
                     id: releaseMetrics
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.typography.secondaryText
                     text: releaseCombo.displayText
                 }
 
@@ -364,22 +348,22 @@ function onPackageDetailsLoaded(details) {
                     if (d.backend) d.backend.pushSelectedReleaseIndex(index)
                 }
 
-                contentItem: Text {
+                contentItem: LogosText {
                     leftPadding: 10
                     rightPadding: releaseCombo.indicator ? releaseCombo.indicator.width + 10 : 30
                     text: releaseCombo.displayText
-                    font.pixelSize: 13
-                    color: releaseCombo.enabled ? "#ffffff" : "#808080"
+                    font.pixelSize: Theme.typography.secondaryText
+                    color: releaseCombo.enabled ? Theme.palette.text : Theme.palette.textMuted
                     verticalAlignment: Text.AlignVCenter
                     elide: Text.ElideNone
                 }
 
                 background: Rectangle {
                     color: releaseCombo.enabled
-                           ? (releaseCombo.pressed ? "#3d3d3d" : "#4d4d4d")
-                           : "#2d2d2d"
-                    radius: 4
-                    border.color: releaseCombo.enabled ? "#5d5d5d" : "#3d3d3d"
+                           ? (releaseCombo.pressed ? Theme.palette.pressed : Theme.palette.backgroundButton)
+                           : Theme.palette.backgroundSecondary
+                    radius: Theme.spacing.radiusSmall
+                    border.color: releaseCombo.enabled ? Theme.palette.border : Theme.palette.borderSubtle
                     border.width: 1
                 }
 
@@ -397,24 +381,24 @@ function onPackageDetailsLoaded(details) {
                     }
 
                     background: Rectangle {
-                        color: "#2d2d2d"
-                        border.color: "#5d5d5d"
-                        radius: 4
+                        color: Theme.palette.backgroundSecondary
+                        border.color: Theme.palette.border
+                        radius: Theme.spacing.radiusSmall
                     }
                 }
 
                 delegate: ItemDelegate {
                     width: releaseCombo.width
-                    contentItem: Text {
+                    contentItem: LogosText {
                         text: modelData
-                        color: "#ffffff"
-                        font.pixelSize: 13
+                        color: Theme.palette.text
+                        font.pixelSize: Theme.typography.secondaryText
                         verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
                     }
                     highlighted: releaseCombo.highlightedIndex === index
                     background: Rectangle {
-                        color: highlighted ? "#3d3d3d" : "transparent"
+                        color: highlighted ? Theme.palette.surface : "transparent"
                     }
                 }
             }
@@ -429,7 +413,7 @@ function onPackageDetailsLoaded(details) {
                 SplitView.preferredWidth: 100
                 SplitView.minimumWidth: 150
                 SplitView.maximumWidth: 250
-                color: "#2d2d2d"
+                color: Theme.palette.backgroundSecondary
 
                 ListView {
                     id: categoryList
@@ -440,16 +424,18 @@ function onPackageDetailsLoaded(details) {
                     delegate: Rectangle {
                         width: ListView.view.width
                         height: 40
-                        color: ListView.isCurrentItem ? "#3d3d3d" : (mouseArea.containsMouse ? "#353535" : "transparent")
-                        radius: 3
+                        color: ListView.isCurrentItem
+                               ? Theme.palette.surface
+                               : (mouseArea.containsMouse ? Theme.palette.backgroundButton : "transparent")
+                        radius: Theme.spacing.radiusSmall
                         enabled: !(d.backend && d.backend.isInstalling)
 
-                        Text {
+                        LogosText {
                             anchors.fill: parent
-                            anchors.leftMargin: 15
+                            anchors.leftMargin: Theme.spacing.large
                             text: modelData
-                            color: "#ffffff"
-                            font.pixelSize: 14
+                            color: Theme.palette.text
+                            font.pixelSize: Theme.typography.primaryText
                             verticalAlignment: Text.AlignVCenter
                         }
 
@@ -472,13 +458,13 @@ function onPackageDetailsLoaded(details) {
                     id: packageListPane
                     Layout.fillWidth: true
                     Layout.preferredHeight: parent.height * 0.6
-                    color: "#333333"
-                    border.color: "#000000"
+                    color: Theme.palette.surface
+                    border.color: Theme.palette.backgroundBlack
                     border.width: 1
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 10
+                        anchors.margins: Theme.spacing.small
                         spacing: 0
                         opacity: (d.backend && d.backend.isLoading) ? 0.4 : 1.0
                         enabled: !(d.backend && d.backend.isLoading)
@@ -486,7 +472,7 @@ function onPackageDetailsLoaded(details) {
                         Rectangle {
                             Layout.fillWidth: true
                             height: 35
-                            color: "#333333"
+                            color: Theme.palette.surface
 
                             RowLayout {
                                 anchors.fill: parent
@@ -530,7 +516,7 @@ function onPackageDetailsLoaded(details) {
                         Rectangle {
                             Layout.fillWidth: true
                             height: 1
-                            color: "#444444"
+                            color: Theme.palette.border
                         }
 
                         ListView {
@@ -543,7 +529,7 @@ function onPackageDetailsLoaded(details) {
                             delegate: Rectangle {
                                 width: ListView.view.width
                                 height: 35
-                                color: index % 2 === 0 ? "#333333" : "#2a2a2a"
+                                color: index % 2 === 0 ? Theme.palette.surface : Qt.darker(Theme.palette.surface, 1.15)
                                 enabled: !(d.backend && d.backend.isInstalling)
 
                                 RowLayout {
@@ -578,15 +564,19 @@ function onPackageDetailsLoaded(details) {
                                                 implicitHeight: 18
                                                 x: parent.leftPadding
                                                 y: parent.height / 2 - height / 2
-                                                radius: 3
-                                                color: parent.isDisabled ? "#3d3d3d" : (parent.checked ? "#4A90E2" : "#2d2d2d")
-                                                border.color: parent.isDisabled ? "#4d4d4d" : (parent.checked ? "#4A90E2" : "#5d5d5d")
+                                                radius: Theme.spacing.radiusSmall
+                                                color: parent.isDisabled
+                                                       ? Theme.palette.backgroundMuted
+                                                       : (parent.checked ? Theme.palette.info : Theme.palette.backgroundSecondary)
+                                                border.color: parent.isDisabled
+                                                              ? Theme.palette.borderSubtle
+                                                              : (parent.checked ? Theme.palette.info : Theme.palette.border)
 
-                                                Text {
+                                                LogosText {
                                                     anchors.centerIn: parent
                                                     text: "✓"
-                                                    color: "#ffffff"
-                                                    font.pixelSize: 12
+                                                    color: Theme.palette.text
+                                                    font.pixelSize: Theme.typography.secondaryText
                                                     visible: parent.parent.checked
                                                 }
                                             }
@@ -619,16 +609,16 @@ function onPackageDetailsLoaded(details) {
                                             anchors.verticalCenter: parent.verticalCenter
                                             width: 100
                                             height: 20
-                                            radius: 3
+                                            radius: Theme.spacing.radiusSmall
                                             color: d.statusBgColor(model)
-                                            border.color: d.statusBorderColor(model)
+                                            border.color: d.statusBaseColor(model)
                                             border.width: 1
 
-                                            Text {
+                                            LogosText {
                                                 anchors.centerIn: parent
                                                 text: d.statusText(model)
                                                 color: d.statusTextColor(model)
-                                                font.pixelSize: 11
+                                                font.pixelSize: Theme.typography.secondaryText
                                             }
                                         }
                                     }
@@ -694,7 +684,7 @@ function onPackageDetailsLoaded(details) {
                         height: 36
                         radius: 18
                         color: "transparent"
-                        border.color: "#ffffff"
+                        border.color: Theme.palette.text
                         border.width: 3
                         visible: d.backend && d.backend.isLoading
 
@@ -702,7 +692,7 @@ function onPackageDetailsLoaded(details) {
                             width: 6
                             height: 6
                             radius: 3
-                            color: "#ffffff"
+                            color: Theme.palette.text
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top
                             anchors.topMargin: 2
@@ -721,23 +711,24 @@ function onPackageDetailsLoaded(details) {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    color: "#333333"
-                    border.color: "#444444"
+                    color: Theme.palette.surface
+                    border.color: Theme.palette.border
                     border.width: 1
 
                     ScrollView {
                         anchors.fill: parent
-                        anchors.margins: 10
+                        anchors.margins: Theme.spacing.small
 
                         TextArea {
                             text: d.detailsText
-                            color: "#ffffff"
+                            color: Theme.palette.text
                             readOnly: true
                             wrapMode: Text.Wrap
                             background: Rectangle {
                                 color: "transparent"
                             }
-                            font.pixelSize: 13
+                            font.family: Theme.typography.publicSans
+                            font.pixelSize: Theme.typography.primaryText
                         }
                     }
                 }
@@ -756,16 +747,16 @@ function onPackageDetailsLoaded(details) {
         Layout.fillWidth: fillWidth
         Layout.fillHeight: true
         color: "transparent"
-        
-        Text {
+
+        LogosText {
             anchors.left: centerAlign ? undefined : parent.left
             anchors.leftMargin: centerAlign ? 0 : 10
             anchors.centerIn: centerAlign ? parent : undefined
             anchors.verticalCenter: centerAlign ? undefined : parent.verticalCenter
             text: headerText
-            color: "#a0a0a0"
-            font.bold: true
-            font.pixelSize: 12
+            color: Theme.palette.textSecondary
+            font.weight: Theme.typography.weightBold
+            font.pixelSize: Theme.typography.secondaryText
         }
     }
     
@@ -779,16 +770,16 @@ function onPackageDetailsLoaded(details) {
         Layout.fillWidth: fillWidth
         Layout.fillHeight: true
         color: "transparent"
-        
-        Text {
+
+        LogosText {
             anchors.left: parent.left
             anchors.leftMargin: 10
             anchors.right: fillWidth ? parent.right : undefined
             anchors.rightMargin: fillWidth ? 10 : 0
             anchors.verticalCenter: parent.verticalCenter
             text: cellText
-            color: "#ffffff"
-            font.pixelSize: 13
+            color: Theme.palette.text
+            font.pixelSize: Theme.typography.primaryText
             elide: Text.ElideRight
             width: fillWidth ? undefined : (parent.width - 15)
         }
