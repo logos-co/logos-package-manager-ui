@@ -1,0 +1,6 @@
+module Panels
+CategorySidebar 1.0 CategorySidebar.qml
+DetailsPane 1.0 DetailsPane.qml
+HeaderBar 1.0 HeaderBar.qml
+PackageList 1.0 PackageList.qml
+PackageRow 1.0 PackageRow.qml
