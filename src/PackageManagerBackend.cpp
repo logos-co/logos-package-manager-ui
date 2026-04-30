@@ -10,6 +10,8 @@
 #include <QVariant>
 #include "logos_sdk.h"
 
+constexpr int DOWNLOAD_TIMEOUT_MS = 300000; // 5 minutes
+
 PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent)
     : PackageManagerUiSimpleSource(parent)
     , m_packageModel(new PackageListModel(this))
@@ -523,7 +525,7 @@ void PackageManagerBackend::install()
     logos.package_downloader.downloadPackagesAsync(tag, selectedNames, [self, tag](QVariantList results) {
         if (!self) return;
         self->processDownloadResults(tag, results);
-    });
+    }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
 
 void PackageManagerBackend::requestPackageDetails(int index)
@@ -860,5 +862,5 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
                     // installedVersion, installedHash from the on-disk scan.
                     self->refreshPackages();
                 });
-        });
+        }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
