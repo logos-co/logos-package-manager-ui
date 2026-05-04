@@ -32,59 +32,54 @@ class PackageManagerUi
 
     PROP(QStringList categories)
     PROP(int selectedCategoryIndex)
+    PROP(QStringList availableTypes READONLY)
+    PROP(int selectedTypeIndex)
     PROP(QStringList releases)
     PROP(int selectedReleaseIndex)
-    PROP(bool hasSelectedPackages READONLY)
+    PROP(bool hasInstallableSelection READONLY)
+    PROP(bool hasUninstallableSelection READONLY)
     PROP(bool isInstalling READONLY)
     PROP(bool isLoading READONLY)
 
-    SLOT(void reload())
-    SLOT(void install())
-    SLOT(void requestPackageDetails(int index))
+    PROP(QString searchText)
+    PROP(int installStateFilter)
+    PROP(int pageSize)
+    PROP(int currentPage)
+    PROP(int totalCount READONLY)
+    PROP(QString sortRole)
+    PROP(int sortOrder)
+
+    // Refresh releases + catalog from package_downloader. Top-bar Reload button.
+    SLOT(void refreshCatalog())
+    // Bulk install every checkbox-selected installable row.
+    SLOT(void installSelected())
+    // Bulk uninstall every checkbox-selected uninstallable row (single multi-uninstall request).
+    SLOT(void uninstallSelected())
+    // Toggle a row's checkbox state.
     SLOT(void togglePackage(int index, bool checked))
-
-    // Uninstall the package at `index`. Thin wrapper over
-    // package_manager.requestUninstall — the module owns the confirmation
-    // protocol, dependents computation, and destructive file removal; Basecamp
-    // drives the cascade dialog off package_manager's beforeUninstall event.
-    // PMU just initiates the request and surfaces errors; it holds NO pending
-    // state.
-    //
-    // Takes an int index (like upgradePackage/downgradePackage/sidegradePackage)
-    // rather than a name so the backend reads moduleName from its own
-    // PackageListModel. That avoids QRO's role lazy-fetch race — reading
-    // `model.moduleName` from the replica side can return an empty QVariant
-    // briefly after a beginResetModel/endResetModel window, so the QML would
-    // otherwise have to guard every click against an empty string.
+    // Per-row install (single-row counterpart of installSelected).
+    SLOT(void installPackage(int index))
+    // Per-row plugin-runtime toggle via logoscore. Stub — not wired yet.
+    SLOT(void reloadPackage(int index))
+    // Per-row uninstall.
     SLOT(void uninstall(int index))
-
-    // Upgrade / downgrade / sidegrade the package at `index`. Each is a thin
-    // wrapper that forwards to package_manager.requestUpgrade with the mode
-    // encoded as an int. Same contract as uninstall — PMU is stateless; the
-    // module gates the flow and emits beforeUpgrade so Basecamp can show the
-    // cascade dialog.
+    // Per-row upgrade / downgrade / reinstall. Forwards to package_manager.requestUpgrade.
     SLOT(void upgradePackage(int index))
     SLOT(void downgradePackage(int index))
     SLOT(void sidegradePackage(int index))
+    // Request a row's full details; reply via packageDetailsLoaded.
+    SLOT(void requestPackageDetails(int index))
 
-    // Map a backend moduleName back to its user-facing package `name` so the
-    // cascade dialog can render dependents using the same label shown in the
-    // Package column. Returns the moduleName unchanged when no catalog row
-    // with that moduleName is in the current list (e.g. a dependent outside
-    // the active category filter). Synchronous slot so QML can call it
-    // inline while building the dependents list for the dialog.
-    SLOT(QString displayNameForModule(QString moduleName))
-
+    // User-actionable error; errorType maps to the ErrorType enum.
     SIGNAL(errorOccurred(int errorType))
+    // Per-package install progress updates.
     SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
+    // Reply to requestPackageDetails.
     SIGNAL(packageDetailsLoaded(QVariantMap details))
-
-    // System-originated cancellation of an in-flight uninstall or upgrade
-    // (e.g. ack-timeout from package_manager when no listener takes over the
-    // gated flow). User-initiated cancels stay silent; this signal is
-    // strictly for "something cancelled the operation but the user didn't
-    // ask for it" toasts. `message` is pre-formatted by the backend
-    // ("Uninstall of 'foo' cancelled: timeout"), so QML can render it
-    // verbatim without knowing which operation it was.
+    // Backend cleared model selection programmatically (e.g. release switch);
+    // QML should mirror by clearing LogosTable.selectedIndices.
+    SIGNAL(selectionsCleared())
+    // System-originated cancel of an in-flight uninstall/upgrade (e.g. ack timeout).
+    // `message` is pre-formatted for verbatim toast display.
     SIGNAL(cancellationOccurred(QString name, QString message))
 }
