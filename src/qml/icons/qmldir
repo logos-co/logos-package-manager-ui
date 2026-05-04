@@ -1,0 +1,2 @@
+module Icons
+singleton PackageIcons 1.0 PackageIcons.qml

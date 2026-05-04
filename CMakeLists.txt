@@ -18,6 +18,10 @@ logos_module(
         src/PackageManagerBackend.cpp
         src/PackageListModel.h
         src/PackageListModel.cpp
+        src/PackagesFilterProxy.h
+        src/PackagesFilterProxy.cpp
+        src/PackagesPagingProxy.h
+        src/PackagesPagingProxy.cpp
         src/PackageTypes.h
         src/PackageTypes.cpp
 )
