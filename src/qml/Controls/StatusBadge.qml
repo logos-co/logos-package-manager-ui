@@ -4,9 +4,7 @@ import Logos.Theme
 import Logos.Controls
 import Logos.PackageManagerUi 1.0
 
-// Pill rendered in the package list's Status column.
-// Consumer supplies the row model from the delegate.
-Rectangle {
+LogosBadge {
     id: root
 
     required property var modelData
@@ -14,31 +12,49 @@ Rectangle {
     property QtObject d: QtObject {
         id: d
 
-        function _baseColor(r) {
-            if (!r || r.isVariantAvailable !== true) return Theme.palette.warning
+        function baseColor(r) {
+            if (!r || r.isVariantAvailable !== true) return Theme.palette.textMuted
             var s = r.installStatus | 0
-            if (s === PackageManagerUi.Installing) return Theme.palette.warning
-            if (s === PackageManagerUi.Installed) return Theme.palette.success
-            if (s === PackageManagerUi.Failed) return Theme.palette.error
-            if (s === PackageManagerUi.UpgradeAvailable) return Theme.palette.info
-            if (s === PackageManagerUi.DowngradeAvailable) return Theme.palette.accentBurntOrange
-            if (s === PackageManagerUi.DifferentHash) return Theme.palette.accentOrangeMid
+            if (s === PackageManagerUi.Installing)         return Theme.palette.warning
+            if (s === PackageManagerUi.Installed)          return Theme.palette.primary
+            if (s === PackageManagerUi.Failed)             return Theme.palette.error
+            if (s === PackageManagerUi.UpgradeAvailable)   return Theme.palette.info
+            if (s === PackageManagerUi.DowngradeAvailable) return Theme.palette.info
+            if (s === PackageManagerUi.DifferentHash)      return Theme.palette.warning
             return Theme.palette.textTertiary
         }
 
-        function _textColor(r) {
-            if (!r || r.isVariantAvailable !== true) return Theme.palette.warningHover
+        function isSolidBg(r) {
+            if (!r || r.isVariantAvailable !== true) return true
             var s = r.installStatus | 0
-            if (s === PackageManagerUi.Installing) return Theme.palette.warningHover
-            if (s === PackageManagerUi.Installed) return Theme.palette.successHover
-            if (s === PackageManagerUi.Failed) return Theme.palette.errorHover
-            if (s === PackageManagerUi.UpgradeAvailable) return Theme.palette.info
-            if (s === PackageManagerUi.DowngradeAvailable) return Theme.palette.accentOrangeMid
-            if (s === PackageManagerUi.DifferentHash) return Theme.palette.accentOrange
-            return Theme.palette.textSecondary
+            return s === PackageManagerUi.NotInstalled
         }
 
-        function _text(r) {
+        function bgColor(r) {
+            return isSolidBg(r)
+                ? Theme.palette.backgroundButton
+                : Theme.colors.getColor(baseColor(r), 0.18)
+        }
+
+        function borderColor(r) {
+            // Solid-bg states have no visible border (border = bg);
+            // tinted-bg states use the family color as the contrasting border.
+            return isSolidBg(r) ? Theme.palette.backgroundButton : baseColor(r)
+        }
+
+        function textColor(r) {
+            if (!r || r.isVariantAvailable !== true) return Theme.palette.textTertiary
+            var s = r.installStatus | 0
+            if (s === PackageManagerUi.Installing)         return Theme.palette.warningHover
+            if (s === PackageManagerUi.Installed)          return Theme.palette.primary
+            if (s === PackageManagerUi.Failed)             return Theme.palette.errorHover
+            if (s === PackageManagerUi.UpgradeAvailable)   return Theme.palette.info
+            if (s === PackageManagerUi.DowngradeAvailable) return Theme.palette.info
+            if (s === PackageManagerUi.DifferentHash)      return Theme.palette.warningHover
+            return Theme.palette.textTertiary
+        }
+
+        function text(r) {
             if (!r || r.isVariantAvailable !== true) return qsTr("Not Available")
             var s = r.installStatus | 0
             if (s === PackageManagerUi.Installing) return qsTr("Installing…")
@@ -51,17 +67,15 @@ Rectangle {
         }
     }
 
-    implicitWidth: 100
-    implicitHeight: 20
-    radius: Theme.spacing.radiusSmall
-    color: Theme.colors.getColor(d._baseColor(root.modelData), 0.18)
-    border.color: d._baseColor(root.modelData)
-    border.width: 1
+    text: d.text(root.modelData)
+    color: d.textColor(root.modelData)
+    backgroundColor: d.bgColor(root.modelData)
+    borderColor: d.borderColor(root.modelData)
+    radius: Theme.spacing.radiusLarge
 
-    LogosText {
-        anchors.centerIn: parent
-        text: d._text(root.modelData)
-        color: d._textColor(root.modelData)
-        font.pixelSize: Theme.typography.secondaryText
-    }
+    implicitHeight: 16
+    verticalPadding: 2
+    labelItem.font.pixelSize: 11
+    labelItem.lineHeight: 12
+    labelItem.lineHeightMode: Text.FixedHeight
 }

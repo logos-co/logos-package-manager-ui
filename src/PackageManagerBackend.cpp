@@ -1,4 +1,5 @@
 #include "PackageManagerBackend.h"
+#include <algorithm>
 #include <QDebug>
 #include <QHash>
 #include <QJsonDocument>
@@ -15,22 +16,89 @@ constexpr int DOWNLOAD_TIMEOUT_MS = 300000; // 5 minutes
 PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent)
     : PackageManagerUiSimpleSource(parent)
     , m_packageModel(new PackageListModel(this))
+    , m_packagesFilterProxy(new PackagesFilterProxy(this))
+    , m_packagesPagingProxy(new PackagesPagingProxy(this))
     , m_logosAPI(logosAPI)
 {
     // Initialise base-class properties to sane defaults.
     setSelectedCategoryIndex(0);
     setReleases(QStringList{"latest"});
     setSelectedReleaseIndex(0);
-    setHasSelectedPackages(false);
+    setHasInstallableSelection(false);
+    setHasUninstallableSelection(false);
     setIsInstalling(false);
     setIsLoading(false);
+
+    // Filter / sort / pagination defaults — initial values must match
+    // the proxies' defaults so the first-ever *Changed signal doesn't
+    // fight them. PackagesPagingProxy defaults to pageSize=20, page=1.
+    setSearchText(QString());
+    setInstallStateFilter(0);
+    setPageSize(20);
+    setCurrentPage(1);
+    setSortRole(QString());
+    setSortOrder(Qt::AscendingOrder);
+    setTotalCount(0);
+
+    // Stack: raw model → filter+sort proxy → paging proxy. ui-host's
+    // dynamic remoting scans backend Q_PROPERTYs of QAbstractItemModel*
+    // and remotes each — exposing the *paging* proxy as `packages`
+    // means QML's logos.model("package_manager_ui","packages") gets
+    // exactly the current page's rows. Filter / sort happens upstream
+    // in the filter proxy; the paging proxy slices the post-filter set.
+    m_packagesFilterProxy->setSourceModel(m_packageModel);
+    m_packagesPagingProxy->setSourceModel(m_packagesFilterProxy);
+
+    // One-shot wiring: every selection / install-status mutation on the model
+    // emits hasSelectionChanged, which pushes the has*Selection .rep PROPs
+    // through this slot. No manual refresh sprinkles needed at the mutation sites.
+    connect(m_packageModel, &PackageListModel::hasSelectionChanged,
+            this, &PackageManagerBackend::refreshHasSelection);
+
+    // Forward .rep PROP changes to the proxy that owns each concern.
+    // Filter / sort lives in m_packagesFilterProxy; pageSize / page
+    // in m_packagesPagingProxy. The paging proxy auto-resets to page 1
+    // when its source's row set changes (i.e. filter / sort flip), so
+    // the backend doesn't have to coordinate that interaction.
+    connect(this, &PackageManagerUiSimpleSource::searchTextChanged,
+            this, [this]() { m_packagesFilterProxy->setSearchText(searchText()); });
+    connect(this, &PackageManagerUiSimpleSource::installStateFilterChanged,
+            this, [this]() { m_packagesFilterProxy->setInstallStateFilter(installStateFilter()); });
+    connect(this, &PackageManagerUiSimpleSource::sortRoleChanged,
+            this, [this]() { m_packagesFilterProxy->setSortRoleByName(sortRole()); });
+    connect(this, &PackageManagerUiSimpleSource::sortOrderChanged,
+            this, [this]() { m_packagesFilterProxy->setSortOrderInt(sortOrder()); });
+    connect(this, &PackageManagerUiSimpleSource::pageSizeChanged,
+            this, [this]() { m_packagesPagingProxy->setPageSize(pageSize()); });
+    connect(this, &PackageManagerUiSimpleSource::currentPageChanged,
+            this, [this]() { m_packagesPagingProxy->setCurrentPage(currentPage()); });
+
+    // Mirror the paging proxy's notifications back into our PROPs so
+    // QML stays in sync. totalCount = filtered row count; currentPage
+    // mirrors the auto-reset the proxy applies on filter / sort flip.
+    connect(m_packagesPagingProxy, &PackagesPagingProxy::totalCountChanged,
+            this, [this]() { setTotalCount(m_packagesPagingProxy->totalCount()); });
+    connect(m_packagesPagingProxy, &PackagesPagingProxy::currentPageChanged,
+            this, [this](int page) { setCurrentPage(page); });
 
     // Category change is a pure client-side filter over the cached full
     // catalog — no network round-trip. refreshPackages() already fetches
     // every package (category="All"); applyCategoryFilter() slices that
-    // cache down to the user's pick and rebuilds the model rows.
+    // cache down to the user's pick and rebuilds the model rows. Routed
+    // through the filter-apply debounce so a click feels instant in QML
+    // (the click handler returns immediately) and rapid clicks coalesce
+    // into a single applyCategoryFilter pass.
     connect(this, &PackageManagerUiSimpleSource::selectedCategoryIndexChanged,
-            this, [this]() { applyCategoryFilter(); });
+            this, [this]() {
+                m_categoryFilterPending = true;
+                m_filterApplyTimer->start();
+            });
+
+    connect(this, &PackageManagerUiSimpleSource::selectedTypeIndexChanged,
+            this, [this]() {
+                m_typeFilterPending = true;
+                m_filterApplyTimer->start();
+            });
 
     // Changing the release triggers a partial reload (no setRelease needed —
     // the tag is passed directly to each downloader call).
@@ -48,19 +116,10 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     // signal the QML layer already renders.
     subscribePackageManagerCancellationEvents();
 
-    // Auto-refresh the catalog whenever package_manager's on-disk state
-    // changes. This covers the user-reported bug where a Basecamp-initiated
-    // uninstall (Modules tab) didn't flip the PMU row status — the events
-    // fire on BOTH PMU- and Basecamp-initiated flows, so one subscription
-    // keeps the catalog consistent in both directions. Uses a single debounce
-    // timer so a batch install of N packages produces a single refresh.
-    //
-    // Target is refreshPackages() (catalog only), NOT reload(): a file
-    // mutation only changes per-package installed state, it does not change
-    // which releases exist on the server. Going through reload() would
-    // re-fetch the release list AND reset the selected-release combo to
-    // "latest" — both jarring side-effects for the user. The release list
-    // is only refreshed on construction + explicit Reload-button clicks.
+    // Auto-refresh the catalog on package_manager file mutations. Covers both
+    // PMU- and Basecamp-initiated flows since the module is the common point.
+    // Targets refreshPackages() (not refreshCatalog) because file mutations
+    // don't change releases — going wider would jarringly reset the release combo.
     m_refreshDebounceTimer = new QTimer(this);
     m_refreshDebounceTimer->setSingleShot(true);
     m_refreshDebounceTimer->setInterval(150);
@@ -68,17 +127,42 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
             this, &PackageManagerBackend::refreshPackages);
     subscribePackageManagerRefreshEvents();
 
+    // Filter-apply debounce — see header comment. 30ms is short enough to
+    // feel instant for a single click but long enough to coalesce the
+    // bursts that arrive when the user clicks several categories / types
+    // in rapid succession.
+    m_filterApplyTimer = new QTimer(this);
+    m_filterApplyTimer->setSingleShot(true);
+    m_filterApplyTimer->setInterval(30);
+    connect(m_filterApplyTimer, &QTimer::timeout, this, [this]() {
+        // Apply only what's actually pending — a type-only click should
+        // not trigger a full applyCategoryFilter (which calls setPackages
+        // and resets the model). Reset the flags first so a re-entrant
+        // signal during apply* doesn't cause a double-fire.
+        const bool catPending  = m_categoryFilterPending;
+        const bool typePending = m_typeFilterPending;
+        m_categoryFilterPending = false;
+        m_typeFilterPending     = false;
+        if (catPending)  applyCategoryFilter();
+        if (typePending) applyTypeFilter();
+    });
+
     // Listen for upgrade-uninstall-done events so PMU can drive the
     // download+install step automatically. Without this, confirmUpgrade only
     // removes the old version and the user would have to manually re-install.
     subscribePackageManagerUpgradeEvents();
 
-    // Defer the first reload until the event loop starts so ui-host can signal
-    // ready and the Package Manager tab appears immediately.
-    QTimer::singleShot(0, this, &PackageManagerBackend::reload);
+    // Defer the first catalog refresh until the event loop starts so
+    // ui-host can signal ready and the Package Manager tab appears
+    // immediately.
+    QTimer::singleShot(0, this, &PackageManagerBackend::refreshCatalog);
 }
 
-int PackageManagerBackend::versionCmp(const QString& a, const QString& b)
+// ─────────────────────────── file-local helpers ───────────────────────────
+
+// Three-way dotted-numeric version compare. Missing components = 0.
+// Returns -1 if a<b, 0 if equal, +1 if a>b.
+static int versionCmp(const QString& a, const QString& b)
 {
     const QStringList aParts = a.split('.');
     const QStringList bParts = b.split('.');
@@ -90,6 +174,115 @@ int PackageManagerBackend::versionCmp(const QString& a, const QString& b)
         if (av > bv) return 1;
     }
     return 0;
+}
+
+// Decode a package_manager event payload (a single JSON-encoded string in
+// `data.first()`) into a QJsonObject. Returns an empty object on any failure
+// (no payload, parse error, or non-object root) — callers test isEmpty().
+static QJsonObject parseEventPayload(const QVariantList& data)
+{
+    if (data.isEmpty()) return {};
+    const QByteArray payload = data.first().toString().toUtf8();
+    QJsonParseError parseErr{};
+    const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseErr);
+    if (parseErr.error != QJsonParseError::NoError || !doc.isObject()) return {};
+    return doc.object();
+}
+
+// Build one model row from one raw catalog row + the installed-by-name index +
+// the valid-variants list for this platform. Pure transform; no instance state.
+static QVariantMap buildPackageRow(const QVariantMap& obj,
+                                   const QHash<QString, QVariantMap>& installedByName,
+                                   const QStringList& validVariants)
+{
+    QVariantMap pkg;
+    const QString name = obj.value("name").toString();
+    const QString moduleName = obj.value("moduleName").toString();
+    pkg["name"] = name;
+    pkg["moduleName"] = moduleName;
+    pkg["description"] = obj.value("description").toString();
+    pkg["type"] = obj.value("type").toString();
+    pkg["category"] = obj.value("category").toString();
+
+    // Release version + hash from manifest, falling back to top-level (older
+    // list.json schemas).
+    const QVariantMap manifest = obj.value("manifest").toMap();
+    QString releaseVersion = manifest.value("version").toString();
+    if (releaseVersion.isEmpty()) releaseVersion = obj.value("version").toString();
+    const QString releaseHash = manifest.value("hashes").toMap().value("root").toString();
+    pkg["version"] = releaseVersion;
+    pkg["hash"] = releaseHash;
+
+    // Cross-reference against the on-disk install state.
+    QString installedVersion;
+    QString installedHash;
+    QString installType;
+    const bool isInstalled = installedByName.contains(moduleName);
+    if (isInstalled) {
+        const QVariantMap& inst = installedByName[moduleName];
+        installedVersion = inst.value("version").toString();
+        installedHash = inst.value("hashes").toMap().value("root").toString();
+        // "embedded" or "user" — QML gates Uninstall on installType === "user".
+        installType = inst.value("installType").toString();
+    }
+    pkg["installedVersion"] = installedVersion;
+    pkg["installedHash"] = installedHash;
+    pkg["installType"] = installType;
+
+    // Resolve install status. Embedded vs user doesn't change the status itself —
+    // the QML side gates the Uninstall button on installType separately.
+    int status = static_cast<int>(PackageTypes::NotInstalled);
+    if (isInstalled) {
+        if (releaseVersion.isEmpty() || installedVersion.isEmpty()) {
+            // No version info to compare — assume same.
+            status = static_cast<int>(PackageTypes::Installed);
+        } else {
+            const int cmp = versionCmp(installedVersion, releaseVersion);
+            if (cmp < 0)      status = static_cast<int>(PackageTypes::UpgradeAvailable);
+            else if (cmp > 0) status = static_cast<int>(PackageTypes::DowngradeAvailable);
+            else if (!releaseHash.isEmpty() && !installedHash.isEmpty()
+                     && releaseHash != installedHash)
+                              status = static_cast<int>(PackageTypes::DifferentHash);
+            else              status = static_cast<int>(PackageTypes::Installed);
+        }
+    }
+    pkg["installStatus"] = status;
+    pkg["errorMessage"] = QString();
+
+    // Variant availability — true iff any of the package's offered variants
+    // is in this platform's valid-variants list.
+    bool variantAvailable = false;
+    const QVariantList packageVariants = obj.value("variants").toList();
+    for (const QVariant& pv : packageVariants) {
+        if (validVariants.contains(pv.toString())) { variantAvailable = true; break; }
+    }
+    pkg["isVariantAvailable"] = variantAvailable;
+
+    QStringList deps;
+    const QVariantList depsArray = obj.value("dependencies").toList();
+    for (const QVariant& dep : depsArray) deps.append(dep.toString());
+    pkg["dependencies"] = deps;
+
+    return pkg;
+}
+
+// ──────────────────── connection-readiness predicates ────────────────────
+
+bool PackageManagerBackend::clientReady(const char* moduleName) const
+{
+    if (!m_logosAPI) return false;
+    LogosAPIClient* c = m_logosAPI->getClient(moduleName);
+    return c && c->isConnected();
+}
+
+bool PackageManagerBackend::bothClientsReady() const
+{
+    return clientReady("package_downloader") && clientReady("package_manager");
+}
+
+bool PackageManagerBackend::packageManagerReady() const
+{
+    return clientReady("package_manager");
 }
 
 QString PackageManagerBackend::currentReleaseTag() const
@@ -104,43 +297,29 @@ QString PackageManagerBackend::currentReleaseTag() const
     return tags.at(idx);
 }
 
-PackageListModel* PackageManagerBackend::packages() const
+QAbstractItemModel* PackageManagerBackend::packages() const
 {
-    return m_packageModel;
+    return m_packagesPagingProxy;
 }
 
-QString PackageManagerBackend::displayNameForModule(QString moduleName)
+void PackageManagerBackend::refreshHasSelection()
 {
-    // Thin delegate to the local model. Needs to live here (not on the model
-    // directly as a Q_INVOKABLE) because QAbstractItemModel replicas proxy
-    // only the QAbstractItemModel interface — Q_INVOKABLE methods on the
-    // concrete subclass don't cross the wire. Slots declared in the .rep do.
-    if (!m_packageModel) return moduleName;
-    QString display = m_packageModel->displayNameForModule(moduleName);
-    return display.isEmpty() ? moduleName : display;
+    if (!m_packageModel) return;
+    setHasInstallableSelection(m_packageModel->getInstallableSelectedCount() > 0);
+    setHasUninstallableSelection(m_packageModel->getUninstallableSelectedCount() > 0);
 }
 
-void PackageManagerBackend::refreshHasSelectedPackages()
+void PackageManagerBackend::refreshCatalog()
 {
-    setHasSelectedPackages(m_packageModel->getSelectedCount() > 0);
-}
-
-void PackageManagerBackend::reload()
-{
-    if (!m_logosAPI
-        || !m_logosAPI->getClient("package_downloader")->isConnected()
-        || !m_logosAPI->getClient("package_manager")->isConnected()) {
-        qDebug() << "package_downloader or package_manager not connected, cannot reload packages";
+    if (!bothClientsReady()) {
+        qDebug() << "package_downloader or package_manager not connected, cannot refresh catalog";
         return;
     }
 
-    // Full reload — drop any Failed-row state from the previous fetch. The
-    // Failed banner refers to a specific install attempt against the
-    // previously selected release; once we're refetching releases + the
-    // catalog from scratch, those errors no longer correspond to the rows
-    // about to land. The refresh-debounce path keeps preserving Failed
-    // (that's the original use case) since file-install events don't change
-    // the release context.
+    // Full catalog refresh — drop Failed-row state from the previous fetch.
+    // Failed referred to an attempt against the previous release context, so
+    // refetching from scratch makes those errors stale. (The debounced refresh
+    // path leaves Failed alone — file-install events don't change releases.)
     if (m_packageModel) m_packageModel->clearFailedRows();
 
     setIsLoading(true);
@@ -154,7 +333,7 @@ void PackageManagerBackend::reload()
 
 void PackageManagerBackend::refreshReleases(std::function<void()> onDone)
 {
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
+    if (!clientReady("package_downloader")) {
         if (onDone) onDone();
         return;
     }
@@ -187,9 +366,7 @@ void PackageManagerBackend::refreshReleases(std::function<void()> onDone)
 
 void PackageManagerBackend::refreshPackages()
 {
-    if (!m_logosAPI
-        || !m_logosAPI->getClient("package_downloader")->isConnected()
-        || !m_logosAPI->getClient("package_manager")->isConnected()) {
+    if (!bothClientsReady()) {
         qDebug() << "package_downloader or package_manager not connected, cannot refresh packages";
         setIsLoading(false);
         return;
@@ -201,11 +378,8 @@ void PackageManagerBackend::refreshPackages()
 
     const QString tag = currentReleaseTag();
 
-    // Always fetch the UNFILTERED catalog (category="All") so category
-    // switches can be served client-side from m_allPackagesCache without
-    // hitting the network. The categories list itself is re-fetched each
-    // time because it's per-release, but packages are one fat fetch per
-    // release change rather than one per (release, category) pair.
+    // Fetch with category="All" once; subsequent category clicks slice
+    // m_allPackagesCache locally with no network round-trip.
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.getCategoriesAsync(tag, [self, currentGeneration, tag](QVariant result) {
@@ -228,6 +402,10 @@ void PackageManagerBackend::refreshPackages()
                     self->m_allPackagesCache = packagesArray;
                     self->m_installedPackagesCache = installedPackages;
                     self->m_validVariantsCache = validVariants;
+                    // Type list is derived from the unfiltered cache, not from
+                    // the category-filtered slice, so switching categories
+                    // doesn't make Type tabs flicker in/out.
+                    self->recomputeAvailableTypes();
                     self->applyCategoryFilter();
                     self->setIsLoading(false);
                 });
@@ -266,18 +444,99 @@ void PackageManagerBackend::applyCategoryFilter()
     setPackagesFromVariantList(filtered, m_installedPackagesCache, m_validVariantsCache);
 }
 
+void PackageManagerBackend::recomputeAvailableTypes()
+{
+    // "All" is always at index 0; real types follow alphabetically. Using a
+    // QSet to dedupe keeps this O(N) over the cache; the final sort is over
+    // the small set of distinct types (typically 2-4 entries).
+    QSet<QString> distinct;
+    for (const QVariant& v : m_allPackagesCache) {
+        const QString t = v.toMap().value("type").toString();
+        if (!t.isEmpty()) distinct.insert(t);
+    }
+    QStringList sorted(distinct.begin(), distinct.end());
+    std::sort(sorted.begin(), sorted.end());
+
+    QStringList types;
+    types.reserve(sorted.size() + 1);
+    types.append(QStringLiteral("All"));
+    types.append(sorted);
+
+    // Preserve the user's pick across refreshes when possible: remember
+    // the selected type *string* before we overwrite the list, then
+    // re-resolve it against the new list. If it's gone (e.g. the only
+    // package of that type was uninstalled and a refresh is in flight
+    // for a release that doesn't have it either), fall back to "All".
+    const QStringList prev = availableTypes();
+    const int prevIdx = selectedTypeIndex();
+    const QString prevSelectedType = (prevIdx >= 0 && prevIdx < prev.size())
+                                         ? prev.at(prevIdx) : QString();
+
+    setAvailableTypes(types);
+
+    int newIdx = 0;
+    if (!prevSelectedType.isEmpty()) {
+        const int found = types.indexOf(prevSelectedType);
+        if (found >= 0) newIdx = found;
+    }
+    if (newIdx != selectedTypeIndex()) {
+        setSelectedTypeIndex(newIdx);          // emits selectedTypeIndexChanged
+    } else {
+        // Index is the same but the underlying list might have changed
+        // (e.g. "ui" stayed at index 1 but a `ui_qml` entry slid in at
+        // index 2). Push the resolved string into the proxy regardless
+        // so the filter stays consistent.
+        applyTypeFilter();
+    }
+}
+
+void PackageManagerBackend::applyTypeFilter()
+{
+    if (!m_packagesFilterProxy) return;
+    const QStringList types = availableTypes();
+    const int idx = selectedTypeIndex();
+    QString typeFilter;
+    if (idx > 0 && idx < types.size()) {
+        const QString t = types.at(idx);
+        // Index 0 is the "All" sentinel; treat any literal "All" cell
+        // anywhere in the list as no-filter for safety (the catalog is
+        // unlikely to ship a type literally named "All", but if it does
+        // the user-facing semantics are still "show everything").
+        if (t.compare(QStringLiteral("All"), Qt::CaseInsensitive) != 0)
+            typeFilter = t;
+    }
+    m_packagesFilterProxy->setTypeFilter(typeFilter);
+}
+
 void PackageManagerBackend::onSelectedReleaseIndexChanged()
 {
     if (m_suppressReleaseChange) return;
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        return;
-    }
+    if (!clientReady("package_downloader")) return;
 
-    // Drop Failed-row state from the previously selected release — the
-    // banner refers to an install attempt against THAT release's package,
-    // and the user has just switched contexts. See clearFailedRows() for
-    // the broader rationale.
-    if (m_packageModel) m_packageModel->clearFailedRows();
+    if (m_packageModel) {
+        // Drop Failed-row state from the previously selected release — the
+        // banner refers to an install attempt against THAT release's package,
+        // and the user has just switched contexts. See clearFailedRows() for
+        // the broader rationale.
+        m_packageModel->clearFailedRows();
+
+        // Drop selection too. A ticked checkbox represents intent to act on
+        // a specific catalog row; switching releases swaps the catalog out
+        // from under the user, so the previous intent is no longer well-
+        // defined (the row may not exist in the new release, may carry a
+        // different version, may have a different variant availability).
+        // Cleared *before* refreshPackages() runs so the setPackages
+        // selection-restore pass (which keys on getSelectedPackageNames)
+        // doesn't carry stale ticks into the new catalog.
+        m_packageModel->clearAllSelections();
+
+        // The model's isSelected role just flipped false on every row, but
+        // LogosTable maintains its own selectedIndices array as QML-side
+        // state — without this signal the checkboxes would stay visually
+        // ticked even though the model says no row is selected. QML hooks
+        // selectionsCleared and resets the table's selection array.
+        emit selectionsCleared();
+    }
 
     // No setRelease call needed — the release tag is passed directly to each
     // downloader method call. Just kick off a catalog reload.
@@ -288,110 +547,27 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
                                                         const QVariantList& installedPackages,
                                                         const QStringList& validVariants)
 {
+    // Index installed packages by moduleName for O(1) lookup in buildPackageRow.
     QHash<QString, QVariantMap> installedByName;
     for (const QVariant& val : installedPackages) {
-        QVariantMap obj = val.toMap();
-        QString installedName = obj.value("name").toString();
-        if (!installedName.isEmpty()) {
-            installedByName.insert(installedName, obj);
-        }
+        const QVariantMap obj = val.toMap();
+        const QString installedName = obj.value("name").toString();
+        if (!installedName.isEmpty()) installedByName.insert(installedName, obj);
     }
 
     QList<QVariantMap> packages;
-    for (const QVariant& value : packagesArray) {
-        QVariantMap obj = value.toMap();
-        QVariantMap pkg;
-        QString name = obj.value("name").toString();
-        QString moduleName = obj.value("moduleName").toString();
-        pkg["name"] = name;
-        pkg["moduleName"] = moduleName;
-        pkg["description"] = obj.value("description").toString();
-        pkg["type"] = obj.value("type").toString();
-        pkg["category"] = obj.value("category").toString();
+    packages.reserve(packagesArray.size());
+    for (const QVariant& value : packagesArray)
+        packages.append(buildPackageRow(value.toMap(), installedByName, validVariants));
 
-        // Pull release version + hash from manifest if present, otherwise fall
-        // back to the top-level version (older list.json schemas).
-        QVariantMap manifest = obj.value("manifest").toMap();
-        QString releaseVersion = manifest.value("version").toString();
-        if (releaseVersion.isEmpty()) {
-            releaseVersion = obj.value("version").toString();
-        }
-        QString releaseHash = manifest.value("hashes").toMap().value("root").toString();
-
-        pkg["version"] = releaseVersion;
-        pkg["hash"] = releaseHash;
-
-        QString installedVersion;
-        QString installedHash;
-        QString installType;
-        bool isInstalled = installedByName.contains(moduleName);
-        if (isInstalled) {
-            const QVariantMap& inst = installedByName[moduleName];
-            installedVersion = inst.value("version").toString();
-            installedHash = inst.value("hashes").toMap().value("root").toString();
-            // "embedded" or "user" — QML gates the Uninstall button on
-            // installType === "user". Not-installed rows leave this empty.
-            installType = inst.value("installType").toString();
-        }
-        pkg["installedVersion"] = installedVersion;
-        pkg["installedHash"] = installedHash;
-        pkg["installType"] = installType;
-
-        int status;
-        if (!isInstalled) {
-            status = static_cast<int>(PackageTypes::NotInstalled);
-        } else {
-            // If we don't have version info on either side, fall back to a
-            // simple "Installed" since we have nothing to compare.
-            if (releaseVersion.isEmpty() || installedVersion.isEmpty()) {
-                status = static_cast<int>(PackageTypes::Installed);
-            } else {
-                int cmp = versionCmp(installedVersion, releaseVersion);
-                if (cmp < 0) {
-                    status = static_cast<int>(PackageTypes::UpgradeAvailable);
-                } else if (cmp > 0) {
-                    status = static_cast<int>(PackageTypes::DowngradeAvailable);
-                } else {
-                    // Same version. Compare hashes when both are present.
-                    if (!releaseHash.isEmpty() && !installedHash.isEmpty()
-                        && releaseHash != installedHash) {
-                        status = static_cast<int>(PackageTypes::DifferentHash);
-                    } else {
-                        status = static_cast<int>(PackageTypes::Installed);
-                    }
-                }
-            }
-        }
-        pkg["installStatus"] = status;
-        pkg["errorMessage"] = QString();
-
-        QVariantList packageVariants = obj.value("variants").toList();
-        bool variantAvailable = false;
-        for (const QVariant& pv : packageVariants) {
-            if (validVariants.contains(pv.toString())) {
-                variantAvailable = true;
-                break;
-            }
-        }
-        pkg["isVariantAvailable"] = variantAvailable;
-
-        QVariantList depsArray = obj.value("dependencies").toList();
-        QStringList deps;
-        for (const QVariant& dep : depsArray) {
-            deps.append(dep.toString());
-        }
-        pkg["dependencies"] = deps;
-
-        packages.append(pkg);
-    }
-
+    // setPackages emits hasSelectionChanged; the connected slot refreshes
+    // hasInstallableSelection / hasUninstallableSelection.
     m_packageModel->setPackages(packages);
-    refreshHasSelectedPackages();
 }
 
 void PackageManagerBackend::processDownloadResults(const QString& releaseTag, const QVariantList& results)
 {
-    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
+    if (!packageManagerReady()) {
         qWarning() << "package_manager not connected, cannot install downloaded packages";
         finishInstallation(0);
         return;
@@ -454,6 +630,12 @@ void PackageManagerBackend::installNextPackage(const QString& releaseTag, const 
                 if (success) {
                     self->m_packageModel->updatePackageInstallation(
                         packageName, static_cast<int>(PackageTypes::Installed));
+                    // Per-package deselect on success — the action is done,
+                    // so the row should drop out of the selection. Failed
+                    // rows stay selected so the user can retry from the
+                    // bulk Install button (the Failed status keeps them in
+                    // hasInstallableSelection).
+                    self->m_packageModel->clearSelectionsByPackageNames({packageName});
                 } else {
                     self->m_packageModel->updatePackageInstallation(
                         packageName, static_cast<int>(PackageTypes::Failed), err);
@@ -474,55 +656,119 @@ void PackageManagerBackend::installNextPackage(const QString& releaseTag, const 
 
 void PackageManagerBackend::finishInstallation(int completed)
 {
-    m_packageModel->clearAllSelections();
-    refreshHasSelectedPackages();
     setIsInstalling(false);
     emit installationProgressUpdated(
         static_cast<int>(PackageTypes::Completed), "", completed, completed, true, "");
-
-    // Full catalog refresh — pulls `installType`, `installedVersion`, and
-    // `installedHash` from the on-disk scan. Without this the rows stay in
-    // whatever state updatePackageInstallation left them; specifically
-    // `installType` is still empty, which means the "Uninstall" button
-    // (gated on `installType === "user"`) won't render until the user
-    // manually hits Reload. Mirrors the post-upgrade refresh at the end
-    // of performPendingUpgrade.
     refreshPackages();
 }
 
-void PackageManagerBackend::install()
+void PackageManagerBackend::installSelected()
+{
+    const QStringList names = m_packageModel->getInstallableSelectedPackageNames();
+    if (names.isEmpty()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
+        return;
+    }
+    installNamed(names);
+}
+
+void PackageManagerBackend::installPackage(int index)
+{
+    const QVariantMap pkg = m_packageModel->packageAt(index);
+    if (pkg.isEmpty()) {
+        qWarning() << "PackageManagerBackend::installPackage invalid index:" << index;
+        return;
+    }
+    const QString name = pkg.value("name").toString();
+    if (name.isEmpty()) {
+        qWarning() << "PackageManagerBackend::installPackage missing name for index:" << index;
+        return;
+    }
+    installSinglePackageAsync(name);
+}
+
+void PackageManagerBackend::installSinglePackageAsync(const QString& packageName)
+{
+    if (!bothClientsReady()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
+        return;
+    }
+    if (packageName.isEmpty()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
+        return;
+    }
+
+    // Mark the row Installing immediately so the per-row button gates itself
+    // against double-click while the download is in flight.
+    m_packageModel->updatePackageInstallation(
+        packageName, static_cast<int>(PackageTypes::Installing));
+
+    emit installationProgressUpdated(
+        static_cast<int>(PackageTypes::Started), packageName, 0, 1, true, "");
+
+    const QString tag = currentReleaseTag();
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_downloader.downloadPackageAsync(tag, packageName,
+        [self, tag, packageName](QVariantMap dlResult) {
+            if (!self) return;
+            self->installOnePackage(tag, dlResult,
+                [self, packageName](bool success, const QString& err) {
+                    if (!self) return;
+                    if (success) {
+                        self->m_packageModel->updatePackageInstallation(
+                            packageName, static_cast<int>(PackageTypes::Installed));
+                        // Drop selection on success
+                        self->m_packageModel->clearSelectionsByPackageNames({packageName});
+                    } else {
+                        self->m_packageModel->updatePackageInstallation(
+                            packageName, static_cast<int>(PackageTypes::Failed), err);
+                    }
+                    emit self->installationProgressUpdated(
+                        success ? static_cast<int>(PackageTypes::Completed)
+                                : static_cast<int>(PackageTypes::ProgressFailed),
+                        packageName, 1, 1, success, success ? QString() : err);
+                });
+        });
+}
+
+void PackageManagerBackend::reloadPackage(int index)
+{
+    // TODO: load/unload the plugin via logoscore.
+    Q_UNUSED(index);
+    qWarning() << "PackageManagerBackend::reloadPackage not implemented (TODO: logoscore load/unload).";
+}
+
+void PackageManagerBackend::installNamed(const QStringList& packageNames)
 {
     if (isInstalling()) {
         emit errorOccurred(static_cast<int>(PackageTypes::InstallationAlreadyInProgress));
         return;
     }
 
-    if (m_packageModel->getSelectedCount() == 0) {
+    if (packageNames.isEmpty()) {
         emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
         return;
     }
 
-    if (!m_logosAPI
-        || !m_logosAPI->getClient("package_downloader")->isConnected()
-        || !m_logosAPI->getClient("package_manager")->isConnected()) {
+    if (!bothClientsReady()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
         return;
     }
 
     setIsInstalling(true);
 
-    QStringList selectedNames = m_packageModel->getSelectedPackageNames();
     emit installationProgressUpdated(
-        static_cast<int>(PackageTypes::Started), "", 0, selectedNames.size(), true, "");
+        static_cast<int>(PackageTypes::Started), "", 0, packageNames.size(), true, "");
 
-    for (const QString& packageName : selectedNames) {
+    for (const QString& packageName : packageNames) {
         m_packageModel->updatePackageInstallation(packageName, static_cast<int>(PackageTypes::Installing));
     }
 
     const QString tag = currentReleaseTag();
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
-    logos.package_downloader.downloadPackagesAsync(tag, selectedNames, [self, tag](QVariantList results) {
+    logos.package_downloader.downloadPackagesAsync(tag, packageNames, [self, tag](QVariantList results) {
         if (!self) return;
         self->processDownloadResults(tag, results);
     }, Timeout(DOWNLOAD_TIMEOUT_MS));
@@ -540,27 +786,45 @@ void PackageManagerBackend::requestPackageDetails(int index)
 void PackageManagerBackend::togglePackage(int index, bool checked)
 {
     m_packageModel->updatePackageSelection(index, checked);
-    refreshHasSelectedPackages();
 }
 
-void PackageManagerBackend::uninstall(int index)
+void PackageManagerBackend::uninstallSelected()
 {
-    if (!m_logosAPI || !m_logosAPI->getClient("package_manager")->isConnected()) {
+    if (!packageManagerReady()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
         return;
     }
 
-    // Resolve moduleName from our own PackageListModel — mirrors what
-    // requestVersionChange already does for upgrade/downgrade/sidegrade.
-    // Reading moduleName from the source-side model is synchronous and
-    // race-free.
-    //
-    // The previous name-based signature asked QML to pass
-    // `model.moduleName` read from the REPLICA side, which could return an
-    // empty QVariant briefly after a beginResetModel/endResetModel window
-    // (QRO roles are re-synced asynchronously). That forced a defensive
-    // "if (!row.moduleName) return" guard in QML — a symptom, not a fix.
-    // Taking the index and resolving it locally eliminates the race.
+    const QStringList moduleNames = m_packageModel
+        ? m_packageModel->getUninstallableSelectedModuleNames()
+        : QStringList{};
+    if (moduleNames.isEmpty()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
+        return;
+    }
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_manager.requestMultiUninstallAsync(moduleNames,
+        [self, moduleNames](QVariantMap result) {
+            if (!self) return;
+            if (!result.value("success", false).toBool()) {
+                const QString err = result.value("error").toString();
+                const int errCode = err.contains("embedded", Qt::CaseInsensitive)
+                                        ? static_cast<int>(PackageTypes::PackageNotUninstallable)
+                                        : static_cast<int>(PackageTypes::UninstallFailed);
+                emit self->errorOccurred(errCode);
+            }
+        });
+}
+
+void PackageManagerBackend::uninstall(int index)
+{
+    if (!packageManagerReady()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
+        return;
+    }
+
     const QVariantMap pkg = m_packageModel->packageAt(index);
     if (pkg.isEmpty()) {
         qWarning() << "PackageManagerBackend::uninstall invalid index:" << index;
@@ -568,26 +832,10 @@ void PackageManagerBackend::uninstall(int index)
     }
     const QString name = pkg.value("moduleName").toString();
     if (name.isEmpty()) {
-        // Structural invariant: every catalog row carries moduleName
-        // (setPackagesFromVariantList sets it from the manifest). If this
-        // fires it's a data-population bug, not a replica race — surface
-        // it loudly rather than silently dropping the click.
         qWarning() << "PackageManagerBackend::uninstall: row has no moduleName at index" << index;
         return;
     }
 
-    // Stateless wrapper over package_manager.requestUninstall. The module:
-    //   1. Sets its pending state + starts the 3s ack timer.
-    //   2. Emits "beforeUninstall" with the installed-dependents list so
-    //      Basecamp can ack + show the cascade dialog.
-    //   3. Waits for Basecamp to call confirmUninstall / cancelUninstall
-    //      after the user decides, or auto-cancels if no listener acked
-    //      (headless runtime, stalled GUI).
-    //
-    // Success of the synchronous request just means "request accepted" —
-    // the real outcome flows through uninstallFinished (success) or
-    // uninstallCancelled (ack timeout / user cancel / error) events which
-    // the constructor already subscribes to.
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_manager.requestUninstallAsync(name,
@@ -622,9 +870,7 @@ void PackageManagerBackend::sidegradePackage(int index)
 
 void PackageManagerBackend::requestVersionChange(int index, UpgradeMode mode)
 {
-    if (!m_logosAPI
-        || !m_logosAPI->getClient("package_manager")->isConnected()
-        || !m_logosAPI->getClient("package_downloader")->isConnected()) {
+    if (!bothClientsReady()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
         return;
     }
@@ -632,15 +878,9 @@ void PackageManagerBackend::requestVersionChange(int index, UpgradeMode mode)
     QVariantMap pkg = m_packageModel->packageAt(index);
     if (pkg.isEmpty()) return;
 
-    // The catalog row uses "moduleName" as the stable identifier — that's what
-    // uninstallPackage and installPlugin both key on. The "name" field is the
-    // display label and may not match.
     const QString moduleName = pkg.value("moduleName").toString();
     if (moduleName.isEmpty()) return;
 
-    // Pin the release tag at request time so a user switching the release
-    // combo mid-dialog doesn't retarget the install. The module holds this
-    // as part of its pending state and uses it when the user confirms.
     const QString releaseTag = currentReleaseTag();
 
     LogosModules logos(m_logosAPI);
@@ -658,120 +898,89 @@ void PackageManagerBackend::requestVersionChange(int index, UpgradeMode mode)
 
 void PackageManagerBackend::subscribePackageManagerCancellationEvents()
 {
-    if (!m_logosAPI) return;
-    LogosAPIClient* client = m_logosAPI->getClient("package_manager");
-    if (!client || !client->isConnected()) return;
+    if (!packageManagerReady()) return;
 
-    LogosModules logos(m_logosAPI);
-
-    // The module emits these with a single string payload: a JSON-encoded
-    // { name, reason } (uninstall) or { name, releaseTag, reason } (upgrade).
-    // "user cancelled" means the user clicked Cancel in Basecamp's dialog —
-    // stay silent (the user already knows). Other reasons (ack timeout,
-    // module-side errors) surface as a toast via installationProgressUpdated
-    // with the ProgressFailed type so the existing QML handler renders them.
-    //
-    // Keep the literal string in sync with package_manager.cpp's
-    // emitCancellation reason for user-cancel.
     static const QString kReasonUserCancelled = QStringLiteral("user cancelled");
 
+    LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
-    logos.package_manager.on("uninstallCancelled",
-        [self](const QVariantList& data) {
-            if (!self || data.isEmpty()) return;
-            const QByteArray payload = data.first().toString().toUtf8();
-            QJsonParseError parseErr{};
-            const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseErr);
-            if (parseErr.error != QJsonParseError::NoError || !doc.isObject()) {
-                return;
-            }
-            const QJsonObject obj = doc.object();
-            const QString name   = obj.value("name").toString();
-            const QString reason = obj.value("reason").toString();
-            if (reason == kReasonUserCancelled) return;  // silent
-            const QString msg = QStringLiteral("Uninstall of '%1' cancelled: %2")
-                                    .arg(name, reason);
-            // Dedicated cancellation channel — routing through
-            // installationProgressUpdated(ProgressFailed, ...) used to make
-            // QML render the message with a hardcoded "Failed to install"
-            // prefix, which was misleading for uninstall cancellations.
-            emit self->cancellationOccurred(name, msg);
+
+    // Subscribe a cancellation event with a per-event toast formatter.
+    auto subscribe = [&](const char* eventName,
+                         std::function<QString(const QJsonObject&, const QString&)> format) {
+        logos.package_manager.on(eventName,
+            [self, format](const QVariantList& data) {
+                if (!self) return;
+                const QJsonObject obj = parseEventPayload(data);
+                if (obj.isEmpty()) return;
+                const QString reason = obj.value("reason").toString();
+                if (reason == kReasonUserCancelled) return;
+                const QString name = obj.value("name").toString();
+                emit self->cancellationOccurred(name, format(obj, reason));
+            });
+    };
+
+    subscribe("uninstallCancelled",
+        [](const QJsonObject& obj, const QString& reason) {
+            return QStringLiteral("Uninstall of '%1' cancelled: %2")
+                       .arg(obj.value("name").toString(), reason);
         });
 
-    logos.package_manager.on("upgradeCancelled",
-        [self](const QVariantList& data) {
-            if (!self || data.isEmpty()) return;
-            const QByteArray payload = data.first().toString().toUtf8();
-            QJsonParseError parseErr{};
-            const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseErr);
-            if (parseErr.error != QJsonParseError::NoError || !doc.isObject()) {
-                return;
-            }
-            const QJsonObject obj = doc.object();
-            const QString name       = obj.value("name").toString();
-            const QString releaseTag = obj.value("releaseTag").toString();
-            const QString reason     = obj.value("reason").toString();
-            if (reason == kReasonUserCancelled) return;  // silent
-            const QString msg = QStringLiteral("Upgrade of '%1' (%2) cancelled: %3")
-                                    .arg(name, releaseTag, reason);
-            // Same rationale as uninstallCancelled above — use the dedicated
-            // cancellation channel so the toast doesn't render as "Failed to
-            // install".
-            emit self->cancellationOccurred(name, msg);
+    subscribe("upgradeCancelled",
+        [](const QJsonObject& obj, const QString& reason) {
+            return QStringLiteral("Upgrade of '%1' (%2) cancelled: %3")
+                       .arg(obj.value("name").toString(),
+                            obj.value("releaseTag").toString(),
+                            reason);
         });
 }
 
 void PackageManagerBackend::subscribePackageManagerRefreshEvents()
 {
-    if (!m_logosAPI) return;
-    LogosAPIClient* client = m_logosAPI->getClient("package_manager");
-    if (!client || !client->isConnected()) return;
+    if (!packageManagerReady()) return;
 
     LogosModules logos(m_logosAPI);
 
-    // All four events carry the plugin name/path as their payload, but we
-    // don't need it — any mutation invalidates the catalog row statuses, so
-    // we just arm the debounce and let refreshPackages() rebuild the rows.
-    // Releases + the selected-release combo are deliberately left alone
-    // (see the m_refreshDebounceTimer wiring in the constructor). Rapid
-    // bursts (batch install) collapse to a single refresh because start()
-    // resets the pending tick.
     QPointer<PackageManagerBackend> self(this);
     auto arm = [self](const QVariantList&) {
         if (!self || !self->m_refreshDebounceTimer) return;
         self->m_refreshDebounceTimer->start();
     };
 
+    auto deselectAndArm = [self](const QVariantList& data) {
+        if (!self) return;
+        if (!data.isEmpty() && self->m_packageModel) {
+            const QString moduleName = data.first().toString();
+            if (!moduleName.isEmpty())
+                self->m_packageModel->clearSelectionsByModuleNames({moduleName});
+        }
+        if (self->m_refreshDebounceTimer) self->m_refreshDebounceTimer->start();
+    };
+
     logos.package_manager.on("corePluginFileInstalled", arm);
     logos.package_manager.on("uiPluginFileInstalled",   arm);
-    logos.package_manager.on("corePluginUninstalled",   arm);
-    logos.package_manager.on("uiPluginUninstalled",     arm);
+    logos.package_manager.on("corePluginUninstalled",   deselectAndArm);
+    logos.package_manager.on("uiPluginUninstalled",     deselectAndArm);
 }
 
 void PackageManagerBackend::subscribePackageManagerUpgradeEvents()
 {
-    if (!m_logosAPI) return;
-    LogosAPIClient* client = m_logosAPI->getClient("package_manager");
-    if (!client || !client->isConnected()) return;
+    if (!packageManagerReady()) return;
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
 
-    // The module emits upgradeUninstallDone after confirmUpgrade successfully
-    // removes the old version. Payload is a JSON-encoded { name, releaseTag,
-    // mode }. PMU drives the download+install of the new version from here.
+    // upgradeUninstallDone fires after confirmUpgrade removes the old version.
+    // Payload: JSON-encoded { name, releaseTag, mode }. PMU drives the
+    // download+install of the new version.
     logos.package_manager.on("upgradeUninstallDone",
         [self](const QVariantList& data) {
-            if (!self || data.isEmpty()) return;
-            const QByteArray payload = data.first().toString().toUtf8();
-            QJsonParseError parseErr{};
-            const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseErr);
-            if (parseErr.error != QJsonParseError::NoError || !doc.isObject()) return;
-            const QJsonObject obj = doc.object();
-            const QString name       = obj.value("name").toString();
-            const QString releaseTag = obj.value("releaseTag").toString();
-            const int mode           = obj.value("mode").toInt();
-            self->onUpgradeUninstallDone(name, releaseTag, mode);
+            if (!self) return;
+            const QJsonObject obj = parseEventPayload(data);
+            if (obj.isEmpty()) return;
+            self->onUpgradeUninstallDone(obj.value("name").toString(),
+                                         obj.value("releaseTag").toString(),
+                                         obj.value("mode").toInt());
         });
 }
 
@@ -779,22 +988,11 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
                                                     const QString& releaseTag,
                                                     int mode)
 {
-    // The module's upgradeUninstallDone payload carries the moduleName (stable
-    // identifier the gated uninstall/upgrade flow keyed on) as `name`. Map it
-    // back to the catalog `name` here — that's what package_downloader keys
-    // on (see install() → downloadPackagesAsync(tag, selectedNames) where
-    // selectedNames come from getSelectedPackageNames() → catalog names), and
-    // it's what user-visible text should show. Fall back to moduleName if
-    // no catalog row matches (package dropped from the active category filter
-    // between requestUpgrade and upgradeUninstallDone — unlikely but cheap to
-    // handle).
     const QString mapped = m_packageModel
         ? m_packageModel->displayNameForModule(moduleName) : QString();
     const QString displayName = mapped.isEmpty() ? moduleName : mapped;
 
-    if (!m_logosAPI
-        || !m_logosAPI->getClient("package_downloader")->isConnected()
-        || !m_logosAPI->getClient("package_manager")->isConnected()) {
+    if (!bothClientsReady()) {
         const QString msg = QStringLiteral("Cannot complete upgrade of '%1': "
                                            "required modules not connected").arg(displayName);
         emit installationProgressUpdated(
@@ -803,17 +1001,8 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
         return;
     }
 
-    // Cancel the pending debounced reload — the file-uninstall event
-    // subscription (corePluginUninstalled / uiPluginUninstalled) already
-    // armed it, but we're about to re-install the new version. Letting
-    // the intermediate reload fire would flash the row as "Not Installed"
-    // before the download finishes. The explicit refreshPackages() at
-    // the end of the install callback brings the catalog fully up to date.
     if (m_refreshDebounceTimer) m_refreshDebounceTimer->stop();
 
-    // Visual feedback — flip the row to Installing immediately so the user
-    // sees progress rather than a transient "Not Installed" gap.
-    // updatePackageInstallation matches on either name or moduleName.
     m_packageModel->updatePackageInstallation(
         displayName, static_cast<int>(PackageTypes::Installing));
 
