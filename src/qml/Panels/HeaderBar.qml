@@ -4,71 +4,55 @@ import QtQuick.Layouts
 import Logos.Theme
 import Logos.Controls
 
-import Controls
-
-// Pure composition — explicit state inputs, explicit output signals.
-ColumnLayout {
+// Page header: Title + Subtitle + Search bar.
+RowLayout {
     id: root
 
-    property bool isInstalling: false
-    property bool isLoading: false
-    property bool hasSelectedPackages: false
-    property list<string> releases: []
-    property int selectedReleaseIndex: 0
+    property string searchText: ""
 
-    signal reloadClicked()
-    signal installClicked()
-    signal releaseSelected(int index)
+    signal searchEdited(string text)
 
-    spacing: Theme.spacing.xlarge
+    spacing: Theme.spacing.large
 
-    LogosText {
-        text: qsTr("Package Manager")
-        font.pixelSize: Theme.typography.titleText
-        font.weight: Theme.typography.weightBold
-        color: Theme.palette.text
-    }
-
-    LogosText {
-        text: qsTr("Manage plugins and packages")
-        font.pixelSize: Theme.typography.primaryText
-        color: Theme.palette.textSecondary
-    }
-
-    RowLayout {
-        spacing: Theme.spacing.small
-
-        LogosButton {
-            text: qsTr("Reload")
-            enabled: !root.isInstalling
-            onClicked: root.reloadClicked()
-            implicitWidth: 100
-            implicitHeight: 32
-        }
-
-        InstallButton {
-            isInstalling: root.isInstalling
-            hasSelectedPackages: root.hasSelectedPackages
-            onClicked: root.installClicked()
-        }
-
-        Item { Layout.fillWidth: true }
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: Theme.spacing.tiny
 
         LogosText {
-            text: qsTr("Release:")
-            color: Theme.palette.textSecondary
-            font.pixelSize: Theme.typography.secondaryText
-            verticalAlignment: Text.AlignVCenter
+            text: qsTr("Package Manager")
+            font.pixelSize: Theme.typography.pageTitleText
+            font.weight: Theme.typography.weightRegular
+            color: Theme.palette.text
         }
 
-        ReleasePicker {
-            releases: root.releases
-            currentReleaseIndex: root.selectedReleaseIndex
-            isLoading: root.isLoading
-            enabled: !(root.isInstalling || root.isLoading)
-            onActivated: function(index) { root.releaseSelected(index) }
-            Layout.minimumWidth: 200
-            Layout.preferredWidth: 200
+        LogosText {
+            text: qsTr("Manage your plugins and packages.")
+            font.pixelSize: Theme.typography.subtitleText
+            color: Theme.colors.getColor(Theme.palette.text, 0.6)
+        }
+    }
+
+    Item { Layout.fillWidth: true }
+
+    LogosSearchBar {
+        id: searchBar
+        Layout.preferredWidth: 605
+        Layout.minimumWidth: 200
+        text: root.searchText
+        placeholderText: qsTr("Search packages…")
+        shortcutHint: "⌘K"
+        onTextChanged: {
+            if (text !== root.searchText)
+                root.searchEdited(text)
+        }
+    }
+
+    Shortcut {
+        sequence: "Ctrl+K"
+        context: Qt.WindowShortcut
+        onActivated: {
+            searchBar.textInput.forceActiveFocus()
+            searchBar.textInput.selectAll()
         }
     }
 }

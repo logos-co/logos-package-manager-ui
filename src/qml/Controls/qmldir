@@ -1,6 +1,3 @@
 module Controls
-InstallButton 1.0 InstallButton.qml
-LoadingSpinner 1.0 LoadingSpinner.qml
 PackageActionButton 1.0 PackageActionButton.qml
-ReleasePicker 1.0 ReleasePicker.qml
 StatusBadge 1.0 StatusBadge.qml

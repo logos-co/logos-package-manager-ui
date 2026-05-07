@@ -36,5 +36,13 @@ public:
     };
     Q_ENUM(ProgressType)
 
+    enum NotAvailableReason {
+        Available = 0,
+        NoVariantsPublished = 1,
+        BuildFlavorMismatch = 2,
+        PlatformMismatch = 3
+    };
+    Q_ENUM(NotAvailableReason)
+
     explicit PackageTypes(QObject* parent = nullptr) : QObject(parent) {}
 };
