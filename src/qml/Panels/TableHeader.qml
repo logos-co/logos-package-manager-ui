@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 import Logos.Theme
 import Logos.Controls
@@ -46,6 +47,7 @@ GridLayout {
     // proximity with the other bulk actions; the popup lives at the
     // top level so it can overlay the whole package-manager area.
     signal repositoriesClicked()
+    signal installLgxRequested(url filePath)
 
     columnSpacing: Theme.spacing.large
     rowSpacing: Theme.spacing.medium
@@ -138,5 +140,42 @@ GridLayout {
             enabled: root.runnableActionCount > 0 && !root.isInstalling
             onClicked: root.runActionsClicked()
         }
+
+        // "Install" dropdown from c7b7f45 — currently dispatches to
+        // root.installClicked() / hasInstallableSelection which are NOT
+        // declared on this control; bulk-install entry will no-op until
+        // those are wired (or the entry removed). The "Install .lgx"
+        // entry works — it fires lgxFileDialog → installLgxRequested.
+        LogosComboBox {
+            id: installCombo
+            Layout.fillWidth: true
+            Layout.minimumWidth: 80
+            Layout.preferredWidth: implicitWidth
+            Layout.maximumWidth: 150
+            Layout.preferredHeight: 40
+
+            enabled: !root.isInstalling
+            currentIndex: -1
+            displayText: qsTr("Install")
+
+            model: [qsTr("Install Selected"), qsTr("Install .lgx")]
+
+            onActivated: function(index) {
+                if (index === 0) {
+                    if (root.hasInstallableSelection) root.installClicked()
+                } else if (index === 1) {
+                    lgxFileDialog.open()
+                }
+                installCombo.currentIndex = -1
+            }
+        }
+    }
+
+    FileDialog {
+        id: lgxFileDialog
+        modality: Qt.NonModal
+        title: qsTr("Select Plugin to Install")
+        nameFilters: ["LGX Package (*.lgx)", "All Files (*)"]
+        onAccepted: root.installLgxRequested(selectedFile)
     }
 }

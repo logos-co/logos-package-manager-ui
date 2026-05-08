@@ -12,7 +12,7 @@ Rectangle {
 
 
     BackendStore {
-        id: store 
+        id: store
         function onSelectionsCleared() { packageList.clearSelections() }
     }
 
@@ -87,6 +87,7 @@ Rectangle {
                         onReloadClicked: store.refreshCatalog()
                         onStateRequested: function(state) { store.setInstallStateFilter(state) }
                         onRepositoriesClicked: repositoriesPopup.open()
+                        onInstallLgxRequested: function(filePath) { store.installFromFile(filePath) }
                     }
 
                     PackageList {

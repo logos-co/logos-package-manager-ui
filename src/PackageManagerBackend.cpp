@@ -1386,6 +1386,33 @@ void PackageManagerBackend::togglePackage(int index, bool checked)
     m_packageModel->updatePackageSelection(index, checked);
 }
 
+void PackageManagerBackend::installFromFile(QUrl filePath)
+{
+    if (!packageManagerReady()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
+        return;
+    }
+
+    const QString localPath = filePath.isLocalFile() ? filePath.toLocalFile()
+                                                     : filePath.toString();
+    if (localPath.isEmpty()) {
+        qWarning() << "PackageManagerBackend::installFromFile empty path";
+        return;
+    }
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_manager.installPluginAsync(localPath, false,
+        [self, localPath](QVariantMap result) {
+            if (!self) return;
+            const QString err = result.value("error").toString();
+            const bool success = !result.value("path").toString().isEmpty() && err.isEmpty();
+            if (!success) {
+                qWarning() << "installFromFile failed for" << localPath << ":" << err;
+            }
+        });
+}
+
 void PackageManagerBackend::uninstallSelected()
 {
     if (!packageManagerReady()) {

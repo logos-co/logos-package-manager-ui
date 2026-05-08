@@ -1,5 +1,6 @@
 #include <QVariantMap>
 #include <QStringList>
+#include <QUrl>
 
 class PackageManagerUi
 {
@@ -149,6 +150,8 @@ class PackageManagerUi
     SLOT(void cancelInstallConfirm(QString requestKey))
     // Request a row's full details; reply via packageDetailsLoaded.
     SLOT(void requestPackageDetails(int index))
+    // Install a local .lgx file picked via the page's "Install from LGX" menu.
+    SLOT(void installFromFile(QUrl filePath))
 
     // Map a backend moduleName back to its user-facing package `name` so
     // the cascade dialog renders dependents with the same label shown in

@@ -3,6 +3,7 @@
 #include <functional>
 #include <QObject>
 #include <QTimer>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
@@ -46,6 +47,7 @@ public slots:
     void downgradePackage(int index) override;
     void sidegradePackage(int index) override;
     void requestPackageDetails(int index) override;
+    void installFromFile(QUrl filePath) override;
 
     // Resolver-confirm responses. See `installDepsConfirmationRequested`
     // in the .rep for the flow. The argument is the opaque requestKey

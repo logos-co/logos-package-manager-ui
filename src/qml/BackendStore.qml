@@ -82,6 +82,8 @@ QtObject {
     function downgradePackage(i) { if (backend) backend.downgradePackage(i) }
     function reinstallPackage(i) { if (backend) backend.sidegradePackage(i) }
     function uninstallPackage(i) { if (backend) backend.uninstall(i) }
+    function uninstallSelected() { if (backend) backend.uninstallSelected() }
+    function installFromFile(filePath) { if (backend) backend.installFromFile(filePath) }
 
     // Dep-confirm dialog responses. Routed from
     // InstallDepsConfirm.qml's three signals back through the .rep
