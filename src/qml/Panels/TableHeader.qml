@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import Logos.Theme
 import Logos.Controls
 
-import Icons
+import icons
 
 // Table header per Figma: title "Packages" + install-state tabs on the
 // left, release picker + bulk-action buttons (Reload / Uninstall / Install)
