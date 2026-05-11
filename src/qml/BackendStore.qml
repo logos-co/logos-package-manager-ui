@@ -6,6 +6,8 @@ import Logos.PackageManagerUi 1.0
 QtObject {
     id: store
 
+    objectName: "pmui.BackendStore"
+
     // ─── Properties: inputs (overridable for tests) ───
     property string moduleName: "package_manager_ui"
     property var backend: logos.module(moduleName)
