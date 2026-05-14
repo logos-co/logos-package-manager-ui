@@ -16,8 +16,6 @@ GridLayout {
     property bool isLoading: false
     property bool hasInstallableSelection: false
     property bool hasUninstallableSelection: false
-    property list<string> releases: []
-    property int selectedReleaseIndex: 0
 
     // Install-state tab: 0 = All, 1 = Installed, 2 = Not Installed.
     property int stateIndex: 0
@@ -26,8 +24,12 @@ GridLayout {
     signal reloadClicked()
     signal installClicked()
     signal uninstallClicked()
-    signal releaseSelected(int index)
     signal stateRequested(int state)
+    // Multi-repo: opens the "Manage Repositories" popup that the
+    // top-level PackageManager.qml hosts. The button lives here for
+    // proximity with the other bulk actions; the popup lives at the
+    // top level so it can overlay the whole package-manager area.
+    signal repositoriesClicked()
 
     columnSpacing: Theme.spacing.large
     rowSpacing: Theme.spacing.medium
@@ -73,22 +75,8 @@ GridLayout {
 
         Item { Layout.fillWidth: root.columns === 2 }
 
-        LogosComboBox {
-            Layout.fillWidth: true
-            Layout.minimumWidth: 130
-            Layout.preferredWidth: 200
-            Layout.maximumWidth: 200
-
-            model: root.releases
-            currentIndex: root.selectedReleaseIndex
-            enabled: !(root.isInstalling || root.isLoading)
-
-            displayText: (root.isLoading && root.releases.length <= 1)
-                         ? qsTr("Loading releases…")
-                         : currentText
-
-            onActivated: function(index) { root.releaseSelected(index) }
-        }
+        // The global "Release" picker that used to live here is removed —
+        // each row now carries its own Version dropdown.
 
         LogosButton {
             Layout.fillWidth: true
@@ -100,6 +88,19 @@ GridLayout {
             text: qsTr("Reload")
             enabled: !root.isInstalling && !root.isLoading
             onClicked: root.reloadClicked()
+        }
+
+        // Multi-repo: open the Manage Repositories popup.
+        LogosButton {
+            Layout.fillWidth: true
+            Layout.minimumWidth: 100
+            Layout.preferredWidth: 130
+            Layout.maximumWidth: 130
+            Layout.preferredHeight: 40
+            radius: Theme.spacing.radiusLarge
+            text: qsTr("Repositories")
+            enabled: !root.isInstalling
+            onClicked: root.repositoriesClicked()
         }
 
         LogosButton {

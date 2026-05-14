@@ -44,6 +44,14 @@ public:
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;
 
+    // Custom comparator that pins source grouping as the primary sort key.
+    // Whatever role the user picks via the column header only orders rows
+    // WITHIN a repository section — sorting never interleaves repos.
+    // Pinned order: default repo first ("logos-modules-official"), then
+    // user repos by displayName (case-insensitive), then the user-selected
+    // role within each group.
+    bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
+
 private:
     // Rebuild m_roleByName + resolve every cached role-int from the new source.
     void recomputeRoleCaches();
@@ -59,5 +67,9 @@ private:
     QHash<QByteArray, int> m_roleByName;
     int m_typeFilterRole    = -1;
     int m_installStatusRole = -1;
+    int m_repositoryNameRole        = -1;
+    int m_repositoryDisplayNameRole = -1;
+    int m_repositoryUrlRole         = -1;
+    int m_nameRole                  = -1;
     QList<int> m_searchRoles;          // resolved name + description
 };

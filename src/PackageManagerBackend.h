@@ -43,8 +43,27 @@ public slots:
     void sidegradePackage(int index) override;
     void requestPackageDetails(int index) override;
 
-private slots:
-    void onSelectedReleaseIndexChanged();
+    // Forward to PackageListModel::setRowVersion. Pure proxy — the model
+    // owns the clamping, mirror-into-version/hash fields, and dataChanged
+    // emission so the QML view repaints without any extra backend logic.
+    void setRowVersion(int index, int versionIndex) override;
+
+    // Generated from the .rep as a pure-virtual slot (returns QString).
+    // Delegates to the model's lookup; declared on the backend so the Repc
+    // replica proxies it — the PackageListModel replica (QAbstractItemModel)
+    // can't proxy Q_INVOKABLE methods because they're not part of the
+    // QAbstractItemModel interface that gets remoted.
+    QString displayNameForModule(QString moduleName) override;
+
+    // Repository management — thin wrappers over package_downloader's
+    // multi-repo API. Each kicks off an async invokeRemote and emits
+    // repositoryOperationCompleted with the result. addRepository and
+    // removeRepository also trigger a refreshRepositories() so the
+    // panel's bound list re-renders without an explicit reload.
+    void refreshRepositories() override;
+    void addRepository(QString url) override;
+    void removeRepository(QString url) override;
+    void setRepositoryEnabled(QString url, bool enabled) override;
 
 private:
     // Mirrors package_manager's UpgradeMode; passed to requestUpgrade as int
@@ -52,7 +71,6 @@ private:
     enum class UpgradeMode { Upgrade = 0, Downgrade = 1, Sidegrade = 2 };
 
     void refreshPackages();
-    void refreshReleases(std::function<void()> onDone);
 
     // Bulk install pipeline — sequential download+install of N packages,
     // gated by the global isInstalling flag (so the bulk Install button can
@@ -60,8 +78,9 @@ private:
     void installNamed(const QStringList& packageNames);
 
     // Per-row install — runs independently of the global isInstalling
-    // flag so multiple per-row clicks can run in parallel
+    // flag so multiple per-row clicks can run in parallel.
     void installSinglePackageAsync(const QString& packageName);
+
     void setPackagesFromVariantList(const QVariantList& packagesArray,
                                     const QVariantList& installedPackages,
                                     const QStringList& validVariants);
@@ -78,8 +97,8 @@ private:
     // (index 0 / out-of-range / "All" → empty filter).
     void applyTypeFilter();
 
-    void processDownloadResults(const QString& releaseTag, const QVariantList& results);
-    void installNextPackage(const QString& releaseTag, const QVariantList& results, int index, int completed, int totalPackages);
+    void processDownloadResults(const QVariantList& results);
+    void installNextPackage(const QVariantList& results, int index, int completed, int totalPackages);
     void finishInstallation(int completed);
 
     // Mirror model has*Selection flags into the .rep PROPs.
@@ -87,7 +106,7 @@ private:
     void refreshHasSelection();
 
     // Shared body for upgrade / downgrade / sidegrade — resolves the row,
-    // pins the release tag, forwards to package_manager.requestUpgrade.
+    // pins the per-row target version, forwards to package_manager.requestUpgrade.
     void requestVersionChange(int index, UpgradeMode mode);
 
     // Cancellation events: filters out "user cancelled" (user initiated it,
@@ -110,12 +129,8 @@ private:
                                 int mode);
 
     // onDone invoked with (success, errorMsg) regardless of outcome.
-    void installOnePackage(const QString& releaseTag,
-                           const QVariantMap& dl,
+    void installOnePackage(const QVariantMap& dl,
                            std::function<void(bool success, const QString& error)> onDone);
-
-    // Empty string means "latest".
-    QString currentReleaseTag() const;
 
     // Connection-readiness predicates — wrap the m_logosAPI null-check + the
     // per-client isConnected() check that nine call sites in the .cpp need to
@@ -124,6 +139,10 @@ private:
     bool bothClientsReady() const;        // package_downloader AND package_manager
     bool packageManagerReady() const;     // package_manager only
 
+    // (`versionCmp` lives as a file-local helper in the .cpp — it's only
+    // called from setPackagesFromVariantList, doesn't need to be a class
+    // method.)
+
     // Proxy stack: raw rows → filter (search/state/sort) → paging (page slice;
     // exposed via the `packages` Q_PROPERTY).
     PackageListModel*    m_packageModel;
@@ -131,10 +150,9 @@ private:
     PackagesPagingProxy* m_packagesPagingProxy;
     LogosAPI*            m_logosAPI;
     int m_reloadGeneration = 0;
-    bool m_suppressReleaseChange = false;
 
-    // Unfiltered catalog for the current release. Slices for category /
-    // type filters without a network round-trip. Reset on release change.
+    // Unfiltered catalog. Slices for category / type filters without a
+    // network round-trip. Reset on each reload.
     QVariantList m_allPackagesCache;
     QVariantList m_installedPackagesCache;
     QStringList  m_validVariantsCache;

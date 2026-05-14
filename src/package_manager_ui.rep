@@ -41,8 +41,6 @@ class PackageManagerUi
     PROP(int selectedCategoryIndex)
     PROP(QStringList availableTypes READONLY)
     PROP(int selectedTypeIndex)
-    PROP(QStringList releases)
-    PROP(int selectedReleaseIndex)
     PROP(bool hasInstallableSelection READONLY)
     PROP(bool hasUninstallableSelection READONLY)
     PROP(bool isInstalling READONLY)
@@ -55,6 +53,19 @@ class PackageManagerUi
     PROP(int totalCount READONLY)
     PROP(QString sortRole)
     PROP(int sortOrder)
+
+    // Repositories panel state — populated on demand by refreshRepositories().
+    // Each entry mirrors `package_downloader.listRepositories()`:
+    //   {
+    //     url, enabled, isDefault,
+    //     name, displayName, description, homepage, indexUrl,
+    //     trustedSignerDids: [...], resolveError
+    //   }
+    // When the underlying logos-repo.json fetch fails the entry still
+    // appears (URL + enabled), with `resolveError` populated so the panel
+    // can render an error chip rather than silently dropping the row.
+    PROP(QVariantList repositories READONLY)
+    PROP(bool repositoriesLoading READONLY)
 
     // Refresh releases + catalog from package_downloader. Top-bar Reload button.
     SLOT(void refreshCatalog())
@@ -70,12 +81,35 @@ class PackageManagerUi
     SLOT(void reloadPackage(int index))
     // Per-row uninstall.
     SLOT(void uninstall(int index))
+
+    // Pick a different version for the row at `index`. The QML version
+    // dropdown calls this on user selection; the next install picks up
+    // the row's `selectedVersionIndex` and downloads the corresponding
+    // (version, rootHash) via package_downloader.downloadPinned.
+    SLOT(void setRowVersion(int index, int versionIndex))
+
     // Per-row upgrade / downgrade / reinstall. Forwards to package_manager.requestUpgrade.
     SLOT(void upgradePackage(int index))
     SLOT(void downgradePackage(int index))
     SLOT(void sidegradePackage(int index))
     // Request a row's full details; reply via packageDetailsLoaded.
     SLOT(void requestPackageDetails(int index))
+
+    // Map a backend moduleName back to its user-facing package `name` so
+    // the cascade dialog renders dependents with the same label shown in
+    // the Package column. Returns moduleName unchanged when no catalog
+    // row matches (e.g. a dependent outside the active category filter).
+    SLOT(QString displayNameForModule(QString moduleName))
+
+    // Repository management — thin wrappers around
+    // `package_downloader.{add,remove,setEnabled}Repository`. Each kicks
+    // off an async call and emits `repositoryOperationCompleted` when
+    // the underlying call returns; the panel listens to that to refresh
+    // the list and surface any error.
+    SLOT(void refreshRepositories())
+    SLOT(void addRepository(QString url))
+    SLOT(void removeRepository(QString url))
+    SLOT(void setRepositoryEnabled(QString url, bool enabled))
 
     // User-actionable error; errorType maps to the ErrorType enum.
     SIGNAL(errorOccurred(int errorType))
@@ -86,6 +120,10 @@ class PackageManagerUi
     // Backend cleared model selection programmatically (e.g. release switch);
     // QML should mirror by clearing LogosTable.selectedIndices.
     SIGNAL(selectionsCleared())
+    // Result of an `addRepository` / `removeRepository` / `setRepositoryEnabled`
+    // round-trip. `operation` is one of "add" | "remove" | "setEnabled";
+    // `error` is empty on success.
+    SIGNAL(repositoryOperationCompleted(QString operation, QString url, bool success, QString error))
     // System-originated cancel of an in-flight uninstall/upgrade (e.g. ack timeout).
     // `message` is pre-formatted for verbatim toast display.
     SIGNAL(cancellationOccurred(QString name, QString message))

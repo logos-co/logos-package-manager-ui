@@ -20,8 +20,6 @@ QtObject {
     readonly property bool hasUninstallableSelection: backend ? backend.hasUninstallableSelection : false
     readonly property list<string> categories: backend ? backend.categories : []
     readonly property int selectedCategoryIndex: backend ? backend.selectedCategoryIndex : 0
-    readonly property list<string> releases: backend ? backend.releases : []
-    readonly property int selectedReleaseIndex: backend ? backend.selectedReleaseIndex : 0
 
     // Filter / sort / pagination state
     readonly property string searchText: backend ? backend.searchText : ""
@@ -34,7 +32,13 @@ QtObject {
 
     readonly property list<string> availableTypes: backend ? backend.availableTypes : ["All"]
     readonly property int selectedTypeIndex: backend ? backend.selectedTypeIndex : 0
-    
+
+    // Multi-repo: list mirrors package_downloader.listRepositories().
+    // Refreshed eagerly by the backend on construction + after every
+    // add/remove/setEnabled call.
+    readonly property var repositories: backend ? backend.repositories : []
+    readonly property bool repositoriesLoading: backend ? backend.repositoriesLoading : false
+
     readonly property alias selectedPackageDetails: d.selectedPackageDetails
 
     property QtObject d: QtObject {
@@ -55,7 +59,6 @@ QtObject {
     // ─── Methods: intents called by views ───
     function refreshCatalog() { if (backend) backend.refreshCatalog() }
     function installSelected() { if (backend) backend.installSelected() }
-    function selectRelease(i) { if (backend) backend.pushSelectedReleaseIndex(i) }
     function selectCategory(i) { if (backend) backend.pushSelectedCategoryIndex(i) }
     function selectType(i) { if (backend) backend.pushSelectedTypeIndex(i) }
     function toggleSelection(i, checked) { if (backend) backend.togglePackage(i, checked) }
@@ -79,4 +82,11 @@ QtObject {
     function setCurrentPage(p)           { if (backend) backend.pushCurrentPage(p) }
     function setSortRole(role)           { if (backend) backend.pushSortRole(role) }
     function setSortOrder(order)         { if (backend) backend.pushSortOrder(order) }
+
+    // Multi-repo intents.
+    function setRowVersion(i, vi)            { if (backend) backend.setRowVersion(i, vi) }
+    function refreshRepositories()           { if (backend) backend.refreshRepositories() }
+    function addRepository(url)              { if (backend) backend.addRepository(url) }
+    function removeRepository(url)           { if (backend) backend.removeRepository(url) }
+    function setRepositoryEnabled(url, on)   { if (backend) backend.setRepositoryEnabled(url, on) }
 }

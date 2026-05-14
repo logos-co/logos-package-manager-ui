@@ -35,38 +35,71 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
         case InstalledHashRole:      return package.value("installedHash");
         case ErrorMessageRole:       return package.value("errorMessage");
         case InstallTypeRole:        return package.value("installType");
-        case SizeRole:                return package.value("size");
-        case DateUpdatedRole:         return package.value("dateUpdated");
-        case NotAvailableReasonRole:  return package.value("notAvailableReason");
-        default:                      return QVariant();
+        case SizeRole:               return package.value("size");
+        case DateUpdatedRole:        return package.value("dateUpdated");
+        case NotAvailableReasonRole: return package.value("notAvailableReason");
+
+        // ── Multi-repo additions ────────────────────────────────────────
+        case RepositoryUrlRole:         return package.value("repositoryUrl");
+        case RepositoryNameRole:        return package.value("repositoryName");
+        case RepositoryDisplayNameRole: return package.value("repositoryDisplayName");
+        // QVariantList of per-version maps. See `availableVersions`
+        // construction in PackageManagerBackend::setPackagesFromVariantList.
+        case AvailableVersionsRole:      return package.value("availableVersions");
+        case SelectedVersionIndexRole:   return package.value("selectedVersionIndex", 0);
+        case IsFirstOfSourceRole:        return package.value("isFirstOfSource", false);
+
+        default:                     return QVariant();
     }
 }
 
 QHash<int, QByteArray> PackageListModel::roleNames() const
 {
     return {
-        {NameRole,               "name"},
-        {ModuleNameRole,         "moduleName"},
-        {DescriptionRole,        "description"},
-        {TypeRole,               "type"},
-        {CategoryRole,           "category"},
-        {IsSelectedRole,         "isSelected"},
-        {InstallStatusRole,      "installStatus"},
-        {DependenciesRole,       "dependencies"},
-        {IsVariantAvailableRole, "isVariantAvailable"},
-        {VersionRole,            "version"},
-        {InstalledVersionRole,   "installedVersion"},
-        {HashRole,               "hash"},
-        {InstalledHashRole,      "installedHash"},
-        {ErrorMessageRole,       "errorMessage"},
-        {InstallTypeRole,        "installType"},
-        {SizeRole,               "size"},
-        {DateUpdatedRole,        "dateUpdated"},
-        {NotAvailableReasonRole, "notAvailableReason"},
+        {NameRole,                    "name"},
+        {ModuleNameRole,              "moduleName"},
+        {DescriptionRole,             "description"},
+        {TypeRole,                    "type"},
+        {CategoryRole,                "category"},
+        {IsSelectedRole,              "isSelected"},
+        {InstallStatusRole,           "installStatus"},
+        {DependenciesRole,            "dependencies"},
+        {IsVariantAvailableRole,      "isVariantAvailable"},
+        {VersionRole,                 "version"},
+        {InstalledVersionRole,        "installedVersion"},
+        {HashRole,                    "hash"},
+        {InstalledHashRole,           "installedHash"},
+        {ErrorMessageRole,            "errorMessage"},
+        {InstallTypeRole,             "installType"},
+        {SizeRole,                    "size"},
+        {DateUpdatedRole,             "dateUpdated"},
+        {NotAvailableReasonRole,      "notAvailableReason"},
+        {RepositoryUrlRole,           "repositoryUrl"},
+        {RepositoryNameRole,          "repositoryName"},
+        {RepositoryDisplayNameRole,   "repositoryDisplayName"},
+        {AvailableVersionsRole,       "availableVersions"},
+        {SelectedVersionIndexRole,    "selectedVersionIndex"},
+        {IsFirstOfSourceRole,         "isFirstOfSource"},
     };
 }
 
 // ─────────────────────────── file-local helpers ───────────────────────────
+
+// Build a stable composite key for selection / failed-state restoration.
+// Multi-repo: two repositories can each publish a package called "foo",
+// so keying on `name` alone would couple them. The format
+// `<repositoryUrl><name>` uses a forbidden-in-URLs byte separator so the
+// key is unambiguous and cheap to compare.
+static QString rowKey(const QString& repositoryUrl, const QString& name)
+{
+    return repositoryUrl + QChar(0x01) + name;
+}
+
+static QString rowKey(const QVariantMap& pkg)
+{
+    return rowKey(pkg.value("repositoryUrl").toString(),
+                  pkg.value("name").toString());
+}
 
 // Centralised row predicates — read by the eligibility-aware getters and
 // mirrored by the per-row gating in PackageActionButton.qml.
@@ -133,20 +166,55 @@ static std::pair<int, int> mutateMatchingRows(QList<QVariantMap>& rows, Pred pre
 
 void PackageListModel::setPackages(const QList<QVariantMap>& packages)
 {
-    const QStringList prevNames = getSelectedPackageNames();
-    const QSet<QString> previouslySelected(prevNames.begin(), prevNames.end());
+    // Save selected rows by composite (repo, name) key before reset.
+    // Using bare names would mark the WRONG row when two repos publish
+    // the same package name.
+    QSet<QString> previouslySelectedKeys;
+    for (const QVariantMap& pkg : m_packages) {
+        if (pkg.value("isSelected").toBool()) previouslySelectedKeys.insert(rowKey(pkg));
+    }
+    // Snapshot per-row selectedVersionIndex so the user's pick survives a
+    // category filter pass or a debounced post-install refresh.
+    QHash<QString, int> selectedVersionByKey;
+    for (const QVariantMap& pkg : m_packages) {
+        const int idx = pkg.value("selectedVersionIndex", 0).toInt();
+        if (idx != 0) selectedVersionByKey.insert(rowKey(pkg), idx);
+    }
 
     beginResetModel();
     m_packages = packages;
+
+    // Walk incoming rows. For each row:
+    //   * Restore selection (only when the row has an available variant)
+    //     using the composite (repo, name) key so two repos' "foo" rows
+    //     don't share selection state.
+    //   * Restore per-row selectedVersionIndex from the snapshot, clamped
+    //     to the new availableVersions length.
+    //   * If the row came in as NotInstalled AND m_failedByKey has an
+    //     entry for its key/moduleName, inject Failed + errorMessage so
+    //     the banner survives category-filter drop-outs and disk-scan
+    //     post-install refreshes.
+    //   * Otherwise drop the cache entry so Failed doesn't resurrect
+    //     on a later flip back to NotInstalled.
     for (QVariantMap& row : m_packages) {
-        const QString name = row.value("name").toString();
         const QString moduleName = row.value("moduleName").toString();
+        const QString key = rowKey(row);
         const bool available = row.value("isVariantAvailable", false).toBool();
-        row["isSelected"] = available && previouslySelected.contains(name);
+        row["isSelected"] = available && previouslySelectedKeys.contains(key);
+
+        if (selectedVersionByKey.contains(key)) {
+            const QVariantList avail = row.value("availableVersions").toList();
+            int idx = selectedVersionByKey.value(key);
+            if (idx < 0 || idx >= avail.size()) idx = 0;
+            row["selectedVersionIndex"] = idx;
+        }
 
         const int status = row.value("installStatus", 0).toInt();
         if (status == static_cast<int>(PackageTypes::NotInstalled)) {
-            auto it = m_failedByKey.constFind(name);
+            auto it = m_failedByKey.constFind(key);
+            // Fallback for install paths that key by moduleName only (gated
+            // uninstall/upgrade events). The composite key is preferred
+            // but either lookup is accepted for the back-fill.
             if (it == m_failedByKey.constEnd() && !moduleName.isEmpty())
                 it = m_failedByKey.constFind(moduleName);
             if (it != m_failedByKey.constEnd()) {
@@ -154,7 +222,7 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
                 row["errorMessage"] = it->errorMessage;
             }
         } else {
-            if (!name.isEmpty())       m_failedByKey.remove(name);
+            if (!key.isEmpty())        m_failedByKey.remove(key);
             if (!moduleName.isEmpty()) m_failedByKey.remove(moduleName);
         }
     }
@@ -176,6 +244,18 @@ void PackageListModel::updatePackageSelection(int index, bool isSelected)
 void PackageListModel::updatePackageInstallation(const QString& packageName, int status,
                                                   const QString& errorMessage)
 {
+    // Callers pass either the catalog `name` (install path keys on the .lgx
+    // package name, which matches the catalog row's name) or the manifest
+    // `moduleName` (uninstall / upgrade paths key on moduleName because
+    // that's what package_manager_lib's byName map uses on disk). Match
+    // against both so neither flow silently no-ops the model update.
+    //
+    // In the multi-repo world two rows can share `name` (different repos
+    // publishing the same package); update EVERY matching row so the
+    // failed/installed badge surfaces on each. The failed cache is
+    // indexed by (repo, name) so post-refresh restoration keeps them
+    // independent.
+    int firstChanged = -1, lastChanged = -1;
     for (int i = 0; i < m_packages.size(); ++i) {
         QVariantMap& row = m_packages[i];
         const QString rowName = row.value("name").toString();
@@ -185,20 +265,54 @@ void PackageListModel::updatePackageInstallation(const QString& packageName, int
         row["installStatus"] = status;
         row["errorMessage"] = errorMessage;
 
+        // Maintain m_failedByKey in lockstep with the row's status.
+        // Indexed under both the composite (repo, name) key AND the bare
+        // moduleName so either flow's lookup works.
+        const QString key = rowKey(row);
         if (status == static_cast<int>(PackageTypes::Failed)) {
             const FailedEntry entry{ errorMessage };
-            if (!rowName.isEmpty())       m_failedByKey.insert(rowName, entry);
-            if (!rowModuleName.isEmpty()) m_failedByKey.insert(rowModuleName, entry);
+            if (!key.isEmpty())            m_failedByKey.insert(key, entry);
+            if (!rowModuleName.isEmpty())  m_failedByKey.insert(rowModuleName, entry);
         } else {
-            if (!rowName.isEmpty())       m_failedByKey.remove(rowName);
-            if (!rowModuleName.isEmpty()) m_failedByKey.remove(rowModuleName);
+            if (!key.isEmpty())            m_failedByKey.remove(key);
+            if (!rowModuleName.isEmpty())  m_failedByKey.remove(rowModuleName);
         }
 
-        const QModelIndex modelIndex = createIndex(i, 0);
-        emit dataChanged(modelIndex, modelIndex, {InstallStatusRole, ErrorMessageRole});
-        emit hasSelectionChanged();
-        return;
+        if (firstChanged < 0) firstChanged = i;
+        lastChanged = i;
     }
+    if (firstChanged < 0) return;
+    emit dataChanged(createIndex(firstChanged, 0),
+                     createIndex(lastChanged, 0),
+                     {InstallStatusRole, ErrorMessageRole});
+    emit hasSelectionChanged();
+}
+
+void PackageListModel::setRowVersion(int index, int versionIndex)
+{
+    if (index < 0 || index >= m_packages.size()) return;
+    const QVariantList avail = m_packages[index].value("availableVersions").toList();
+    if (versionIndex < 0 || versionIndex >= avail.size()) versionIndex = 0;
+
+    const int currentIdx = m_packages[index].value("selectedVersionIndex", 0).toInt();
+    if (currentIdx == versionIndex) return;
+    m_packages[index]["selectedVersionIndex"] = versionIndex;
+
+    // Surface the chosen version's `version` / `rootHash` in the existing
+    // VersionRole / HashRole so the rest of the QML (status comparison,
+    // details panel, etc.) sees the user's pick rather than the row's
+    // initial defaults. The install path reads availableVersions[
+    // selectedVersionIndex] directly, but mirroring the fields keeps
+    // status-text bindings consistent.
+    if (versionIndex < avail.size()) {
+        const QVariantMap pick = avail.at(versionIndex).toMap();
+        m_packages[index]["version"] = pick.value("version");
+        m_packages[index]["hash"]    = pick.value("rootHash");
+    }
+
+    const QModelIndex mi = createIndex(index, 0);
+    emit dataChanged(mi, mi,
+        {SelectedVersionIndexRole, VersionRole, HashRole, InstallStatusRole});
 }
 
 // ─────────────────────────────── selectors ───────────────────────────────
