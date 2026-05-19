@@ -827,6 +827,13 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
             if (dlResult.isEmpty() && !results.isEmpty()) {
                 dlResult = results.last().toMap();   // best-effort surface of an error row
             }
+            // Defense-in-depth: if the resolver returned an error row it
+            // couldn't attribute (no `name`), stamp the originally-
+            // requested name so installOnePackage's log line and any
+            // name-keyed handling identify the right package instead of
+            // emitting `Download failed for ""`.
+            if (dlResult.value("name").toString().isEmpty())
+                dlResult["name"] = packageName;
             self->installOnePackage(dlResult,
                 [self, packageName](bool success, const QString& err) {
                     if (!self) return;
