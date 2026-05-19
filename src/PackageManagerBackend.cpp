@@ -435,7 +435,30 @@ void PackageManagerBackend::refreshCatalog()
     if (m_packageModel) m_packageModel->clearFailedRows();
 
     setIsLoading(true);
-    refreshPackages();
+
+    // Invalidate the downloader's in-memory per-repo index cache BEFORE
+    // re-querying. package_downloader caches each repo's index.json for
+    // the life of its process and getCatalog() serves that cache, so a
+    // bare refreshPackages() here just re-renders the *stale* catalog —
+    // modules removed/added upstream wouldn't show until an app restart
+    // (the bug the Reload button is supposed to fix). The module's
+    // refreshCatalog() maps to lib->refreshCatalogs(), which clears
+    // that cache and re-fetches every logos-repo.json; only then is the
+    // follow-up getCatalog a real network refresh. clearCaches() runs
+    // unconditionally inside refreshCatalogs() even if a repo's metadata
+    // fetch errors, so we proceed to refreshPackages() regardless of the
+    // reported result. (The debounced file-event path deliberately
+    // still calls refreshPackages() directly — a local file mutation
+    // doesn't warrant a network round-trip.)
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_downloader.refreshCatalogAsync([self](QVariantMap r) {
+        if (!self) return;
+        const QString err = r.value(QStringLiteral("error")).toString();
+        if (!err.isEmpty())
+            qWarning() << "package_downloader.refreshCatalog reported:" << err;
+        self->refreshPackages();
+    });
 }
 
 void PackageManagerBackend::refreshPackages()
