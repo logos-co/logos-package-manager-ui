@@ -37,12 +37,33 @@ class PackageManagerUi
         PlatformMismatch    = 3
     }
 
+    // Per-row primary action — resolved against the row's currently
+    // selected dropdown version. Drives the Action column label + the
+    // pill's click target. Uninstall lives in the row's overflow menu,
+    // not here. See PackageTypes.h for the long comment.
+    ENUM RowAction {
+        Install      = 0,
+        Upgrade      = 1,
+        Downgrade    = 2,
+        Reinstall    = 3,
+        Retry        = 4,
+        NotAvailable = 5,
+        NoOp         = 6
+    }
+
     PROP(QStringList categories)
     PROP(int selectedCategoryIndex)
     PROP(QStringList availableTypes READONLY)
     PROP(int selectedTypeIndex)
-    PROP(bool hasInstallableSelection READONLY)
-    PROP(bool hasUninstallableSelection READONLY)
+    // Number of selected rows whose rowAction is runnable (anything
+    // other than NoOp / NotAvailable). Drives the "Run Actions (N)"
+    // header button label + enabled state.
+    PROP(int runnableActionCount READONLY)
+    // Per-action counts among the selected rows:
+    //   { install: N, upgrade: N, downgrade: N, reinstall: N, retry: N }
+    // Keys with a zero count are omitted. Feeds the confirm-summary
+    // popup before "Run Actions" actually fires.
+    PROP(QVariantMap actionSummary READONLY)
     PROP(bool isInstalling READONLY)
     PROP(bool isLoading READONLY)
 
@@ -69,9 +90,21 @@ class PackageManagerUi
 
     // Refresh releases + catalog from package_downloader. Top-bar Reload button.
     SLOT(void refreshCatalog())
-    // Bulk install every checkbox-selected installable row.
+    // Bulk: run each selected row's resolved primary action. Installs
+    // (and Retries) batch through the dependency-resolving downloader;
+    // Upgrade/Downgrade/Reinstall dispatch per-row to package_manager.
+    // Uninstall is NEVER in the plan — uninstall stays a per-row,
+    // explicit gesture via the row's overflow menu.
+    SLOT(void runSelectedActions())
+    // Legacy bulk-install slot — kept for backwards compat with any
+    // out-of-tree caller. The UI now drives bulk work through
+    // `runSelectedActions()` (which subsumes installs + version
+    // changes); this slot is unwired from the header button.
     SLOT(void installSelected())
-    // Bulk uninstall every checkbox-selected uninstallable row (single multi-uninstall request).
+    // Legacy bulk-uninstall slot — kept for backwards compat. The new
+    // UX surfaces Uninstall only per-row through the row overflow menu,
+    // since a destructive default in the bulk path was the original
+    // source of mixed-selection confusion.
     SLOT(void uninstallSelected())
     // Toggle a row's checkbox state.
     SLOT(void togglePackage(int index, bool checked))

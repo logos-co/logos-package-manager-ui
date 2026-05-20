@@ -6,24 +6,40 @@ import Logos.Controls
 
 import icons
 
-// Table header per Figma: title "Packages" + install-state tabs on the
-// left, release picker + bulk-action buttons (Reload / Uninstall / Install)
-// on the right.
+// Table header: title "Packages" + install-state tabs on the left,
+// Reload / Repositories / "Run Actions (N)" on the right.
+//
+// The bulk button is now ONE: Install + Uninstall got merged into a
+// single user-chosen-per-row plan that fires from "Run Actions". The
+// previous two-button arrangement enabled both buttons whenever a mixed
+// selection (some installed + some not) was active, and each silently
+// acted on its own subset — the original source of the "what's this
+// going to do?" confusion. Uninstall is now per-row only (kebab ⋮).
 GridLayout {
     id: root
 
     property bool isInstalling: false
     property bool isLoading: false
-    property bool hasInstallableSelection: false
-    property bool hasUninstallableSelection: false
+    // Number of selected rows that resolve to a runnable RowAction
+    // (anything other than NoOp / NotAvailable). Drives the
+    // "Run Actions (N)" button label and enabled state. Bound via
+    // BackendStore from PackageManagerBackend::refreshActionSummary().
+    property int runnableActionCount: 0
+    // { install, upgrade, downgrade, reinstall, retry } — non-zero
+    // counts only. Forwarded to the confirm-summary popup so the user
+    // sees exactly what's about to run before "Run Actions" fires.
+    property var actionSummary: ({})
 
     // Install-state tab: 0 = All, 1 = Installed, 2 = Not Installed.
     property int stateIndex: 0
     readonly property alias stateTabs: tabs
 
     signal reloadClicked()
-    signal installClicked()
-    signal uninstallClicked()
+    // Click on the new bulk button. The parent QML is responsible for
+    // opening the confirm-summary popup (driven by `actionSummary`) and
+    // calling `BackendStore.runSelectedActions()` on confirm; this
+    // signal does NOT execute anything directly.
+    signal runActionsClicked()
     signal stateRequested(int state)
     // Multi-repo: opens the "Manage Repositories" popup that the
     // top-level PackageManager.qml hosts. The button lives here for
@@ -103,28 +119,22 @@ GridLayout {
             onClicked: root.repositoriesClicked()
         }
 
+        // Single bulk-action button. Label includes the count so the
+        // user knows up front whether anything is in scope; the confirm
+        // popup (opened by the parent on click) breaks the count down by
+        // action type before anything actually runs.
         LogosButton {
             Layout.fillWidth: true
-            Layout.minimumWidth: 80
-            Layout.preferredWidth: 100
-            Layout.maximumWidth: 100
+            Layout.minimumWidth: 130
+            Layout.preferredWidth: 160
+            Layout.maximumWidth: 180
             Layout.preferredHeight: 40
             radius: Theme.spacing.radiusLarge
-            text: qsTr("Uninstall")
-            enabled: root.hasUninstallableSelection && !root.isInstalling
-            onClicked: root.uninstallClicked()
-        }
-
-        LogosButton {
-            Layout.fillWidth: true
-            Layout.minimumWidth: 80
-            Layout.preferredWidth: 100
-            Layout.maximumWidth: 100
-            Layout.preferredHeight: 40
-            radius: Theme.spacing.radiusLarge
-            text: qsTr("Install")
-            enabled: root.hasInstallableSelection && !root.isInstalling
-            onClicked: root.installClicked()
+            text: root.runnableActionCount > 0
+                  ? qsTr("Run Actions (%1)").arg(root.runnableActionCount)
+                  : qsTr("Run Actions")
+            enabled: root.runnableActionCount > 0 && !root.isInstalling
+            onClicked: root.runActionsClicked()
         }
     }
 }

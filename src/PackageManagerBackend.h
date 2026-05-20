@@ -32,8 +32,12 @@ public slots:
     // Overrides of the pure-virtual slots generated from the .rep.
     // See package_manager_ui.rep for per-slot documentation.
     void refreshCatalog() override;
-    void installSelected() override;
-    void uninstallSelected() override;
+    // Bulk: run each selected row's resolved primary action (the new
+    // "Run Actions" header button). Subsumes the old installSelected
+    // path AND adds upgrade / downgrade / reinstall to the bulk surface.
+    void runSelectedActions() override;
+    void installSelected() override;   // kept for back-compat, unwired from UI
+    void uninstallSelected() override; // kept for back-compat, unwired from UI
     void togglePackage(int index, bool checked) override;
     void installPackage(int index) override;
     void reloadPackage(int index) override;
@@ -101,9 +105,12 @@ private:
     void installNextPackage(const QVariantList& results, int index, int completed, int totalPackages);
     void finishInstallation(int completed);
 
-    // Mirror model has*Selection flags into the .rep PROPs.
-    // Driven by PackageListModel::hasSelectionChanged; no manual call sites.
-    void refreshHasSelection();
+    // Publish the model's per-selection action plan into the .rep PROPs
+    // (`runnableActionCount`, `actionSummary`). Driven by
+    // PackageListModel::hasSelectionChanged on every selection toggle;
+    // no manual call sites. Replaces the old refreshHasSelection that
+    // published the two has*Selection booleans.
+    void refreshActionSummary();
 
     // Shared body for upgrade / downgrade / sidegrade — resolves the row,
     // pins the per-row target version, forwards to package_manager.requestUpgrade.
@@ -139,9 +146,12 @@ private:
     bool bothClientsReady() const;        // package_downloader AND package_manager
     bool packageManagerReady() const;     // package_manager only
 
-    // (`versionCmp` lives as a file-local helper in the .cpp — it's only
-    // called from setPackagesFromVariantList, doesn't need to be a class
-    // method.)
+    // (`versionCmp` now lives in `src/RowActionResolver.h` so both this
+    // file's buildPackageRow AND PackageListModel::setRowVersion can
+    // call it. The per-row Action — surfaced as `rowAction` and bound
+    // by the QML ActionPill — has to flip when the user moves the
+    // dropdown, which is why the comparator can't stay file-local here
+    // anymore.)
 
     // Proxy stack: raw rows → filter (search/state/sort) → paging (page slice;
     // exposed via the `packages` Q_PROPERTY).

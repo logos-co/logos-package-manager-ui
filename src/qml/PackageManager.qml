@@ -73,12 +73,18 @@ Rectangle {
 
                         isInstalling: store.isInstalling
                         isLoading: store.isLoading
-                        hasInstallableSelection: store.hasInstallableSelection
-                        hasUninstallableSelection: store.hasUninstallableSelection
+                        runnableActionCount: store.runnableActionCount
+                        actionSummary: store.actionSummary
                         stateIndex: store.installStateFilter
                         onReloadClicked: store.refreshCatalog()
-                        onInstallClicked: store.installSelected()
-                        onUninstallClicked: store.uninstallSelected()
+                        // Bulk action: open the confirm-summary popup
+                        // first; the popup emits `confirmed()` once the
+                        // user reviews the per-action breakdown, and
+                        // only then does runSelectedActions() fire.
+                        onRunActionsClicked: {
+                            runActionsConfirm.summary = store.actionSummary
+                            runActionsConfirm.open()
+                        }
                         onStateRequested: function(state) { store.setInstallStateFilter(state) }
                         onRepositoriesClicked: repositoriesPopup.open()
                     }
@@ -93,14 +99,15 @@ Rectangle {
                         sortOrder: store.sortOrder
                         onDetailsRequested: function(i) { store.requestDetails(i) }
                         onSelectionToggled: function(i, checked) { store.toggleSelection(i, checked) }
+                        // Kebab ⋮ menu items.
                         onReloadRequested: function(i) { store.reloadPackage(i) }
-                        onInstallRequested: function(i) { store.installPackage(i) }
                         onUninstallRequested: function(i) { store.uninstallPackage(i) }
+                        // Per-row primary action (ActionPill click).
+                        // Single (index, action) call instead of one
+                        // signal per action type — store.runRowAction
+                        // switches to the matching backend slot.
+                        onActionRequested: function(i, action) { store.runRowAction(i, action) }
                         onVersionChanged: function(i, vi) { store.setRowVersion(i, vi) }
-                        // TODO: open a per-row action menu (Show details,
-                        // Reinstall, Copy module name, …). No backend
-                        // wiring yet.
-                        onMoreRequested: function(i) { /* TODO */ }
                         onSortRequested: function(role, order) {
                             store.setSortRole(role)
                             store.setSortOrder(order)
@@ -149,6 +156,22 @@ Rectangle {
             implicitHeight: 36
             running: parent.visible
         }
+    }
+
+    // ── Run Actions confirm popup ─────────────────────────────────────────
+    //
+    // Modal between "Run Actions" click and execution. Shows the per-
+    // action breakdown ("Install 2 · Upgrade 1 · …") sourced from
+    // `store.actionSummary` so the user sees exactly what will happen
+    // before anything fires. The TableHeader's onRunActionsClicked
+    // sets `summary` from the live store value then opens this popup;
+    // on Confirm we call `store.runSelectedActions()` and the backend
+    // walks the plan (Installs batch through downloadResolvedDeps,
+    // upgrade/downgrade/reinstall dispatch per-row). Uninstall is not
+    // in the plan — it's per-row only via the row's kebab menu.
+    RunActionsConfirm {
+        id: runActionsConfirm
+        onConfirmed: store.runSelectedActions()
     }
 
     // ── Manage Repositories popup ─────────────────────────────────────────

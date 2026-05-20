@@ -11,6 +11,7 @@
 #include <QTimer>
 #include <QVariant>
 #include "logos_sdk.h"
+#include "RowActionResolver.h"   // versionCmp + resolveRowAction (shared with PackageListModel)
 
 constexpr int DOWNLOAD_TIMEOUT_MS = 300000; // 5 minutes
 
@@ -23,8 +24,8 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
 {
     // Initialise base-class properties to sane defaults.
     setSelectedCategoryIndex(0);
-    setHasInstallableSelection(false);
-    setHasUninstallableSelection(false);
+    setRunnableActionCount(0);
+    setActionSummary(QVariantMap{});
     setIsInstalling(false);
     setIsLoading(false);
 
@@ -48,11 +49,13 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     m_packagesFilterProxy->setSourceModel(m_packageModel);
     m_packagesPagingProxy->setSourceModel(m_packagesFilterProxy);
 
-    // One-shot wiring: every selection / install-status mutation on the model
-    // emits hasSelectionChanged, which pushes the has*Selection .rep PROPs
-    // through this slot. No manual refresh sprinkles needed at the mutation sites.
+    // One-shot wiring: every selection / install-status mutation on the
+    // model emits hasSelectionChanged, which rebuilds the bulk action
+    // plan and pushes the `runnableActionCount` / `actionSummary` .rep
+    // PROPs through this slot. No manual refresh sprinkles at the
+    // mutation sites.
     connect(m_packageModel, &PackageListModel::hasSelectionChanged,
-            this, &PackageManagerBackend::refreshHasSelection);
+            this, &PackageManagerBackend::refreshActionSummary);
 
     // Forward .rep PROP changes to the proxy that owns each concern.
     // Filter / sort lives in m_packagesFilterProxy; pageSize / page
@@ -158,21 +161,11 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
 
 // ─────────────────────────── file-local helpers ───────────────────────────
 
-// Three-way dotted-numeric version compare. Missing components = 0.
-// Returns -1 if a<b, 0 if equal, +1 if a>b.
-static int versionCmp(const QString& a, const QString& b)
-{
-    const QStringList aParts = a.split('.');
-    const QStringList bParts = b.split('.');
-    const int n = std::max(aParts.size(), bParts.size());
-    for (int i = 0; i < n; ++i) {
-        const int av = (i < aParts.size()) ? aParts[i].toInt() : 0;
-        const int bv = (i < bParts.size()) ? bParts[i].toInt() : 0;
-        if (av < bv) return -1;
-        if (av > bv) return 1;
-    }
-    return 0;
-}
+// Use the shared dotted-numeric comparator from RowActionResolver.h —
+// PackageListModel::setRowVersion needs the same logic to recompute the
+// per-row Action when the user moves the dropdown, so keeping versionCmp
+// file-local here would force a copy. Bring it into the TU via a using.
+using rowaction::versionCmp;
 
 // Decode a package_manager event payload (a single JSON-encoded string in
 // `data.first()`) into a QJsonObject. Returns an empty object on any failure
@@ -205,7 +198,8 @@ static std::pair<QString, QString> splitVariant(const QString& v)
 }
 
 // Classify why a package's offered variants don't intersect the platform's
-// valid variants. The QML side (StatusBadge) maps the enum to user-facing copy.
+// valid variants. The QML side (ActionPill, when rowAction==NotAvailable)
+// maps the enum to user-facing copy via its tooltip.
 //   - NoVariantsPublished: nothing offered — nothing to install anywhere.
 //   - BuildFlavorMismatch: platform IS offered, wrong flavor (dev/portable/
 //     release). User can switch basecamp build flavor to recover.
@@ -365,6 +359,24 @@ static QVariantMap buildPackageRow(const QVariantMap& obj,
         variantAvailable ? PackageTypes::Available
                          : classifyNotAvailable(offeredVariants, validVariants));
 
+    // ── Action-column inputs ────────────────────────────────────────
+    // `rowAction` is the per-row primary action, resolved against the
+    // INITIAL selected version (newest, i.e. versions[0]). It will be
+    // recomputed by PackageListModel::setRowVersion() whenever the
+    // user moves the dropdown — same helper, same inputs, fresh values.
+    //
+    // `updateAvailable` is a separate signal that stays put even as the
+    // dropdown moves: it reflects "a strictly-newer-than-installed
+    // version exists in the catalog", and drives the small marker on
+    // the Version cell. Computed once here.
+    pkg["rowAction"] = rowaction::resolveRowAction(
+        isInstalled, variantAvailable, status,
+        installedVersion, installedHash,
+        /*selectedVersion=*/releaseVersion,
+        /*selectedHash=*/releaseHash);
+    pkg["updateAvailable"] = rowaction::hasUpdateAvailable(
+        isInstalled, installedVersion, /*newestCatalogVersion=*/releaseVersion);
+
     // dependencies may be a flat array of names (legacy) or a list mixing
     // plain-string and object entries (new manifest schema). The QML side
     // displays them as a string list; render objects as "name version
@@ -413,11 +425,17 @@ QAbstractItemModel* PackageManagerBackend::packages() const
     return m_packagesPagingProxy;
 }
 
-void PackageManagerBackend::refreshHasSelection()
+void PackageManagerBackend::refreshActionSummary()
 {
     if (!m_packageModel) return;
-    setHasInstallableSelection(m_packageModel->getInstallableSelectedCount() > 0);
-    setHasUninstallableSelection(m_packageModel->getUninstallableSelectedCount() > 0);
+    // Build the plan from current selection state and publish its
+    // size + per-action counts. The header's "Run Actions (N)" reads
+    // `runnableActionCount`; the confirm-summary popup reads
+    // `actionSummary`. Uninstall is never in the plan — the row
+    // overflow menu handles it explicitly per-row.
+    const PackageActionPlan plan = m_packageModel->buildActionPlanForSelected();
+    setRunnableActionCount(plan.total());
+    setActionSummary(plan.toSummary());
 }
 
 void PackageManagerBackend::refreshCatalog()
@@ -682,8 +700,9 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
         prevKey = k;
     }
 
-    // setPackages emits hasSelectionChanged; the connected slot refreshes
-    // hasInstallableSelection / hasUninstallableSelection.
+    // setPackages emits hasSelectionChanged; the connected slot
+    // (refreshActionSummary) rebuilds the bulk action plan and pushes
+    // `runnableActionCount` + `actionSummary` to the .rep PROPs.
     m_packageModel->setPackages(packages);
 }
 
@@ -751,9 +770,11 @@ void PackageManagerBackend::installNextPackage(const QVariantList& results, int 
                         packageName, static_cast<int>(PackageTypes::Installed));
                     // Per-package deselect on success — the action is done,
                     // so the row should drop out of the selection. Failed
-                    // rows stay selected so the user can retry from the
-                    // bulk Install button (the Failed status keeps them in
-                    // hasInstallableSelection).
+                    // rows stay selected so the user can retry via the
+                    // bulk "Run Actions" button: the Failed status flips
+                    // rowAction to Retry and keeps the row counted in
+                    // runnableActionCount, so a re-confirm replays the
+                    // failed installs.
                     self->m_packageModel->clearSelectionsByPackageNames({packageName});
                 } else {
                     self->m_packageModel->updatePackageInstallation(
@@ -789,6 +810,42 @@ void PackageManagerBackend::installSelected()
         return;
     }
     installNamed(names);
+}
+
+void PackageManagerBackend::runSelectedActions()
+{
+    // The new bulk-action path: each selected row contributes its
+    // resolved primary action. Builds the plan once (the model already
+    // knows each row's `rowAction`), then dispatches in two passes:
+    //
+    //   1. Install + Retry rows → one batched `installNamed` call
+    //      (single dependency-resolving download, sequential install
+    //      under the global isInstalling flag — same path the old
+    //      bulk Install button used).
+    //   2. Upgrade / Downgrade / Reinstall rows → per-row
+    //      `requestVersionChange` calls (each pins the row's currently
+    //      selected version + the matching UpgradeMode). These run
+    //      independently of `isInstalling`, matching how the per-row
+    //      action button works today.
+    //
+    // Uninstall is intentionally NEVER in the plan: destructive actions
+    // stay an explicit per-row gesture via the row's overflow menu.
+    if (!m_packageModel) return;
+    if (!bothClientsReady()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
+        return;
+    }
+    const PackageActionPlan plan = m_packageModel->buildActionPlanForSelected();
+    if (plan.isEmpty()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
+        return;
+    }
+    if (!plan.installNames.isEmpty()) {
+        installNamed(plan.installNames);
+    }
+    for (const auto& vc : plan.versionChanges) {
+        requestVersionChange(vc.first, static_cast<UpgradeMode>(vc.second));
+    }
 }
 
 void PackageManagerBackend::installPackage(int index)

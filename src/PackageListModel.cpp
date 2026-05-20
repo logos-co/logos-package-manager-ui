@@ -1,5 +1,6 @@
 #include "PackageListModel.h"
 #include "PackageTypes.h"
+#include "RowActionResolver.h"
 
 #include <QSet>
 #include <utility>
@@ -48,6 +49,9 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
         case AvailableVersionsRole:      return package.value("availableVersions");
         case SelectedVersionIndexRole:   return package.value("selectedVersionIndex", 0);
         case IsFirstOfSourceRole:        return package.value("isFirstOfSource", false);
+        case RowActionRole:              return package.value("rowAction",
+                                                  static_cast<int>(PackageTypes::NoOp));
+        case UpdateAvailableRole:        return package.value("updateAvailable", false);
 
         default:                     return QVariant();
     }
@@ -80,6 +84,8 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
         {AvailableVersionsRole,       "availableVersions"},
         {SelectedVersionIndexRole,    "selectedVersionIndex"},
         {IsFirstOfSourceRole,         "isFirstOfSource"},
+        {RowActionRole,               "rowAction"},
+        {UpdateAvailableRole,         "updateAvailable"},
     };
 }
 
@@ -101,8 +107,35 @@ static QString rowKey(const QVariantMap& pkg)
                   pkg.value("name").toString());
 }
 
-// Centralised row predicates — read by the eligibility-aware getters and
-// mirrored by the per-row gating in PackageActionButton.qml.
+// Re-resolve `rowAction` from the row's current installed/selected/
+// variant/status state and write it back into the row. Mutates in
+// place so callers can chain it with their existing dataChanged emit.
+//
+// This is the convergence point that fixes the original bug: the
+// Action column has to reflect the user's CURRENT dropdown pick, so
+// every mutation that touches `version`, `hash`, `installedVersion`,
+// `installedHash`, `installStatus`, or `isVariantAvailable` has to
+// flow through here.
+static void recomputeRowAction(QVariantMap& row)
+{
+    const bool isInstalled = !row.value("installedVersion").toString().isEmpty()
+                          || !row.value("installedHash").toString().isEmpty()
+                          || !row.value("installType").toString().isEmpty();
+    const bool variantAvailable = row.value("isVariantAvailable", false).toBool();
+    const int currentStatus = row.value("installStatus", 0).toInt();
+    const QString instV = row.value("installedVersion").toString();
+    const QString instH = row.value("installedHash").toString();
+    const QString selV  = row.value("version").toString();      // mirrored by setRowVersion
+    const QString selH  = row.value("hash").toString();         // mirrored by setRowVersion
+    row["rowAction"] = rowaction::resolveRowAction(
+        isInstalled, variantAvailable, currentStatus,
+        instV, instH, selV, selH);
+}
+
+// Centralised row predicates — read by the legacy eligibility-aware
+// getters (kept for back-compat) and mirrored by the per-row gating in
+// PackageList.qml's kebab menu (Reload / Uninstall enable state) +
+// ActionPill.qml's `_runnable` check.
 using RowPredicate = bool (*)(const QVariantMap&);
 
 static bool isInstallableRow(const QVariantMap& pkg)
@@ -220,6 +253,10 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
             if (it != m_failedByKey.constEnd()) {
                 row["installStatus"] = static_cast<int>(PackageTypes::Failed);
                 row["errorMessage"] = it->errorMessage;
+                // Status flipped — re-resolve rowAction so the back-
+                // filled Failed row shows "Retry" instead of whatever
+                // the catalog row was built with.
+                recomputeRowAction(row);
             }
         } else {
             if (!key.isEmpty())        m_failedByKey.remove(key);
@@ -278,13 +315,18 @@ void PackageListModel::updatePackageInstallation(const QString& packageName, int
             if (!rowModuleName.isEmpty())  m_failedByKey.remove(rowModuleName);
         }
 
+        // Failed → Retry, Installing → NoOp, success-of-an-install →
+        // (likely) NoOp / next state. The pill needs the new label
+        // immediately, not at the next catalog refresh.
+        recomputeRowAction(row);
+
         if (firstChanged < 0) firstChanged = i;
         lastChanged = i;
     }
     if (firstChanged < 0) return;
     emit dataChanged(createIndex(firstChanged, 0),
                      createIndex(lastChanged, 0),
-                     {InstallStatusRole, ErrorMessageRole});
+                     {InstallStatusRole, ErrorMessageRole, RowActionRole});
     emit hasSelectionChanged();
 }
 
@@ -310,9 +352,20 @@ void PackageListModel::setRowVersion(int index, int versionIndex)
         m_packages[index]["hash"]    = pick.value("rootHash");
     }
 
+    // The Action column reflects the SELECTED version, not the catalog
+    // newest — recompute the resolved action against the new (version,
+    // hash) so the pill flips between Upgrade / Downgrade / Reinstall /
+    // NoOp as the user moves the dropdown. Without this, the cell keeps
+    // showing whatever was right at row-build time and the pill becomes
+    // a lie. `installStatus` itself stays put (it's still the original
+    // newest-vs-installed signal that other consumers — selection
+    // predicates, the update marker — depend on).
+    recomputeRowAction(m_packages[index]);
+
     const QModelIndex mi = createIndex(index, 0);
     emit dataChanged(mi, mi,
-        {SelectedVersionIndexRole, VersionRole, HashRole, InstallStatusRole});
+        {SelectedVersionIndexRole, VersionRole, HashRole,
+         InstallStatusRole, RowActionRole});
 }
 
 // ─────────────────────────────── selectors ───────────────────────────────
@@ -407,6 +460,70 @@ void PackageListModel::clearAllSelections()
     if (first < 0) return;
     emit dataChanged(createIndex(first, 0), createIndex(last, 0), {IsSelectedRole});
     emit hasSelectionChanged();
+}
+
+// ─────────────────────────── action plan ───────────────────────────────
+
+QVariantMap PackageActionPlan::toSummary() const
+{
+    // Only non-zero keys: keeps the QML confirm popup's iteration
+    // trivial (just walk the map) and avoids rendering empty "0×" lines.
+    QVariantMap m;
+    if (installCount   > 0) m.insert(QStringLiteral("install"),   installCount);
+    if (retryCount     > 0) m.insert(QStringLiteral("retry"),     retryCount);
+    if (upgradeCount   > 0) m.insert(QStringLiteral("upgrade"),   upgradeCount);
+    if (downgradeCount > 0) m.insert(QStringLiteral("downgrade"), downgradeCount);
+    if (reinstallCount > 0) m.insert(QStringLiteral("reinstall"), reinstallCount);
+    return m;
+}
+
+PackageActionPlan PackageListModel::buildActionPlanForSelected() const
+{
+    PackageActionPlan plan;
+    // UpgradeMode mirror — must stay in lockstep with the enum at the
+    // top of PackageManagerBackend.h (Upgrade=0, Downgrade=1,
+    // Sidegrade=2). Mirrored here as ints because the plan is consumed
+    // by runSelectedActions which already passes mode as int to
+    // requestVersionChange.
+    constexpr int ModeUpgrade   = 0;
+    constexpr int ModeDowngrade = 1;
+    constexpr int ModeSidegrade = 2;
+
+    for (int i = 0; i < m_packages.size(); ++i) {
+        const QVariantMap& row = m_packages[i];
+        if (!row.value("isSelected").toBool()) continue;
+        const int action = row.value("rowAction",
+                              static_cast<int>(PackageTypes::NoOp)).toInt();
+        switch (action) {
+        case static_cast<int>(PackageTypes::Install):
+            plan.installNames.append(row.value("name").toString());
+            ++plan.installCount;
+            break;
+        case static_cast<int>(PackageTypes::Retry):
+            plan.installNames.append(row.value("name").toString());
+            ++plan.retryCount;
+            break;
+        case static_cast<int>(PackageTypes::Upgrade):
+            plan.versionChanges.append(qMakePair(i, ModeUpgrade));
+            ++plan.upgradeCount;
+            break;
+        case static_cast<int>(PackageTypes::Downgrade):
+            plan.versionChanges.append(qMakePair(i, ModeDowngrade));
+            ++plan.downgradeCount;
+            break;
+        case static_cast<int>(PackageTypes::Reinstall):
+            plan.versionChanges.append(qMakePair(i, ModeSidegrade));
+            ++plan.reinstallCount;
+            break;
+        default:
+            // NoOp / NotAvailable — non-runnable, skip silently. The
+            // ActionPill is non-clickable for these, so they shouldn't
+            // arrive here via per-row clicks either; this is the bulk
+            // safety net.
+            break;
+        }
+    }
+    return plan;
 }
 
 void PackageListModel::clearFailedRows()
