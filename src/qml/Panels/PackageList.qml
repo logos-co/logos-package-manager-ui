@@ -34,6 +34,16 @@ LogosTable {
     model: root.packagesModel
     selectionMode: LogosTable.Multi
 
+    // Gate the table's auto-prepended checkbox column at the source:
+    // non-runnable rows (NoOp = "Installed", NotAvailable) render the
+    // box dimmed and non-clickable, and the header "select-all" skips
+    // them. Same isRunnableIdx logic the post-hoc emitDiff filter uses,
+    // so a row that flips to NoOp after a dropdown change loses both
+    // its tick and its hit area. The filter stays in place as the
+    // belt-and-braces guard for any selection routed through code
+    // (e.g. backend.togglePackage from outside the cell click).
+    rowSelectable: function (i) { return d.isRunnableIdx(i) }
+
     onRowClicked: function(idx, row) { root.detailsRequested(idx) }
 
     function clearSelections() {
@@ -86,15 +96,14 @@ LogosTable {
         function emitDiff() {
             const prev = d.previousSelection
             const raw = root.selectedIndices
-            // The LogosTable auto-prepends a checkbox column we can't
-            // gate per-row from outside, so the user CAN click a NoOp
-            // row's box. Filter the resulting selection here and
-            // write it back; the row's checkbox visibly un-checks
-            // itself in the same tick instead of staying checked
-            // while runnableActionCount stays zero (the backend's
-            // togglePackage also refuses these, so the model's
-            // isSelected never flipped — but LogosTable's own
-            // selectedIndices would still drift).
+            // Belt-and-braces: LogosTable.rowSelectable now disables the
+            // box itself for non-runnable rows (set just below), so the
+            // user can't toggle one on. This post-hoc filter still
+            // catches the edge case where a row was selected while
+            // runnable and later flipped to NoOp/NotAvailable via a
+            // dropdown change — the box's enabled binding re-evaluates,
+            // but the row's prior tick stays in selectedIndices until
+            // we sweep it here.
             const cleaned = raw.filter(d.isRunnableIdx)
             if (cleaned.length !== raw.length) {
                 root.selectedIndices = cleaned
