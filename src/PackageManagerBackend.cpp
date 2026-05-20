@@ -1257,12 +1257,25 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     // Download the new version via the dependency-resolving channel.
     // The resolver keys on the catalog name (displayName), not the
     // backend moduleName; we wrap the single name into the JSON-array
-    // shape and unwrap the matching result entry below. `releaseTag`
-    // is no longer threaded through — the version comes from the
-    // pending-upgrade state that the package_manager holds.
-    Q_UNUSED(releaseTag);
-    const QString depsJson =
-        QStringLiteral("[{\"name\":\"%1\"}]").arg(displayName);
+    // shape and unwrap the matching result entry below.
+    //
+    // `releaseTag` is the user's pinned target version — package_manager
+    // captured it from requestUpgrade's `releaseTag` arg and re-emits
+    // it in the upgradeUninstallDone payload. Forwarding it as the
+    // `version` constraint in the dep entry is what makes Downgrade
+    // actually downgrade: without this, lgpd's dependency resolver
+    // picks the newest catalog version (so a Downgrade to 1.0.0 would
+    // download 1.0.1 right back, exactly the symptom that started
+    // this fix). An empty releaseTag means "any version" — lgpd
+    // falls through to the latest, which is correct for the
+    // bare-upgrade case (no pin requested).
+    QString depsJson;
+    if (releaseTag.isEmpty()) {
+        depsJson = QStringLiteral("[{\"name\":\"%1\"}]").arg(displayName);
+    } else {
+        depsJson = QStringLiteral("[{\"name\":\"%1\",\"version\":\"%2\"}]")
+                       .arg(displayName, releaseTag);
+    }
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
