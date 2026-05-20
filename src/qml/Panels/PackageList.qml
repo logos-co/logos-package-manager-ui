@@ -16,9 +16,11 @@ LogosTable {
 
     signal detailsRequested(int index)
     signal selectionToggled(int index, bool checked)
-    // Kebab ⋮ menu items. The pill drives `actionRequested`; the kebab
-    // owns the secondary affordances (Reload, View details, Uninstall).
-    signal reloadRequested(int index)
+    // Per-row Uninstall — fired from the trash icon in the trailing
+    // cell. View Details fires from a plain row click (above). Reload
+    // is intentionally unsurfaced (the slot is a TODO stub); revive
+    // this signal + a UI affordance for it once the backend implements
+    // load/unload via logoscore.
     signal uninstallRequested(int index)
     // Per-row primary action click. `action` is a PackageTypes::RowAction
     // value (Install / Upgrade / Downgrade / Reinstall / Retry). Parent
@@ -42,17 +44,73 @@ LogosTable {
     QtObject {
         id: d
         property var previousSelection: []
+        // Cached role int for "rowAction"; populated lazily on the
+        // first query since the model isn't bound yet at component
+        // construction time. -1 means "not resolved yet / no model".
+        property int _rowActionRoleId: -1
+
+        // Map the model's "rowAction" role name to its int id so the
+        // emitDiff filter below can read the action without spinning
+        // up a hidden delegate per row. roleNames() returns the
+        // {intRoleId -> "name"} mapping the model declared.
+        function _resolveRowActionRole() {
+            if (d._rowActionRoleId >= 0) return d._rowActionRoleId
+            if (!root.model || !root.model.roleNames) return -1
+            const names = root.model.roleNames()
+            for (const k in names) {
+                // `names[k]` is a ByteArray in Qt; coercing to string
+                // for comparison is safe on every Qt 6 we support.
+                if (String(names[k]) === "rowAction") {
+                    d._rowActionRoleId = parseInt(k)
+                    return d._rowActionRoleId
+                }
+            }
+            return -1
+        }
+
+        // True iff the row at proxy-index i is in a runnable RowAction
+        // state (Install / Upgrade / Downgrade / Reinstall / Retry).
+        // Non-runnable rows (NoOp = "Installed", NotAvailable) are
+        // dropped from the selection so the bulk Run Actions plan
+        // never includes a row that would no-op.
+        function isRunnableIdx(i) {
+            const r = d._resolveRowActionRole()
+            if (r < 0 || !root.model) return true   // fail open if we can't tell
+            const idx = root.model.index(i, 0)
+            if (!idx || !idx.valid) return true
+            const a = (Number(root.model.data(idx, r)) | 0)
+            return a !== PackageManagerUi.NoOp
+                && a !== PackageManagerUi.NotAvailable
+        }
 
         function emitDiff() {
             const prev = d.previousSelection
-            const next = root.selectedIndices
+            const raw = root.selectedIndices
+            // The LogosTable auto-prepends a checkbox column we can't
+            // gate per-row from outside, so the user CAN click a NoOp
+            // row's box. Filter the resulting selection here and
+            // write it back; the row's checkbox visibly un-checks
+            // itself in the same tick instead of staying checked
+            // while runnableActionCount stays zero (the backend's
+            // togglePackage also refuses these, so the model's
+            // isSelected never flipped — but LogosTable's own
+            // selectedIndices would still drift).
+            const cleaned = raw.filter(d.isRunnableIdx)
+            if (cleaned.length !== raw.length) {
+                root.selectedIndices = cleaned
+                // Setting selectedIndices re-fires onSelectionChanged
+                // → this function re-enters with raw === cleaned and
+                // emits the real toggles. Bail out of THIS pass.
+                return
+            }
+
             const prevSet = new Set(prev)
-            const nextSet = new Set(next)
-            for (const i of next)
+            const nextSet = new Set(cleaned)
+            for (const i of cleaned)
                 if (!prevSet.has(i)) root.selectionToggled(i, true)
             for (const i of prev)
                 if (!nextSet.has(i)) root.selectionToggled(i, false)
-            d.previousSelection = next.slice()
+            d.previousSelection = cleaned.slice()
         }
 
         function formatSize(bytes) {
@@ -92,11 +150,6 @@ LogosTable {
                 || s === PackageManagerUi.DifferentHash
         }
 
-        function canReload(r) {
-            if (!r) return false
-            return r.isVariantAvailable === true
-                && (r.installStatus | 0) === PackageManagerUi.Installed
-        }
     }
 
     onSelectionChanged: d.emitDiff()
@@ -154,14 +207,16 @@ LogosTable {
             fillWidth: true
         },
         LogosTableColumn {
-            // Kebab ⋮ — View details / Reload / Uninstall. Uninstall is
-            // intentionally only reachable here (destructive, no bulk
-            // surface), gated by installType === "user".
+            // Per-row Uninstall (trash icon). Renders only when the
+            // row is user-installed; embedded modules and not-installed
+            // rows leave the cell blank. Uninstall is intentionally
+            // kept out of the bulk Run Actions plan (destructive), so
+            // this icon is the only surface for the operation.
             title: ""
             minWidth: 44
             preferredWidth: 44
             alignment: Qt.AlignHCenter | Qt.AlignVCenter
-            cellDelegate: moreButtonComponent
+            cellDelegate: uninstallButtonComponent
         }
     ]
 
@@ -387,42 +442,25 @@ LogosTable {
     }
 
     Component {
-        // Kebab ⋮ — View details / Reload / Uninstall. Uninstall is the
-        // ONLY surface for the destructive op now: no bulk header
-        // button, no per-row trash icon. Gating mirrors the model's
-        // isUninstallableRow / isInstalled predicates so this never
-        // offers Uninstall on an embedded module.
-        id: moreButtonComponent
+        // Per-row Uninstall trash icon. Only visible when canUninstall
+        // (user-installed, not embedded, in an Installed/Upgrade/
+        // Downgrade/DifferentHash state) — for everything else the
+        // cell renders blank, keeping the row visually unambiguous
+        // about whether the action is reachable.
+        id: uninstallButtonComponent
         Item {
-            id: moreCell
+            visible: d.canUninstall(rowItem)
             LogosIconButton {
-                id: moreBtn
                 anchors.centerIn: parent
                 size: 32
                 iconSize: 18
-                iconSource: LogosIcons.more
+                iconSource: LogosIcons.trash
                 background: Item {}
-                onClicked: rowMenu.open()
-            }
-            Menu {
-                id: rowMenu
-                // Anchor to the icon so the menu drops directly below.
-                x: moreBtn.x
-                y: moreBtn.y + moreBtn.height
-
-                MenuItem {
-                    text: qsTr("View details")
-                    onTriggered: root.detailsRequested(rowIndex)
-                }
-                MenuItem {
-                    text: qsTr("Reload")
-                    enabled: d.canReload(rowItem)
-                    onTriggered: root.reloadRequested(rowIndex)
-                }
-                MenuItem {
+                onClicked: root.uninstallRequested(rowIndex)
+                LogosToolTip {
                     text: qsTr("Uninstall")
-                    enabled: d.canUninstall(rowItem)
-                    onTriggered: root.uninstallRequested(rowIndex)
+                    placement: LogosToolTip.Top
+                    visible: parent.hovered
                 }
             }
         }

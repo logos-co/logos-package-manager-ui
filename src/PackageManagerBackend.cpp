@@ -1000,6 +1000,22 @@ void PackageManagerBackend::requestPackageDetails(int index)
 
 void PackageManagerBackend::togglePackage(int index, bool checked)
 {
+    // Guardrail: only runnable rows participate in the bulk
+    // "Run Actions" selection. NoOp / NotAvailable rows have nothing
+    // for runSelectedActions to dispatch, so a check on one of those
+    // would just count toward `runnableActionCount` without ever
+    // running anything — confusing in the header label, confusing in
+    // the confirm-summary. The QML side also hides the checkbox for
+    // these rows, but we enforce it here so out-of-band selections
+    // (keyboard, scripted tests, future shift-click) can't sneak in.
+    if (checked && m_packageModel) {
+        const QVariantMap row = m_packageModel->packageAt(index);
+        const int action = row.value(QStringLiteral("rowAction"),
+                              static_cast<int>(PackageTypes::NoOp)).toInt();
+        if (action == static_cast<int>(PackageTypes::NoOp)
+            || action == static_cast<int>(PackageTypes::NotAvailable))
+            return;
+    }
     m_packageModel->updatePackageSelection(index, checked);
 }
 

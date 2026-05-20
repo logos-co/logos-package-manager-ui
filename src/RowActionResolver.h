@@ -70,28 +70,48 @@ inline int resolveRowAction(bool isInstalled,
         return static_cast<int>(PackageTypes::Retry);
     if (currentStatus == static_cast<int>(PackageTypes::Installing))
         return static_cast<int>(PackageTypes::NoOp);
+
+    // Installed rows take priority over the variant check: a module
+    // already on disk is, by definition, available for *this* platform
+    // (it was installable at some point — that's how it got installed).
+    // Without this branch ordering, a catalog that's been rebuilt
+    // without our platform's variant — e.g. chat_ui dropping darwin-
+    // arm64 from its manifest.main — paints an obviously-installed row
+    // as "Not available", which contradicts the row's own Installed/
+    // DifferentHash details. We surface the user's actual situation:
+    // they have it, version comparison decides what (if anything) they
+    // can do next.
+    if (isInstalled) {
+        // No catalog variant for this platform → we can't actuate any
+        // version change (a Reinstall would fail at download time
+        // since there's nothing to download). NoOp is the honest
+        // answer; uninstall stays reachable via the row's button.
+        if (!variantAvailable)
+            return static_cast<int>(PackageTypes::NoOp);
+
+        // Anomalous: row marked installed but no version info to
+        // compare. Collapse to NoOp rather than fabricate an arrow.
+        if (installedVersion.isEmpty() || selectedVersion.isEmpty())
+            return static_cast<int>(PackageTypes::NoOp);
+
+        const int cmp = versionCmp(installedVersion, selectedVersion);
+        if (cmp < 0) return static_cast<int>(PackageTypes::Upgrade);
+        if (cmp > 0) return static_cast<int>(PackageTypes::Downgrade);
+
+        // Versions match. Hash mismatch → Reinstall (e.g. release
+        // re-signed, or local on-disk drift); both hashes empty / both
+        // equal → NoOp.
+        if (!selectedHash.isEmpty() && !installedHash.isEmpty()
+            && selectedHash != installedHash)
+            return static_cast<int>(PackageTypes::Reinstall);
+        return static_cast<int>(PackageTypes::NoOp);
+    }
+
+    // Not installed. NotAvailable is the gate for "you can't install
+    // this on this platform"; otherwise it's a fresh Install.
     if (!variantAvailable)
         return static_cast<int>(PackageTypes::NotAvailable);
-    if (!isInstalled)
-        return static_cast<int>(PackageTypes::Install);
-
-    // Installed-and-versions-known. An empty installedVersion or
-    // selectedVersion here is anomalous (the row should have both); we
-    // collapse the ambiguous case to NoOp rather than fabricate an
-    // Upgrade/Downgrade arrow.
-    if (installedVersion.isEmpty() || selectedVersion.isEmpty())
-        return static_cast<int>(PackageTypes::NoOp);
-
-    const int cmp = versionCmp(installedVersion, selectedVersion);
-    if (cmp < 0) return static_cast<int>(PackageTypes::Upgrade);
-    if (cmp > 0) return static_cast<int>(PackageTypes::Downgrade);
-
-    // Versions match. Hash mismatch → Reinstall (e.g. release re-signed,
-    // or local on-disk drift); both hashes empty / both equal → NoOp.
-    if (!selectedHash.isEmpty() && !installedHash.isEmpty()
-        && selectedHash != installedHash)
-        return static_cast<int>(PackageTypes::Reinstall);
-    return static_cast<int>(PackageTypes::NoOp);
+    return static_cast<int>(PackageTypes::Install);
 }
 
 // Convenience: true iff there's an update strictly newer than what's

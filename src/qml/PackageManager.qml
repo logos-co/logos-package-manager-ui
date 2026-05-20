@@ -99,8 +99,10 @@ Rectangle {
                         sortOrder: store.sortOrder
                         onDetailsRequested: function(i) { store.requestDetails(i) }
                         onSelectionToggled: function(i, checked) { store.toggleSelection(i, checked) }
-                        // Kebab ⋮ menu items.
-                        onReloadRequested: function(i) { store.reloadPackage(i) }
+                        // Per-row Uninstall (trash icon in the trailing cell).
+                        // Reload is unsurfaced for now — the backend slot is a
+                        // TODO stub; wire a UI affordance back in when the
+                        // logoscore load/unload path lands.
                         onUninstallRequested: function(i) { store.uninstallPackage(i) }
                         // Per-row primary action (ActionPill click).
                         // Single (index, action) call instead of one
