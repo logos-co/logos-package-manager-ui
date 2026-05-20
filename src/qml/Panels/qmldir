@@ -3,4 +3,5 @@ CategorySidebar 1.0 CategorySidebar.qml
 DetailsPanel 1.0 DetailsPanel.qml
 HeaderBar 1.0 HeaderBar.qml
 PackageList 1.0 PackageList.qml
+RunActionsConfirm 1.0 RunActionsConfirm.qml
 TableHeader 1.0 TableHeader.qml
