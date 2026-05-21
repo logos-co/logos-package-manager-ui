@@ -193,8 +193,12 @@ LogosTable {
             // still surfaces "a newer one exists".
             title: qsTr("Version")
             role: "version"
-            minWidth: 140
-            preferredWidth: 160
+            // Sized for a fixed-width combo (~90px, fits "1.0.10") + the
+            // marker slot to its right, so cells line up vertically and
+            // the marker presence never shrinks the combo. See
+            // versionCellComponent's inline width constants.
+            minWidth: 120
+            preferredWidth: 130
             cellDelegate: versionCellComponent
         },
         LogosTableColumn {
@@ -339,14 +343,18 @@ LogosTable {
 
             LogosComboBox {
                 id: versionCombo
+                // Fixed width so marker presence/absence doesn't reflow
+                // the combo, and so all rows render the same dropdown
+                // size regardless of cell width. 92px holds "1.0.10"
+                // comfortably after subtracting the chevron padding —
+                // longer prerelease strings (e.g. "1.0.0-rc.1") will
+                // elide, which the displayText fallback below already
+                // collapses to just the version number anyway.
                 anchors.left: parent.left
-                anchors.right: updateMarker.visible ? updateMarker.left : parent.right
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
+                anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 6
-                anchors.rightMargin: 6
-                anchors.topMargin: 4
-                anchors.bottomMargin: 4
+                width: 92
+                height: Math.min(parent.height - 8, 32)
                 visible: versionCell.usableVersions.length > 0
                 model: versionCell.usableVersions.map(function(v) {
                     if (!versionCell.hasDuplicateVersions) return v.version || ""
@@ -376,14 +384,18 @@ LogosTable {
             }
 
             // Update-available marker. Renders as a small filled ▲
-            // anchored to the right edge of the cell. Independent of
-            // the dropdown — present whenever the catalog's newest
-            // version is strictly newer than what's installed.
+            // anchored to the right of the fixed-width combo so the
+            // combo's size stays the same whether or not the marker is
+            // visible (the user complained about the combo shrinking on
+            // rows that had the marker — that's why this is anchored to
+            // versionCombo.right rather than to the cell's right edge).
+            // Independent of the dropdown pick — present whenever the
+            // catalog's newest version is strictly newer than installed.
             Item {
                 id: updateMarker
-                anchors.right: parent.right
+                anchors.left: versionCombo.right
                 anchors.verticalCenter: parent.verticalCenter
-                anchors.rightMargin: 6
+                anchors.leftMargin: 6
                 width: 16
                 height: 16
                 visible: versionCell.updateAvailable

@@ -235,14 +235,32 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
         const bool available = row.value("isVariantAvailable", false).toBool();
         row["isSelected"] = available && previouslySelectedKeys.contains(key);
 
+        bool dropdownRestored = false;
         if (selectedVersionByKey.contains(key)) {
             const QVariantList avail = row.value("availableVersions").toList();
             int idx = selectedVersionByKey.value(key);
             if (idx < 0 || idx >= avail.size()) idx = 0;
             row["selectedVersionIndex"] = idx;
+            // Mirror the picked entry's version/hash into the row's
+            // top-level fields so the recomputeRowAction below sees the
+            // user's pick, not the catalog's versions[0]. Without this,
+            // a row whose dropdown is at 1.0.0 but whose installed
+            // version is also 1.0.0 still shows "Upgrade" because the
+            // row's `version` field — set by buildPackageRow against
+            // versions[0] — still reads 1.0.1 (the catalog's newest).
+            // setRowVersion() does the same mirror on user-driven
+            // dropdown changes; this is the equivalent for the
+            // model-driven restoration that runs on every refresh.
+            if (idx > 0 && idx < avail.size()) {
+                const QVariantMap pick = avail.at(idx).toMap();
+                row["version"] = pick.value("version");
+                row["hash"]    = pick.value("rootHash");
+                dropdownRestored = true;
+            }
         }
 
         const int status = row.value("installStatus", 0).toInt();
+        bool failedBackFilled = false;
         if (status == static_cast<int>(PackageTypes::NotInstalled)) {
             auto it = m_failedByKey.constFind(key);
             // Fallback for install paths that key by moduleName only (gated
@@ -253,15 +271,21 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
             if (it != m_failedByKey.constEnd()) {
                 row["installStatus"] = static_cast<int>(PackageTypes::Failed);
                 row["errorMessage"] = it->errorMessage;
-                // Status flipped — re-resolve rowAction so the back-
-                // filled Failed row shows "Retry" instead of whatever
-                // the catalog row was built with.
-                recomputeRowAction(row);
+                failedBackFilled = true;
             }
         } else {
             if (!key.isEmpty())        m_failedByKey.remove(key);
             if (!moduleName.isEmpty()) m_failedByKey.remove(moduleName);
         }
+
+        // Re-resolve rowAction whenever the row's inputs differ from
+        // buildPackageRow's versions[0] assumption: a restored non-zero
+        // dropdown pick (the user picked something other than newest),
+        // OR a Failed back-fill (status flipped → Retry). The buildPackageRow
+        // value is correct for everything else, so skip the call to avoid
+        // a no-op rewrite of an already-correct cell.
+        if (dropdownRestored || failedBackFilled)
+            recomputeRowAction(row);
     }
 
     endResetModel();
