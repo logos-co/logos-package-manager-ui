@@ -971,6 +971,13 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
                     dlResult["name"] = packageName;
                 toInstall.append(dlResult);
             }
+            // Flip every dep row's status to Installing up front so the
+            // user sees them as "in flight" the moment the dep-confirm
+            // dialog closes, not one-by-one as the sequential install
+            // loop reaches each. Skip error rows — those didn't make it
+            // to the install step and need to surface as failures, not
+            // hang in Installing.
+            self->markEntriesInstalling(toInstall);
             self->installResultsSequential(toInstall, packageName, 0);
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
@@ -1004,6 +1011,15 @@ void PackageManagerBackend::installResultsSequential(const QVariantList& results
                 // dep Y failed" once we surface that on the QML side.
                 self->m_packageModel->updatePackageInstallation(
                     depName, static_cast<int>(PackageTypes::Failed), err);
+                // Earlier we marked EVERY entry in `results` as
+                // Installing so the row badges reflect the in-flight
+                // batch immediately. The loop stops here on failure;
+                // revert remaining entries to NotInstalled so they
+                // don't stay stuck on Installing forever (the
+                // subsequent refreshPackages via the debounce timer
+                // would eventually correct them, but the window between
+                // failure and refresh would be visibly wrong).
+                self->revertPendingEntries(results, index + 1);
             }
             const bool isLast = (index + 1) >= results.size();
             emit self->installationProgressUpdated(
@@ -1015,6 +1031,38 @@ void PackageManagerBackend::installResultsSequential(const QVariantList& results
             if (success && !isLast)
                 self->installResultsSequential(results, topLevelName, index + 1);
         });
+}
+
+void PackageManagerBackend::markEntriesInstalling(const QVariantList& entries)
+{
+    if (!m_packageModel) return;
+    for (const QVariant& v : entries) {
+        const QVariantMap m = v.toMap();
+        // Error rows have no install to run — skip; the per-entry
+        // failure surface will pick them up via the install loop's
+        // own Failed update. Marking them Installing first would
+        // briefly flip the badge to the wrong state.
+        if (m.contains("error")) continue;
+        const QString name = m.value("name").toString();
+        if (name.isEmpty()) continue;
+        m_packageModel->updatePackageInstallation(
+            name, static_cast<int>(PackageTypes::Installing));
+    }
+}
+
+void PackageManagerBackend::revertPendingEntries(const QVariantList& entries, int fromIndex)
+{
+    if (!m_packageModel) return;
+    for (int i = fromIndex; i < entries.size(); ++i) {
+        const QString name = entries[i].toMap().value("name").toString();
+        if (name.isEmpty()) continue;
+        // NotInstalled is the safe rollback target — the next catalog
+        // refresh would compute the right status from disk regardless,
+        // but until then the Action column would surface "Install"
+        // (correct: the user can retry).
+        m_packageModel->updatePackageInstallation(
+            name, static_cast<int>(PackageTypes::NotInstalled));
+    }
 }
 
 void PackageManagerBackend::reloadPackage(int index)
@@ -1622,6 +1670,11 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
             if (toInstall.isEmpty() && !results.isEmpty())
                 toInstall.append(results.last().toMap());
 
+            // Up-front Installing for every dep row, same rationale as
+            // the install path: visible state during the sequential
+            // loop, not lazy per-entry transitions the user might
+            // miss if any one finishes too fast to register.
+            self->markEntriesInstalling(toInstall);
             self->installResultsSequential(toInstall, displayName, 0);
             // Refresh is driven by the corePluginFileInstalled event
             // package_manager emits per file, which arms the debounce

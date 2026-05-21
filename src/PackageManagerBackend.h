@@ -121,6 +121,19 @@ private:
                                   const QString& topLevelName,
                                   int index);
 
+    // Bulk-mark every entry's row as Installing — fired immediately
+    // after the resolver returns so the UI shows the whole in-flight
+    // batch at once rather than one-row-at-a-time as the sequential
+    // loop reaches each. Skips error rows (those fail before any
+    // install runs and need to surface as Failed, not Installing).
+    void markEntriesInstalling(const QVariantList& entries);
+
+    // Revert remaining entries (entries[fromIndex .. end]) to
+    // NotInstalled. Called when installResultsSequential's loop stops
+    // on a failure — entries we marked Installing upfront but never
+    // got to need to flip back so the row badge isn't stuck.
+    void revertPendingEntries(const QVariantList& entries, int fromIndex);
+
     // Resolve transitive deps for a (name, repoUrl, version) WITHOUT
     // downloading, then either:
     //   * No transitive changes needed → invoke dispatchPendingAction
