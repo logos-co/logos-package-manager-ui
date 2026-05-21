@@ -75,15 +75,15 @@ Popup {
     modal: true
     focus: true
     anchors.centerIn: Overlay.overlay
-    width: 480
-    padding: Theme.spacing.medium
+    width: 460
+    padding: Theme.spacing.large
     closePolicy: Popup.CloseOnEscape
 
     background: Rectangle {
         color: Theme.palette.background
         border.color: Theme.palette.border
         border.width: 1
-        radius: 6
+        radius: 8
     }
 
     QtObject {
@@ -100,23 +100,28 @@ Popup {
             return ""
         }
 
-        // Title verb — uses actionLabel directly so the dialog matches
-        // the per-row ActionPill label the user just clicked.
+        // Title verb uses actionLabel directly so the dialog matches
+        // the per-row ActionPill the user just clicked.
         function titleText() {
             var ver = root.toVersion ? " v" + root.toVersion : ""
             return root.actionLabel + " '" + root.displayName + "'" + ver + "?"
         }
 
-        // Body lead-in — explains why we're asking. The deps list
-        // renders below.
+        // Body lead-in. Explains the choice in plain terms — the
+        // button labels match the verbs used here ("apply all",
+        // "install only").
         function bodyText() {
             var n = (root.depChanges || []).length
             var noun = n === 1 ? "dependency" : "dependencies"
             return "This " + root.actionLabel.toLowerCase()
                  + " requires changes to " + n + " " + noun
                  + " that aren't already on disk in a compatible version."
-                 + " You can apply all of them, install only '"
-                 + root.displayName + "' on its own, or cancel."
+        }
+
+        // Action verb cap'd for inline display in the per-row line.
+        function verbFor(action) {
+            if (!action) return ""
+            return action.charAt(0).toUpperCase() + action.slice(1)
         }
     }
 
@@ -140,81 +145,113 @@ Popup {
             wrapMode: Text.WordWrap
         }
 
-        // Dep list — one line per transitive change. Boxed for visual
-        // grouping the same way ConfirmationDialog's cascade list is.
+        // Dep list — boxed for visual grouping. Each row is a
+        // two-column grid: action label | "name (repo)  vA → vB".
+        // No bullet character; the action label IS the leading column.
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(180,
-                Math.max(36, (root.depChanges || []).length * 28))
+            Layout.topMargin: Theme.spacing.tiny
             color: Theme.palette.surface
-            radius: 4
             border.color: Theme.palette.border
             border.width: 1
+            radius: 4
             visible: (root.depChanges || []).length > 0
+            implicitHeight: depList.implicitHeight + 2 * Theme.spacing.small
 
             ListView {
+                id: depList
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: Theme.spacing.small
                 model: root.depChanges
+                spacing: 2
                 clip: true
+                interactive: contentHeight > height
+                implicitHeight: Math.min(180,
+                    Math.max(contentHeight, 0))
 
                 delegate: RowLayout {
                     width: ListView.view ? ListView.view.width : 0
-                    spacing: Theme.spacing.small
+                    spacing: Theme.spacing.medium
 
-                    LogosText {
-                        text: "•"
-                        color: Theme.palette.textSecondary
-                        font.pixelSize: Theme.typography.bodyText
+                    // Action chip — fixed-width column so the names
+                    // line up vertically across multiple rows. Color
+                    // hints at semantics (install/upgrade/downgrade)
+                    // without needing a legend.
+                    Rectangle {
+                        Layout.preferredWidth: 76
+                        Layout.preferredHeight: 22
+                        radius: 11
+                        color: {
+                            switch (modelData.action) {
+                            case "install":   return Theme.colors.getColor(Theme.palette.success, 0.18)
+                            case "upgrade":   return Theme.colors.getColor(Theme.palette.info,    0.18)
+                            case "downgrade": return Theme.colors.getColor(Theme.palette.warning, 0.18)
+                            default:          return Theme.colors.getColor(Theme.palette.info,    0.18)
+                            }
+                        }
+                        LogosText {
+                            anchors.centerIn: parent
+                            text: d.verbFor(modelData.action || "")
+                            color: {
+                                switch (modelData.action) {
+                                case "install":   return Theme.palette.success
+                                case "upgrade":   return Theme.palette.info
+                                case "downgrade": return Theme.palette.warning
+                                default:          return Theme.palette.text
+                                }
+                            }
+                            font.pixelSize: Theme.typography.secondaryText
+                            font.weight: Theme.typography.weightMedium
+                        }
                     }
+
+                    // Name + version line. The repo, when known, is
+                    // suffixed in parentheses; single-source catalogs
+                    // skip it cleanly.
                     LogosText {
                         Layout.fillWidth: true
                         text: {
-                            var name = (modelData.name || "")
-                            var ver  = d.versionTransition(modelData)
+                            var name = modelData.name || ""
                             var repo = modelData.repository || ""
+                            var ver  = d.versionTransition(modelData)
                             var head = repo ? (name + " (" + repo + ")") : name
-                            var act  = modelData.action || ""
-                            // "wallet_ui (Logos Official): install v1.2.0"
-                            // "chat_module: upgrade v1.0.0 → v1.1.0"
-                            var verb = act ? (act.charAt(0).toUpperCase() + act.slice(1)) : ""
-                            return ver
-                                ? (head + ": " + (verb ? verb + " " : "") + ver)
-                                : (head + (verb ? ": " + verb : ""))
+                            return ver ? (head + "  " + ver) : head
                         }
                         color: Theme.palette.text
                         font.pixelSize: Theme.typography.bodyText
-                        wrapMode: Text.WordWrap
+                        elide: Text.ElideMiddle
                     }
                 }
             }
         }
 
-        // Three-button footer. Confirm-with-deps is the safe default
-        // (left-most non-cancel slot, primary colour). "Just the
-        // package" is intentionally less prominent — explicit opt-in.
-        RowLayout {
+        // Three-button footer, stacked vertically. Stacking avoids the
+        // horizontal-overflow trap (Cancel + two action labels + the
+        // dynamic package name was easily 500+ px); it also lets each
+        // button label stay readable on long package names. Primary
+        // action on top so the keyboard's default-button cycle hits it
+        // first.
+        ColumnLayout {
             Layout.fillWidth: true
             Layout.topMargin: Theme.spacing.small
-            spacing: Theme.spacing.medium
+            spacing: Theme.spacing.small
 
             LogosButton {
-                text: qsTr("Cancel")
-                Layout.preferredHeight: 36
-                Layout.preferredWidth: 96
+                Layout.fillWidth: true
+                Layout.preferredHeight: 38
                 radius: Theme.spacing.radiusLarge
+                text: qsTr("Install with dependencies")
                 onClicked: {
                     root._explicitClose = true
-                    root.cancelled(root.packageName)
+                    root.confirmedWithDeps(root.packageName)
                     root.close()
                 }
             }
-            Item { Layout.fillWidth: true }
             LogosButton {
-                text: qsTr("Install just '%1'").arg(root.displayName)
-                Layout.preferredHeight: 36
-                Layout.preferredWidth: 200
+                Layout.fillWidth: true
+                Layout.preferredHeight: 38
                 radius: Theme.spacing.radiusLarge
+                text: qsTr("Install just '%1'").arg(root.displayName)
                 onClicked: {
                     root._explicitClose = true
                     root.confirmedWithoutDeps(root.packageName)
@@ -222,13 +259,13 @@ Popup {
                 }
             }
             LogosButton {
-                text: qsTr("Install with dependencies")
-                Layout.preferredHeight: 36
-                Layout.preferredWidth: 210
+                Layout.fillWidth: true
+                Layout.preferredHeight: 38
                 radius: Theme.spacing.radiusLarge
+                text: qsTr("Cancel")
                 onClicked: {
                     root._explicitClose = true
-                    root.confirmedWithDeps(root.packageName)
+                    root.cancelled(root.packageName)
                     root.close()
                 }
             }
