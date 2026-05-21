@@ -78,12 +78,24 @@ private:
 
     // Bulk install pipeline — sequential download+install of N packages,
     // gated by the global isInstalling flag (so the bulk Install button can
-    // disable itself during a batch). Used only by installSelected().
+    // disable itself during a batch). Each spec pins the row's repo +
+    // dropdown-selected version so the dep resolver doesn't pick the
+    // wrong package when two repos publish the same `name`.
+    void installSpecs(const QList<PackageInstallSpec>& specs);
+    // Legacy name-only wrapper kept for the unwired-but-still-present
+    // installSelected() .rep slot. Builds specs with empty repo/version
+    // — same loose semantics as before (resolver picks across repos +
+    // newest version).
     void installNamed(const QStringList& packageNames);
 
     // Per-row install — runs independently of the global isInstalling
-    // flag so multiple per-row clicks can run in parallel.
-    void installSinglePackageAsync(const QString& packageName);
+    // flag so multiple per-row clicks can run in parallel. `repoUrl` /
+    // `version` empty = no pin (resolver chooses); set = scope the
+    // download to exactly that repo/version (the per-row click path
+    // always sets both).
+    void installSinglePackageAsync(const QString& packageName,
+                                   const QString& repoUrl = QString(),
+                                   const QString& version = QString());
 
     void setPackagesFromVariantList(const QVariantList& packagesArray,
                                     const QVariantList& installedPackages,
@@ -153,6 +165,15 @@ private:
     // dropdown, which is why the comparator can't stay file-local here
     // anymore.)
 
+    // Build the JSON array passed to
+    // package_downloader.downloadResolvedDependencies. Uses QJsonDocument
+    // (not plain concat) so a repo URL with special characters can't
+    // desynchronise the payload — names are safe, but URLs are
+    // user-provided. Empty repositoryUrl / version fields are omitted
+    // entirely so the resolver falls back to its default behaviour for
+    // unpinned entries.
+    static QString buildDepsJson(const QList<PackageInstallSpec>& specs);
+
     // Proxy stack: raw rows → filter (search/state/sort) → paging (page slice;
     // exposed via the `packages` Q_PROPERTY).
     PackageListModel*    m_packageModel;
@@ -166,6 +187,18 @@ private:
     QVariantList m_allPackagesCache;
     QVariantList m_installedPackagesCache;
     QStringList  m_validVariantsCache;
+
+    // Repo URL captured at requestVersionChange time, indexed by
+    // moduleName. The upgrade flow round-trips through package_manager,
+    // which echoes (name, releaseTag, mode) back via the
+    // upgradeUninstallDone event — name + version make it from the UI
+    // to the post-uninstall download, but the source repo would
+    // otherwise be lost, and the dep resolver would re-pick across
+    // every repo publishing the same name. Mirror of the .rep's
+    // pending-action state on our side, keyed by moduleName because
+    // that's what upgradeUninstallDone carries. Drained on use so the
+    // cache doesn't accumulate stale entries.
+    QHash<QString, QString> m_pendingUpgradeRepoByModule;
 
     // Coalesces N rapid file-install / file-uninstall events into one
     // refreshPackages() — does NOT touch releases or selected-release state.

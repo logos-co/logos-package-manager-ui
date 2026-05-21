@@ -15,6 +15,30 @@
 
 constexpr int DOWNLOAD_TIMEOUT_MS = 300000; // 5 minutes
 
+// Serialise install specs to the JSON shape
+// downloadResolvedDependencies expects. QJsonDocument handles all the
+// escaping that ad-hoc QStringLiteral concat couldn't (a repo URL is
+// user-provided and could in theory contain quotes/backslashes/control
+// bytes; package names are restricted to a safe charset, which is why
+// the older name-only path got away with raw concat). Empty
+// repositoryUrl / version fields are omitted entirely so the resolver
+// falls back to its default cross-repo / newest-version behaviour
+// where the caller didn't pin one.
+QString PackageManagerBackend::buildDepsJson(const QList<PackageInstallSpec>& specs)
+{
+    QJsonArray arr;
+    for (const PackageInstallSpec& s : specs) {
+        QJsonObject obj;
+        obj.insert(QStringLiteral("name"), s.name);
+        if (!s.repositoryUrl.isEmpty())
+            obj.insert(QStringLiteral("repositoryUrl"), s.repositoryUrl);
+        if (!s.version.isEmpty())
+            obj.insert(QStringLiteral("version"), s.version);
+        arr.append(obj);
+    }
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
 PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent)
     : PackageManagerUiSimpleSource(parent)
     , m_packageModel(new PackageListModel(this))
@@ -840,8 +864,8 @@ void PackageManagerBackend::runSelectedActions()
         emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
         return;
     }
-    if (!plan.installNames.isEmpty()) {
-        installNamed(plan.installNames);
+    if (!plan.installSpecs.isEmpty()) {
+        installSpecs(plan.installSpecs);
     }
     for (const auto& vc : plan.versionChanges) {
         requestVersionChange(vc.first, static_cast<UpgradeMode>(vc.second));
@@ -860,10 +884,19 @@ void PackageManagerBackend::installPackage(int index)
         qWarning() << "PackageManagerBackend::installPackage missing name for index:" << index;
         return;
     }
-    installSinglePackageAsync(name);
+    // Forward the row's source repo + dropdown-selected version so the
+    // dep-resolver downloads exactly the entry the user clicked. Without
+    // this, two repos publishing the same `name` (e.g. wallet_module in
+    // Logos Official + a user fork) collapsed to "newest releasedAt
+    // across all of them", which is the bug that motivated this fix.
+    installSinglePackageAsync(name,
+                              pkg.value("repositoryUrl").toString(),
+                              pkg.value("version").toString());
 }
 
-void PackageManagerBackend::installSinglePackageAsync(const QString& packageName)
+void PackageManagerBackend::installSinglePackageAsync(const QString& packageName,
+                                                       const QString& repoUrl,
+                                                       const QString& version)
 {
     if (!bothClientsReady()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
@@ -883,12 +916,20 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
         static_cast<int>(PackageTypes::Started), packageName, 0, 1, true, "");
 
     // Drive a single-package download through the same multi-package
-    // dependency-resolving channel used by installNamed(). The resolver
+    // dependency-resolving channel used by installSpecs(). The resolver
     // returns the deps-then-self order; with one input name + transitive
     // deps from the catalog we get one or more pinned entries. We
     // unwrap to a single QVariantMap before calling installOnePackage
     // (matching the legacy single-shot path's per-row UI updates).
-    const QString depsJson = QStringLiteral("[{\"name\":\"%1\"}]").arg(packageName);
+    //
+    // Build with QJsonDocument so a repo URL containing characters that
+    // would otherwise need JSON escaping (quotes, backslashes, control
+    // bytes) doesn't desynchronise the payload. Plain string concat
+    // worked when only the package name was involved (names are
+    // restricted to a safe charset), but repo URLs are user-provided.
+    PackageInstallSpec spec; spec.name = packageName;
+    spec.repositoryUrl = repoUrl; spec.version = version;
+    const QString depsJson = buildDepsJson({spec});
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
@@ -941,14 +982,14 @@ void PackageManagerBackend::reloadPackage(int index)
     qWarning() << "PackageManagerBackend::reloadPackage not implemented (TODO: logoscore load/unload).";
 }
 
-void PackageManagerBackend::installNamed(const QStringList& packageNames)
+void PackageManagerBackend::installSpecs(const QList<PackageInstallSpec>& specs)
 {
     if (isInstalling()) {
         emit errorOccurred(static_cast<int>(PackageTypes::InstallationAlreadyInProgress));
         return;
     }
 
-    if (packageNames.isEmpty()) {
+    if (specs.isEmpty()) {
         emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
         return;
     }
@@ -961,24 +1002,24 @@ void PackageManagerBackend::installNamed(const QStringList& packageNames)
     setIsInstalling(true);
 
     emit installationProgressUpdated(
-        static_cast<int>(PackageTypes::Started), "", 0, packageNames.size(), true, "");
+        static_cast<int>(PackageTypes::Started), "", 0, specs.size(), true, "");
 
-    for (const QString& packageName : packageNames) {
-        m_packageModel->updatePackageInstallation(packageName, static_cast<int>(PackageTypes::Installing));
+    for (const PackageInstallSpec& spec : specs) {
+        m_packageModel->updatePackageInstallation(
+            spec.name, static_cast<int>(PackageTypes::Installing));
     }
 
-    // Pack the input names into the JSON-array shape
-    // `[{"name":"n1"},{"name":"n2"}, ...]` expected by
-    // `downloadResolvedDependenciesAsync`. The downloader resolves
-    // transitive deps from the catalog, pins each (version, rootHash),
-    // downloads in deps-first order, and returns one entry per pinned
-    // package — we feed that straight into the install pipeline.
-    QString depsJson = QStringLiteral("[");
-    for (int i = 0; i < packageNames.size(); ++i) {
-        if (i > 0) depsJson += QLatin1Char(',');
-        depsJson += QStringLiteral("{\"name\":\"%1\"}").arg(packageNames[i]);
-    }
-    depsJson += QLatin1Char(']');
+    // Pack the specs into the JSON-array shape expected by
+    // `downloadResolvedDependenciesAsync`:
+    //   [{"name":"n1","repositoryUrl":"...","version":"..."}, ...]
+    // The downloader resolves transitive deps from the catalog (the
+    // child deps don't carry a repo pin — that's intentional, we only
+    // pin the user's top-level picks; transitives still resolve
+    // cross-repo against the merged catalog). It pins each (version,
+    // rootHash), downloads in deps-first order, and returns one entry
+    // per pinned package — we feed that straight into the install
+    // pipeline.
+    const QString depsJson = buildDepsJson(specs);
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
@@ -987,6 +1028,19 @@ void PackageManagerBackend::installNamed(const QStringList& packageNames)
             if (!self) return;
             self->processDownloadResults(results);
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
+}
+
+void PackageManagerBackend::installNamed(const QStringList& packageNames)
+{
+    // Legacy name-only entry point — kept for the unwired-but-present
+    // installSelected() .rep slot. Build specs with empty repo/version
+    // (resolver picks cross-repo + newest, same as before).
+    QList<PackageInstallSpec> specs;
+    specs.reserve(packageNames.size());
+    for (const QString& n : packageNames) {
+        PackageInstallSpec s; s.name = n; specs.append(s);
+    }
+    installSpecs(specs);
 }
 
 void PackageManagerBackend::requestPackageDetails(int index)
@@ -1123,6 +1177,19 @@ void PackageManagerBackend::requestVersionChange(int index, UpgradeMode mode)
     // pick latest" — its pending state stores this under `targetVersion`
     // (was `releaseTag` pre-multi-repo).
     const QString targetVersion = pkg.value("version").toString();
+
+    // Stash the row's source repo for onUpgradeUninstallDone — package_manager
+    // echoes back name + releaseTag + mode but not the originating repo,
+    // and the post-uninstall download must scope to the same repo or
+    // the dep resolver could grab the same name's package from a
+    // different repo (Logos Official's wallet_module vs Dario's
+    // wallet_module — the bug that motivated this plumbing). Keyed by
+    // moduleName because that's the identifier the event carries back.
+    const QString repoUrl = pkg.value("repositoryUrl").toString();
+    if (!repoUrl.isEmpty())
+        m_pendingUpgradeRepoByModule.insert(moduleName, repoUrl);
+    else
+        m_pendingUpgradeRepoByModule.remove(moduleName);
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
@@ -1269,13 +1336,19 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     // this fix). An empty releaseTag means "any version" — lgpd
     // falls through to the latest, which is correct for the
     // bare-upgrade case (no pin requested).
-    QString depsJson;
-    if (releaseTag.isEmpty()) {
-        depsJson = QStringLiteral("[{\"name\":\"%1\"}]").arg(displayName);
-    } else {
-        depsJson = QStringLiteral("[{\"name\":\"%1\",\"version\":\"%2\"}]")
-                       .arg(displayName, releaseTag);
-    }
+    //
+    // The repo pin (`m_pendingUpgradeRepoByModule`) was stashed in
+    // requestVersionChange; drain it now so the resolver scopes to
+    // exactly the row the user clicked. Without it, two repos
+    // publishing the same name + version would tie and one of them
+    // would win nondeterministically (the existing release-date
+    // tiebreaker).
+    const QString repoUrl = m_pendingUpgradeRepoByModule.take(moduleName);
+    PackageInstallSpec spec;
+    spec.name          = displayName;
+    spec.repositoryUrl = repoUrl;     // empty = no pin (bare upgrade)
+    spec.version       = releaseTag;  // empty = newest matching
+    const QString depsJson = buildDepsJson({spec});
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);

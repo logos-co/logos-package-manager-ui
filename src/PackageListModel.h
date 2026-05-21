@@ -8,6 +8,23 @@
 #include <QVariantMap>
 #include <QStringList>
 
+// Per-install pin. Carries the row's repo + selected version into the
+// downloader so the dep-resolver doesn't pick the wrong package when
+// two repos publish the same `name` (the "I clicked Install on the
+// Logos Official wallet_module v1.0.0 and got Dario's Modules v1.0.1"
+// bug). Name alone is ambiguous in a multi-repo catalog; the dep
+// resolver previously chose by newest releasedAt across all matching
+// repos and took the latest version regardless of the user's dropdown.
+//
+// Empty `repositoryUrl` / `version` mean "don't pin" — the resolver
+// falls back to its old cross-repo "best" pick, which is what the
+// legacy CLI and the unwired installSelected() path still want.
+struct PackageInstallSpec {
+    QString name;
+    QString repositoryUrl;   // empty = any repo
+    QString version;         // empty = newest matching
+};
+
 // Bulk "Run Actions" plan. Built from the model's selected-row state by
 // buildActionPlanForSelected(); consumed by
 // PackageManagerBackend::runSelectedActions() — installs (+ retries)
@@ -19,23 +36,26 @@
 // installs, and upgrade/downgrade/reinstall separately within the
 // versionChanges list (whose entries only carry (index, mode)).
 struct PackageActionPlan {
-    // Catalog `name`s for downloadResolvedDependencies — both Install
-    // and Retry rows go here, since they share the same execution path.
-    QStringList installNames;
+    // Per-row install pins for downloadResolvedDependencies — both
+    // Install and Retry rows go here, since they share the same
+    // execution path. Each entry carries name + the row's
+    // repositoryUrl + the dropdown-selected version, so the resolver
+    // scopes the download to exactly the row the user clicked.
+    QList<PackageInstallSpec> installSpecs;
     // (modelRowIndex, UpgradeMode-as-int) for each Upgrade / Downgrade /
     // Reinstall row. Mode is the same int the per-row backend slot
     // already uses, so each entry forwards straight to
     // PackageManagerBackend::requestVersionChange.
     QList<QPair<int, int>> versionChanges;
 
-    // Counts (zero by default). install + retry == installNames.size().
+    // Counts (zero by default). install + retry == installSpecs.size().
     int installCount   = 0;
     int retryCount     = 0;
     int upgradeCount   = 0;
     int downgradeCount = 0;
     int reinstallCount = 0;
 
-    int total() const { return installNames.size() + versionChanges.size(); }
+    int total() const { return installSpecs.size() + versionChanges.size(); }
     bool isEmpty() const { return total() == 0; }
 
     // { install: N, upgrade: N, downgrade: N, reinstall: N, retry: N }

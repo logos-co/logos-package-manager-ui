@@ -513,6 +513,19 @@ PackageActionPlan PackageListModel::buildActionPlanForSelected() const
     constexpr int ModeDowngrade = 1;
     constexpr int ModeSidegrade = 2;
 
+    auto specFor = [](const QVariantMap& row) {
+        PackageInstallSpec s;
+        s.name          = row.value("name").toString();
+        // Pin to the row's source repo + dropdown-selected version so
+        // the downloader doesn't free-resolve across repos / pick the
+        // catalog newest. Both are intentionally read here (not later in
+        // the install path) because the plan is what the confirm popup
+        // shows to the user, and the action they confirm has to be the
+        // action that runs.
+        s.repositoryUrl = row.value("repositoryUrl").toString();
+        s.version       = row.value("version").toString();
+        return s;
+    };
     for (int i = 0; i < m_packages.size(); ++i) {
         const QVariantMap& row = m_packages[i];
         if (!row.value("isSelected").toBool()) continue;
@@ -520,11 +533,11 @@ PackageActionPlan PackageListModel::buildActionPlanForSelected() const
                               static_cast<int>(PackageTypes::NoOp)).toInt();
         switch (action) {
         case static_cast<int>(PackageTypes::Install):
-            plan.installNames.append(row.value("name").toString());
+            plan.installSpecs.append(specFor(row));
             ++plan.installCount;
             break;
         case static_cast<int>(PackageTypes::Retry):
-            plan.installNames.append(row.value("name").toString());
+            plan.installSpecs.append(specFor(row));
             ++plan.retryCount;
             break;
         case static_cast<int>(PackageTypes::Upgrade):
