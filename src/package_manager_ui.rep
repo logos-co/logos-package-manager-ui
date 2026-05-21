@@ -134,6 +134,17 @@ class PackageManagerUi
     SLOT(void upgradePackage(int index))
     SLOT(void downgradePackage(int index))
     SLOT(void sidegradePackage(int index))
+
+    // Resolver-confirm responses. When a per-row action's dep preview
+    // surfaces transitive changes (deps to add or version-shift), the
+    // backend stashes the pending request and emits
+    // `installDepsConfirmationRequested`; QML routes the user's choice
+    // back through one of these three slots, keyed by the package's
+    // catalog `name` so the dispatch survives a row reshuffle between
+    // click and confirm.
+    SLOT(void confirmInstallWithDeps(QString packageName))
+    SLOT(void confirmInstallWithoutDeps(QString packageName))
+    SLOT(void cancelInstallConfirm(QString packageName))
     // Request a row's full details; reply via packageDetailsLoaded.
     SLOT(void requestPackageDetails(int index))
 
@@ -169,4 +180,21 @@ class PackageManagerUi
     // System-originated cancel of an in-flight uninstall/upgrade (e.g. ack timeout).
     // `message` is pre-formatted for verbatim toast display.
     SIGNAL(cancellationOccurred(QString name, QString message))
+
+    // Per-row dep preview surfaced transitive changes — QML should open
+    // the dep-confirm dialog so the user picks one of three paths.
+    // Payload:
+    //   packageName  — catalog name (keys the confirm slots)
+    //   displayName  — human-friendly label (moduleName fallback to name)
+    //   actionLabel  — "Install" | "Reinstall" | "Upgrade" | "Downgrade"
+    //   fromVersion  — installed version, "" if not installed
+    //   toVersion    — dropdown-selected target version
+    //   depChanges   — [{ name, action: install|upgrade|downgrade,
+    //                     fromVersion, toVersion, repository }, ...]
+    SIGNAL(installDepsConfirmationRequested(QString packageName,
+                                            QString displayName,
+                                            QString actionLabel,
+                                            QString fromVersion,
+                                            QString toVersion,
+                                            QVariantList depChanges))
 }

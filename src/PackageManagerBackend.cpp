@@ -891,19 +891,22 @@ void PackageManagerBackend::installPackage(int index)
         qWarning() << "PackageManagerBackend::installPackage missing name for index:" << index;
         return;
     }
-    // Forward the row's source repo + dropdown-selected version so the
-    // dep-resolver downloads exactly the entry the user clicked. Without
-    // this, two repos publishing the same `name` (e.g. wallet_module in
-    // Logos Official + a user fork) collapsed to "newest releasedAt
-    // across all of them", which is the bug that motivated this fix.
-    installSinglePackageAsync(name,
-                              pkg.value("repositoryUrl").toString(),
-                              pkg.value("version").toString());
+    // Dep preview first — if the resolver surfaces transitive changes,
+    // the user gets the dep-confirm dialog before anything downloads.
+    // No-changes path proceeds silently (single-click experience for
+    // the common case). The row's source repo + selected version flow
+    // through so a same-named package in another repo can't sneak in.
+    runDepPreviewForAction(name,
+                           pkg.value("moduleName").toString(),
+                           pkg.value("repositoryUrl").toString(),
+                           pkg.value("version").toString(),
+                           static_cast<int>(PendingDepConfirm::Install));
 }
 
 void PackageManagerBackend::installSinglePackageAsync(const QString& packageName,
                                                        const QString& repoUrl,
-                                                       const QString& version)
+                                                       const QString& version,
+                                                       bool includeDeps)
 {
     if (!bothClientsReady()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
@@ -922,12 +925,14 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     emit installationProgressUpdated(
         static_cast<int>(PackageTypes::Started), packageName, 0, 1, true, "");
 
-    // Drive a single-package download through the same multi-package
-    // dependency-resolving channel used by installSpecs(). The resolver
-    // returns the deps-then-self order; with one input name + transitive
-    // deps from the catalog we get one or more pinned entries. We
-    // unwrap to a single QVariantMap before calling installOnePackage
-    // (matching the legacy single-shot path's per-row UI updates).
+    // Drive the download through the dep-resolving channel. The
+    // resolver returns deps-first then the top-level; whether we
+    // install transitives in addition to the top-level is the caller's
+    // choice via `includeDeps`. true (default) closes a long-standing
+    // quirk where a per-row install silently dropped new transitive
+    // deps — the old code only installed the entry matching by name,
+    // leaving freshly-required deps on disk-as-download but not
+    // registered.
     //
     // Build with QJsonDocument so a repo URL containing characters that
     // would otherwise need JSON escaping (quotes, backslashes, control
@@ -940,46 +945,76 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
-        [self, packageName](QVariantList results) {
+        [self, packageName, includeDeps](QVariantList results) {
             if (!self) return;
-            // Find the result entry that matches this package; bail out
-            // if the resolver reported an error or no entry came back.
-            QVariantMap dlResult;
+            // Filter to top-level entries when the caller asked for
+            // "just the package". The resolver may still have
+            // downloaded transitives (the request goes out before this
+            // filter), but we don't install them — matches the
+            // user's explicit choice from the dep-confirm dialog.
+            QVariantList toInstall;
+            QVariantMap fallbackMatch;
             for (const QVariant& v : results) {
                 const QVariantMap m = v.toMap();
-                if (m.value("name").toString() == packageName) {
-                    dlResult = m;
-                    break;
-                }
+                const bool isTop = m.value("topLevel").toBool();
+                if (isTop || includeDeps) toInstall.append(m);
+                if (m.value("name").toString() == packageName) fallbackMatch = m;
             }
-            if (dlResult.isEmpty() && !results.isEmpty()) {
-                dlResult = results.last().toMap();   // best-effort surface of an error row
+            if (toInstall.isEmpty()) {
+                // No usable entries — surface the resolver's error row
+                // (or fabricate one named for the requested package so
+                // the model's Failed-by-name update finds the row).
+                QVariantMap dlResult = fallbackMatch.isEmpty()
+                    ? (results.isEmpty() ? QVariantMap{} : results.last().toMap())
+                    : fallbackMatch;
+                if (dlResult.value("name").toString().isEmpty())
+                    dlResult["name"] = packageName;
+                toInstall.append(dlResult);
             }
-            // Defense-in-depth: if the resolver returned an error row it
-            // couldn't attribute (no `name`), stamp the originally-
-            // requested name so installOnePackage's log line and any
-            // name-keyed handling identify the right package instead of
-            // emitting `Download failed for ""`.
-            if (dlResult.value("name").toString().isEmpty())
-                dlResult["name"] = packageName;
-            self->installOnePackage(dlResult,
-                [self, packageName](bool success, const QString& err) {
-                    if (!self) return;
-                    if (success) {
-                        self->m_packageModel->updatePackageInstallation(
-                            packageName, static_cast<int>(PackageTypes::Installed));
-                        // Drop selection on success
-                        self->m_packageModel->clearSelectionsByPackageNames({packageName});
-                    } else {
-                        self->m_packageModel->updatePackageInstallation(
-                            packageName, static_cast<int>(PackageTypes::Failed), err);
-                    }
-                    emit self->installationProgressUpdated(
-                        success ? static_cast<int>(PackageTypes::Completed)
-                                : static_cast<int>(PackageTypes::ProgressFailed),
-                        packageName, 1, 1, success, success ? QString() : err);
-                });
+            self->installResultsSequential(toInstall, packageName, 0);
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
+}
+
+void PackageManagerBackend::installResultsSequential(const QVariantList& results,
+                                                     const QString& topLevelName,
+                                                     int index)
+{
+    // Per-row install pipeline counterpart to installNextPackage. The
+    // bulk path locks isInstalling and emits Completed at the end via
+    // finishInstallation; per-row stays unlocked so concurrent per-row
+    // clicks don't deadlock each other. We emit progress events keyed
+    // on the top-level name so the UI shows the user's clicked row as
+    // the one being acted on, even when the loop is iterating
+    // transitive deps in between.
+    if (index >= results.size()) return;
+    const QVariantMap dl = results[index].toMap();
+    const QString depName = dl.value("name").toString();
+    QPointer<PackageManagerBackend> self(this);
+    installOnePackage(dl,
+        [self, results, topLevelName, depName, index](bool success, const QString& err) {
+            if (!self) return;
+            if (success) {
+                self->m_packageModel->updatePackageInstallation(
+                    depName, static_cast<int>(PackageTypes::Installed));
+            } else {
+                // Failure attribution: the model's row for the
+                // failing entry takes the Failed status. The progress
+                // event also names the top-level so the UI's
+                // "Installing X…" banner flips to "X failed because
+                // dep Y failed" once we surface that on the QML side.
+                self->m_packageModel->updatePackageInstallation(
+                    depName, static_cast<int>(PackageTypes::Failed), err);
+            }
+            const bool isLast = (index + 1) >= results.size();
+            emit self->installationProgressUpdated(
+                success ? (isLast ? static_cast<int>(PackageTypes::Completed)
+                                  : static_cast<int>(PackageTypes::InProgress))
+                        : static_cast<int>(PackageTypes::ProgressFailed),
+                topLevelName, index + 1, results.size(), success,
+                success ? QString() : err);
+            if (success && !isLast)
+                self->installResultsSequential(results, topLevelName, index + 1);
+        });
 }
 
 void PackageManagerBackend::reloadPackage(int index)
@@ -989,7 +1024,8 @@ void PackageManagerBackend::reloadPackage(int index)
     qWarning() << "PackageManagerBackend::reloadPackage not implemented (TODO: logoscore load/unload).";
 }
 
-void PackageManagerBackend::installSpecs(const QList<PackageInstallSpec>& specs)
+void PackageManagerBackend::installSpecs(const QList<PackageInstallSpec>& specs,
+                                         bool includeDeps)
 {
     if (isInstalling()) {
         emit errorOccurred(static_cast<int>(PackageTypes::InstallationAlreadyInProgress));
@@ -1017,23 +1053,30 @@ void PackageManagerBackend::installSpecs(const QList<PackageInstallSpec>& specs)
     }
 
     // Pack the specs into the JSON-array shape expected by
-    // `downloadResolvedDependenciesAsync`:
-    //   [{"name":"n1","repositoryUrl":"...","version":"..."}, ...]
-    // The downloader resolves transitive deps from the catalog (the
-    // child deps don't carry a repo pin — that's intentional, we only
-    // pin the user's top-level picks; transitives still resolve
-    // cross-repo against the merged catalog). It pins each (version,
-    // rootHash), downloads in deps-first order, and returns one entry
-    // per pinned package — we feed that straight into the install
-    // pipeline.
+    // `downloadResolvedDependenciesAsync`. The downloader resolves
+    // transitive deps from the catalog, pins each, and downloads in
+    // deps-first order. `includeDeps` (default true) feeds the result
+    // straight into processDownloadResults; false filters out non-
+    // topLevel entries before installation so the user gets "just the
+    // packages I selected" semantics.
     const QString depsJson = buildDepsJson(specs);
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
-        [self](QVariantList results) {
+        [self, includeDeps](QVariantList results) {
             if (!self) return;
-            self->processDownloadResults(results);
+            if (!includeDeps) {
+                QVariantList filtered;
+                for (const QVariant& v : results) {
+                    const QVariantMap m = v.toMap();
+                    if (m.value("topLevel").toBool() || m.contains("error"))
+                        filtered.append(m);
+                }
+                self->processDownloadResults(filtered);
+            } else {
+                self->processDownloadResults(results);
+            }
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
 
@@ -1048,6 +1091,217 @@ void PackageManagerBackend::installNamed(const QStringList& packageNames)
         PackageInstallSpec s; s.name = n; specs.append(s);
     }
     installSpecs(specs);
+}
+
+QString PackageManagerBackend::buildInstalledPackagesJson() const
+{
+    // package_manager.getInstalledPackages returns entries shaped like
+    //   { name, moduleName, version, hashes: { root }, installType, ... }
+    // The resolver only needs (name, version) for its range check; we
+    // also pass rootHash for parity with the rest of the install plumbing
+    // even though the current short-circuit doesn't read it.
+    QJsonArray arr;
+    for (const QVariant& v : m_installedPackagesCache) {
+        const QVariantMap m = v.toMap();
+        const QString name = m.value("moduleName").toString().isEmpty()
+                             ? m.value("name").toString()
+                             : m.value("moduleName").toString();
+        const QString version = m.value("version").toString();
+        if (name.isEmpty() || version.isEmpty()) continue;
+        QJsonObject o;
+        o.insert(QStringLiteral("name"), name);
+        o.insert(QStringLiteral("version"), version);
+        const QString rootHash = m.value("hashes").toMap().value("root").toString();
+        if (!rootHash.isEmpty()) o.insert(QStringLiteral("rootHash"), rootHash);
+        arr.append(o);
+    }
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+QVariantList PackageManagerBackend::computeDepChanges(
+    const QVariantList& resolved,
+    const QHash<QString, QString>& installedByName,
+    const QHash<QString, QString>& repoUrlToName) const
+{
+    QVariantList out;
+    for (const QVariant& v : resolved) {
+        const QVariantMap m = v.toMap();
+        if (m.contains("error")) continue;            // surfaced separately
+        if (m.value("topLevel").toBool()) continue;   // user's own pick
+        const QString name = m.value("name").toString();
+        const QString to   = m.value("version").toString();
+        const QString from = installedByName.value(name);
+
+        QVariantMap c;
+        c.insert(QStringLiteral("name"),        name);
+        c.insert(QStringLiteral("toVersion"),   to);
+        c.insert(QStringLiteral("fromVersion"), from);
+        // Prefer the human-readable repo display name when known.
+        // repoUrlToName is the caller's map (catalog → repositoryDisplayName);
+        // fall back to the raw URL when the catalog hasn't surfaced the
+        // friendly label for this repo yet.
+        const QString url = m.value("repositoryUrl").toString();
+        c.insert(QStringLiteral("repository"),
+                 repoUrlToName.contains(url) ? repoUrlToName.value(url) : url);
+        if (from.isEmpty()) {
+            c.insert(QStringLiteral("action"), QStringLiteral("install"));
+        } else {
+            const int cmp = rowaction::versionCmp(from, to);
+            c.insert(QStringLiteral("action"),
+                     cmp < 0 ? QStringLiteral("upgrade") : QStringLiteral("downgrade"));
+        }
+        out.append(c);
+    }
+    return out;
+}
+
+void PackageManagerBackend::runDepPreviewForAction(const QString& packageName,
+                                                   const QString& moduleName,
+                                                   const QString& repoUrl,
+                                                   const QString& version,
+                                                   int actionKind)
+{
+    if (!bothClientsReady()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
+        return;
+    }
+
+    PackageInstallSpec spec;
+    spec.name = packageName;
+    spec.repositoryUrl = repoUrl;
+    spec.version = version;
+    const QString depsJson      = buildDepsJson({spec});
+    const QString installedJson = buildInstalledPackagesJson();
+
+    // repoUrl → repositoryDisplayName index — built once per preview
+    // from the current catalog cache so the dialog's "from repo X" line
+    // is the human label the rest of the UI uses.
+    QHash<QString, QString> repoUrlToName;
+    for (const QVariant& v : m_allPackagesCache) {
+        const QVariantMap m = v.toMap();
+        const QString u = m.value("repositoryUrl").toString();
+        const QString n = m.value("repositoryDisplayName").toString();
+        if (!u.isEmpty() && !n.isEmpty() && !repoUrlToName.contains(u))
+            repoUrlToName.insert(u, n);
+    }
+    // Installed snapshot indexed by name for from-version lookup.
+    QHash<QString, QString> installedByName;
+    for (const QVariant& v : m_installedPackagesCache) {
+        const QVariantMap m = v.toMap();
+        const QString n = m.value("moduleName").toString().isEmpty()
+                          ? m.value("name").toString()
+                          : m.value("moduleName").toString();
+        const QString ver = m.value("version").toString();
+        if (!n.isEmpty() && !ver.isEmpty()) installedByName.insert(n, ver);
+    }
+    // displayName + fromVersion + action label for the signal payload.
+    const QString displayName = moduleName.isEmpty() ? packageName : moduleName;
+    const QString fromVersion = installedByName.value(displayName);
+    static const char* kActionLabels[] = {"Install", "Upgrade", "Downgrade", "Reinstall"};
+    const QString actionLabel = (actionKind >= 0 && actionKind <= 3)
+                                ? QString::fromLatin1(kActionLabels[actionKind])
+                                : QStringLiteral("Install");
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_downloader.resolveDependenciesAsync(depsJson, installedJson,
+        [self, packageName, moduleName, repoUrl, version, actionKind,
+         displayName, fromVersion, actionLabel,
+         installedByName, repoUrlToName]
+        (QVariantList resolved) {
+            if (!self) return;
+            const QVariantList changes = self->computeDepChanges(
+                resolved, installedByName, repoUrlToName);
+            if (changes.isEmpty()) {
+                // No transitive changes needed — proceed silently with
+                // the full path (includeDeps=true; resolver returns
+                // only top-level so the install is unchanged in scope
+                // from "no preview" behaviour).
+                self->dispatchPendingAction(packageName, moduleName, repoUrl,
+                                            version, actionKind,
+                                            /*includeDeps=*/true);
+                return;
+            }
+            // Stash + ask the user. The dialog dispatches back via
+            // confirmInstallWith{,out}Deps / cancelInstallConfirm,
+            // keyed by `packageName`.
+            PendingDepConfirm p;
+            p.name          = packageName;
+            p.moduleName    = moduleName;
+            p.repositoryUrl = repoUrl;
+            p.version       = version;
+            p.action        = actionKind;
+            self->m_pendingDepConfirms.insert(packageName, p);
+            emit self->installDepsConfirmationRequested(
+                packageName, displayName, actionLabel,
+                fromVersion, version, changes);
+        });
+}
+
+void PackageManagerBackend::dispatchPendingAction(const QString& packageName,
+                                                  const QString& moduleName,
+                                                  const QString& repoUrl,
+                                                  const QString& version,
+                                                  int actionKind,
+                                                  bool includeDeps)
+{
+    // Central dispatch for resolver-confirm responses (and the silent
+    // "no transitive changes" path). Each branch matches the per-row
+    // entry-point it'd otherwise have run, just with the includeDeps
+    // flag plumbed through. The upgrade family stashes
+    // PendingUpgradeMeta so onUpgradeUninstallDone picks up the
+    // includeDeps choice at the post-uninstall download step.
+    switch (static_cast<PendingDepConfirm::Action>(actionKind)) {
+    case PendingDepConfirm::Install:
+        installSinglePackageAsync(packageName, repoUrl, version, includeDeps);
+        return;
+    case PendingDepConfirm::Upgrade:
+    case PendingDepConfirm::Downgrade:
+    case PendingDepConfirm::Sidegrade: {
+        if (!moduleName.isEmpty()) {
+            PendingUpgradeMeta meta;
+            meta.repositoryUrl = repoUrl;
+            meta.includeDeps   = includeDeps;
+            m_pendingUpgradeByModule.insert(moduleName, meta);
+        }
+        const int mode = (actionKind == PendingDepConfirm::Downgrade) ? 1
+                       : (actionKind == PendingDepConfirm::Sidegrade) ? 2 : 0;
+        LogosModules logos(m_logosAPI);
+        QPointer<PackageManagerBackend> self(this);
+        logos.package_manager.requestUpgradeAsync(moduleName, version, mode,
+            [self](QVariantMap result) {
+                if (!self) return;
+                if (!result.value("success", false).toBool())
+                    emit self->errorOccurred(
+                        static_cast<int>(PackageTypes::UninstallFailed));
+            });
+        return;
+    }
+    }
+}
+
+void PackageManagerBackend::confirmInstallWithDeps(QString packageName)
+{
+    if (!m_pendingDepConfirms.contains(packageName)) return;
+    const PendingDepConfirm p = m_pendingDepConfirms.take(packageName);
+    dispatchPendingAction(p.name, p.moduleName, p.repositoryUrl, p.version,
+                          p.action, /*includeDeps=*/true);
+}
+
+void PackageManagerBackend::confirmInstallWithoutDeps(QString packageName)
+{
+    if (!m_pendingDepConfirms.contains(packageName)) return;
+    const PendingDepConfirm p = m_pendingDepConfirms.take(packageName);
+    dispatchPendingAction(p.name, p.moduleName, p.repositoryUrl, p.version,
+                          p.action, /*includeDeps=*/false);
+}
+
+void PackageManagerBackend::cancelInstallConfirm(QString packageName)
+{
+    // No-op beyond dropping the pending entry. No backend state was
+    // mutated yet (the resolver call was a pure preview), so cancel is
+    // equivalent to "never happened".
+    m_pendingDepConfirms.remove(packageName);
 }
 
 void PackageManagerBackend::requestPackageDetails(int index)
@@ -1178,37 +1432,23 @@ void PackageManagerBackend::requestVersionChange(int index, UpgradeMode mode)
     const QString moduleName = pkg.value("moduleName").toString();
     if (moduleName.isEmpty()) return;
 
-    // Pin the target version at request time from the row's selected
-    // version (the per-row Version dropdown sets `pkg["version"]` via
-    // PackageListModel::setRowVersion). Empty means "let package_manager
-    // pick latest" — its pending state stores this under `targetVersion`
-    // (was `releaseTag` pre-multi-repo).
+    // Dep preview before the upgrade flow kicks off. If the resolver
+    // surfaces transitive changes, the user picks via the dep-confirm
+    // dialog BEFORE package_manager.requestUpgrade fires — keeps the
+    // "should I install foo's new dep bar?" decision separate from the
+    // later "should I unload the loaded dependents of foo?" cascade
+    // dialog that beforeUpgrade triggers. dispatchPendingAction handles
+    // the actual requestUpgrade call once the preview resolves; the
+    // mode int and repoUrl ride through PendingUpgradeMeta keyed on
+    // moduleName so onUpgradeUninstallDone can pick them up after the
+    // package_manager round-trip.
+    const QString name        = pkg.value("name").toString();
     const QString targetVersion = pkg.value("version").toString();
-
-    // Stash the row's source repo for onUpgradeUninstallDone — package_manager
-    // echoes back name + releaseTag + mode but not the originating repo,
-    // and the post-uninstall download must scope to the same repo or
-    // the dep resolver could grab the same name's package from a
-    // different repo (Logos Official's wallet_module vs Dario's
-    // wallet_module — the bug that motivated this plumbing). Keyed by
-    // moduleName because that's the identifier the event carries back.
-    const QString repoUrl = pkg.value("repositoryUrl").toString();
-    if (!repoUrl.isEmpty())
-        m_pendingUpgradeRepoByModule.insert(moduleName, repoUrl);
-    else
-        m_pendingUpgradeRepoByModule.remove(moduleName);
-
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    logos.package_manager.requestUpgradeAsync(moduleName, targetVersion,
-        static_cast<int>(mode),
-        [self](QVariantMap result) {
-            if (!self) return;
-            if (!result.value("success", false).toBool()) {
-                emit self->errorOccurred(
-                    static_cast<int>(PackageTypes::UninstallFailed));
-            }
-        });
+    const QString repoUrl     = pkg.value("repositoryUrl").toString();
+    const int actionKind = (mode == UpgradeMode::Downgrade) ? PendingDepConfirm::Downgrade
+                         : (mode == UpgradeMode::Sidegrade) ? PendingDepConfirm::Sidegrade
+                         :                                    PendingDepConfirm::Upgrade;
+    runDepPreviewForAction(name, moduleName, repoUrl, targetVersion, actionKind);
 }
 
 void PackageManagerBackend::subscribePackageManagerCancellationEvents()
@@ -1344,65 +1584,51 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     // falls through to the latest, which is correct for the
     // bare-upgrade case (no pin requested).
     //
-    // The repo pin (`m_pendingUpgradeRepoByModule`) was stashed in
-    // requestVersionChange; drain it now so the resolver scopes to
-    // exactly the row the user clicked. Without it, two repos
-    // publishing the same name + version would tie and one of them
-    // would win nondeterministically (the existing release-date
-    // tiebreaker).
-    const QString repoUrl = m_pendingUpgradeRepoByModule.take(moduleName);
+    // The repo pin + the user's dep-confirm choice were stashed in
+    // dispatchPendingAction; drain them now. repositoryUrl scopes the
+    // resolver to the row's source repo (two repos publishing the same
+    // name + version would otherwise tie). includeDeps controls whether
+    // transitive resolver picks get installed alongside the top-level
+    // — false means the user chose "install just the package" from the
+    // dep-confirm dialog and we drop transitive entries before handing
+    // the results to the install loop. Missing entry = "no preview ran"
+    // (older path or never-stashed); default to includeDeps=true so the
+    // upgrade behaves like a normal install.
+    const PendingUpgradeMeta meta = m_pendingUpgradeByModule.take(moduleName);
     PackageInstallSpec spec;
     spec.name          = displayName;
-    spec.repositoryUrl = repoUrl;     // empty = no pin (bare upgrade)
-    spec.version       = releaseTag;  // empty = newest matching
+    spec.repositoryUrl = meta.repositoryUrl;  // empty = no pin (bare upgrade)
+    spec.version       = releaseTag;          // empty = newest matching
     const QString depsJson = buildDepsJson({spec});
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
-        [self, displayName, mode](QVariantList results) {
+        [self, displayName, mode, includeDeps = meta.includeDeps]
+        (QVariantList results) {
             if (!self) return;
-            QVariantMap dlResult;
+            // Filter to top-level entries when the user opted out of
+            // deps. Without this, an upgrade with a new transitive dep
+            // would install BOTH the dep and the package even when the
+            // user explicitly clicked "just the package" — which would
+            // also silently fix the pre-fix quirk where the upgrade
+            // path only installed the top-level by accident.
+            QVariantList toInstall;
             for (const QVariant& v : results) {
                 const QVariantMap m = v.toMap();
-                if (m.value("name").toString() == displayName) {
-                    dlResult = m;
-                    break;
-                }
+                if (m.value("topLevel").toBool() || includeDeps || m.contains("error"))
+                    toInstall.append(m);
             }
-            if (dlResult.isEmpty() && !results.isEmpty()) {
-                dlResult = results.last().toMap();
-            }
-            // installOnePackage expects { name, path, error } — the
-            // resolver's per-entry shape already matches.
-            self->installOnePackage(dlResult,
-                [self, displayName, mode](bool success, const QString& err) {
-                    if (!self) return;
-                    if (success) {
-                        self->m_packageModel->updatePackageInstallation(
-                            displayName, static_cast<int>(PackageTypes::Installed));
-                    } else {
-                        self->m_packageModel->updatePackageInstallation(
-                            displayName, static_cast<int>(PackageTypes::Failed), err);
-                    }
+            if (toInstall.isEmpty() && !results.isEmpty())
+                toInstall.append(results.last().toMap());
 
-                    static const char* pastLabels[] = {
-                        "Upgrade", "Downgrade", "Sidegrade"};
-                    const char* opLabel = (mode >= 0 && mode <= 2)
-                                              ? pastLabels[mode] : "Upgrade";
-
-                    emit self->installationProgressUpdated(
-                        success ? static_cast<int>(PackageTypes::Completed)
-                                : static_cast<int>(PackageTypes::ProgressFailed),
-                        displayName, 1, 1, success,
-                        success ? QStringLiteral("")
-                                : QStringLiteral("%1 of '%2' failed: %3")
-                                      .arg(opLabel, displayName, err));
-
-                    // Full catalog refresh — pull updated installType,
-                    // installedVersion, installedHash from the on-disk scan.
-                    self->refreshPackages();
-                });
+            self->installResultsSequential(toInstall, displayName, 0);
+            // Refresh is driven by the corePluginFileInstalled event
+            // package_manager emits per file, which arms the debounce
+            // timer — same path the install flow uses. No explicit
+            // refreshPackages() here so we don't race the sequential
+            // loop's mid-flight model writes.
+            Q_UNUSED(mode);
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
 

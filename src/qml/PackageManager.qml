@@ -73,19 +73,18 @@ Rectangle {
 
                         isInstalling: store.isInstalling
                         isLoading: store.isLoading
-                        runnableActionCount: store.runnableActionCount
-                        actionSummary: store.actionSummary
+                        // Bulk action surface (Run Actions button + the
+                        // post-confirm popup) is intentionally hidden —
+                        // per-row ActionPill is the single way to act.
+                        // Backend still publishes runnableActionCount /
+                        // actionSummary / actionPlanItems for any
+                        // future re-introduction, but no QML reads them
+                        // today. See the RunActionsConfirm comment block
+                        // at the bottom for the rest of the rationale.
+                        runnableActionCount: 0
+                        actionSummary: ({})
                         stateIndex: store.installStateFilter
                         onReloadClicked: store.refreshCatalog()
-                        // Bulk action: open the confirm-summary popup
-                        // first; the popup emits `confirmed()` once the
-                        // user reviews the per-action breakdown, and
-                        // only then does runSelectedActions() fire.
-                        onRunActionsClicked: {
-                            runActionsConfirm.summary = store.actionSummary
-                            runActionsConfirm.items   = store.actionPlanItems
-                            runActionsConfirm.open()
-                        }
                         onStateRequested: function(state) { store.setInstallStateFilter(state) }
                         onRepositoriesClicked: repositoriesPopup.open()
                     }
@@ -161,20 +160,56 @@ Rectangle {
         }
     }
 
-    // ── Run Actions confirm popup ─────────────────────────────────────────
+    // ── Run Actions confirm popup ────────────── (currently unwired)
     //
-    // Modal between "Run Actions" click and execution. Shows the per-
-    // action breakdown ("Install 2 · Upgrade 1 · …") sourced from
-    // `store.actionSummary` so the user sees exactly what will happen
-    // before anything fires. The TableHeader's onRunActionsClicked
-    // sets `summary` from the live store value then opens this popup;
-    // on Confirm we call `store.runSelectedActions()` and the backend
-    // walks the plan (Installs batch through downloadResolvedDeps,
-    // upgrade/downgrade/reinstall dispatch per-row). Uninstall is not
-    // in the plan — it's per-row only via the row's kebab menu.
-    RunActionsConfirm {
-        id: runActionsConfirm
-        onConfirmed: store.runSelectedActions()
+    // The bulk-action surface (checkbox column + "Run Actions (N)"
+    // header button + this confirm popup) is disabled. Per-row
+    // ActionPill is the single way to act on a package right now.
+    // Backend plumbing (actionSummary, actionPlanItems,
+    // runSelectedActions) is kept so the bulk path can be turned
+    // back on without a re-implementation, but no QML opens this
+    // popup today.
+    //
+    // RunActionsConfirm {
+    //     id: runActionsConfirm
+    //     onConfirmed: store.runSelectedActions()
+    // }
+
+    // ── Per-row dep-confirm popup ─────────────────────────────────
+    //
+    // Fires when the backend's resolver preview surfaces transitive
+    // changes for a per-row Install / Reinstall / Upgrade / Downgrade.
+    // No-changes case proceeds silently (no popup). The three button
+    // outcomes — with deps / just package / cancel — route through
+    // BackendStore so the backend's PendingDepConfirm entry is drained
+    // exactly once. See PackageManagerBackend::runDepPreviewForAction
+    // and the .rep `installDepsConfirmationRequested` signal for the
+    // wire format.
+    InstallDepsConfirm {
+        id: installDepsConfirm
+        onConfirmedWithDeps:    function(name) { store.confirmInstallWithDeps(name) }
+        onConfirmedWithoutDeps: function(name) { store.confirmInstallWithoutDeps(name) }
+        onCancelled:            function(name) { store.cancelInstallConfirm(name) }
+    }
+
+    // Backend signal → dialog payload. Six-arg signature mirrors the
+    // .rep — we just pack it into the QVariantMap the dialog's
+    // openWith() consumes.
+    Connections {
+        target: store.backend
+        ignoreUnknownSignals: true
+        function onInstallDepsConfirmationRequested(packageName, displayName,
+                                                    actionLabel, fromVersion,
+                                                    toVersion, depChanges) {
+            installDepsConfirm.openWith({
+                packageName: packageName,
+                displayName: displayName,
+                actionLabel: actionLabel,
+                fromVersion: fromVersion,
+                toVersion:   toVersion,
+                depChanges:  depChanges
+            })
+        }
     }
 
     // ── Manage Repositories popup ─────────────────────────────────────────

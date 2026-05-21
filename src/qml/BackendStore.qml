@@ -83,6 +83,16 @@ QtObject {
     function reinstallPackage(i) { if (backend) backend.sidegradePackage(i) }
     function uninstallPackage(i) { if (backend) backend.uninstall(i) }
 
+    // Dep-confirm dialog responses. Routed from
+    // InstallDepsConfirm.qml's three signals back through the .rep
+    // slots — keyed on the catalog packageName so a refresh between
+    // click and confirm doesn't drop the dispatch. Backend's pending
+    // entry is drained in the with-/without-deps slots, or by
+    // cancelInstallConfirm.
+    function confirmInstallWithDeps(name)    { if (backend) backend.confirmInstallWithDeps(name) }
+    function confirmInstallWithoutDeps(name) { if (backend) backend.confirmInstallWithoutDeps(name) }
+    function cancelInstallConfirm(name)      { if (backend) backend.cancelInstallConfirm(name) }
+
     // Dispatch the per-row primary action emitted by ActionPill. Keeps
     // the QML side from having to switch on the enum: it just forwards
     // (index, action) here and we route to the matching backend slot.

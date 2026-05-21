@@ -32,41 +32,12 @@ LogosTable {
     signal versionChanged(int index, int versionIndex)
 
     model: root.packagesModel
-    selectionMode: LogosTable.Multi
-
-    // Gate the table's auto-prepended checkbox column at the source:
-    // non-runnable rows (NoOp = "Installed", NotAvailable) render the
-    // box dimmed and non-clickable, and the header "select-all" skips
-    // them. Reads `item.rowAction` directly (the cell-bound rowItem
-    // the table hands us) instead of going through the index-→-role
-    // model.data() hop the old isRunnableIdx used — that hop had a
-    // first-paint race where data() returned undefined and the
-    // predicate fell back to "return true", which is why NoOp boxes
-    // still appeared clickable. emitDiff() keeps the index-form
-    // isRunnableIdx as a belt-and-braces sweep for selections routed
-    // outside the cell click (e.g. backend.togglePackage from code).
-    rowSelectable: function (i, item) {
-        // Cell-rendered path (item bound to the row's reactive
-        // QVariantMap) reads rowAction directly — no index→role→data()
-        // race. Toggle-all / select-count paths call with item=null,
-        // so we round-trip via the proxy model in that case. If even
-        // that's not available yet (model mid-reset), trust the
-        // belt-and-braces filter in emitDiff to clean up.
-        let action
-        if (item && item.rowAction !== undefined) {
-            action = Number(item.rowAction) | 0
-        } else {
-            const r = d._resolveRowActionRole()
-            if (r < 0 || !root.model) return true
-            const idx = root.model.index(i, 0)
-            if (!idx || !idx.valid) return true
-            const v = root.model.data(idx, r)
-            if (v === undefined || v === null) return true
-            action = Number(v) | 0
-        }
-        return action !== PackageManagerUi.NoOp
-            && action !== PackageManagerUi.NotAvailable
-    }
+    // Bulk-action surface (checkbox column + Run Actions button) is
+    // intentionally off — per-row ActionPill is the single act path.
+    // LogosTable.None drops the auto-prepended checkbox column
+    // entirely; emitDiff / rowSelectable / selectionToggled below are
+    // kept compiled but never fire as long as selectionMode stays None.
+    selectionMode: LogosTable.None
 
     onRowClicked: function(idx, row) { root.detailsRequested(idx) }
 

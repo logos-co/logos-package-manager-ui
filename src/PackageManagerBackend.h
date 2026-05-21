@@ -47,6 +47,13 @@ public slots:
     void sidegradePackage(int index) override;
     void requestPackageDetails(int index) override;
 
+    // Resolver-confirm responses. See `installDepsConfirmationRequested`
+    // in the .rep for the flow. Keyed by catalog `name` (not row index)
+    // so a refresh between click and confirm doesn't drop the dispatch.
+    void confirmInstallWithDeps(QString packageName) override;
+    void confirmInstallWithoutDeps(QString packageName) override;
+    void cancelInstallConfirm(QString packageName) override;
+
     // Forward to PackageListModel::setRowVersion. Pure proxy — the model
     // owns the clamping, mirror-into-version/hash fields, and dataChanged
     // emission so the QML view repaints without any extra backend logic.
@@ -80,8 +87,12 @@ private:
     // gated by the global isInstalling flag (so the bulk Install button can
     // disable itself during a batch). Each spec pins the row's repo +
     // dropdown-selected version so the dep resolver doesn't pick the
-    // wrong package when two repos publish the same `name`.
-    void installSpecs(const QList<PackageInstallSpec>& specs);
+    // wrong package when two repos publish the same `name`. `includeDeps`
+    // controls whether transitive deps returned by the resolver are
+    // installed alongside the top-level entries (true) or filtered out
+    // (false — "just the requested package(s)").
+    void installSpecs(const QList<PackageInstallSpec>& specs,
+                      bool includeDeps = true);
     // Legacy name-only wrapper kept for the unwired-but-still-present
     // installSelected() .rep slot. Builds specs with empty repo/version
     // — same loose semantics as before (resolver picks across repos +
@@ -92,10 +103,67 @@ private:
     // flag so multiple per-row clicks can run in parallel. `repoUrl` /
     // `version` empty = no pin (resolver chooses); set = scope the
     // download to exactly that repo/version (the per-row click path
-    // always sets both).
+    // always sets both). `includeDeps` is the same gate installSpecs
+    // uses — false skips transitive deps entirely.
     void installSinglePackageAsync(const QString& packageName,
                                    const QString& repoUrl = QString(),
-                                   const QString& version = QString());
+                                   const QString& version = QString(),
+                                   bool includeDeps = true);
+
+    // Sequential per-row install. Bulk path uses installNextPackage,
+    // which locks isInstalling — per-row stays unlocked so concurrent
+    // per-row clicks don't deadlock each other. Each entry runs
+    // through installOnePackage, the loop chains to the next on success.
+    // Progress signals carry `topLevelName` so the UI banner stays
+    // anchored to the row the user clicked, even while transitive deps
+    // are mid-install.
+    void installResultsSequential(const QVariantList& results,
+                                  const QString& topLevelName,
+                                  int index);
+
+    // Resolve transitive deps for a (name, repoUrl, version) WITHOUT
+    // downloading, then either:
+    //   * No transitive changes needed → invoke dispatchPendingAction
+    //     immediately with includeDeps=true (single-click experience
+    //     for the common case).
+    //   * Transitive changes needed → stash a PendingDepConfirm keyed
+    //     by `packageName` and emit installDepsConfirmationRequested.
+    //     The confirm slots later pick up the pending entry and run the
+    //     matching path.
+    // `actionKind` is the per-row dispatch (Install / Upgrade / ... —
+    // see PendingDepConfirm::Action).
+    void runDepPreviewForAction(const QString& packageName,
+                                const QString& moduleName,
+                                const QString& repoUrl,
+                                const QString& version,
+                                int actionKind);
+
+    // Run the actual install / upgrade / downgrade / sidegrade for the
+    // (packageName, repo, version) the user picked. Called from
+    // runDepPreviewForAction (no-changes path) and from
+    // confirmInstallWith{,out}Deps (post-dialog). includeDeps controls
+    // whether transitive resolver picks are installed or filtered out.
+    void dispatchPendingAction(const QString& packageName,
+                               const QString& moduleName,
+                               const QString& repoUrl,
+                               const QString& version,
+                               int actionKind,
+                               bool includeDeps);
+
+    // Compute the user-facing change list. Walks `resolved` (output of
+    // package_downloader.resolveDependencies) for transitive (topLevel
+    // != true) entries, looks each up in `installedByName`, and emits
+    // a per-row description: {name, action, fromVersion, toVersion,
+    // repository}. action is "install" if not installed, otherwise
+    // "upgrade" / "downgrade" based on versionCmp.
+    QVariantList computeDepChanges(const QVariantList& resolved,
+                                   const QHash<QString, QString>& installedByName,
+                                   const QHash<QString, QString>& repoUrlToName) const;
+
+    // Serialise m_installedPackagesCache to the
+    // [{name, version, rootHash}] shape package_downloader.resolveDependencies
+    // expects in its `installedPackagesJson` parameter.
+    QString buildInstalledPackagesJson() const;
 
     void setPackagesFromVariantList(const QVariantList& packagesArray,
                                     const QVariantList& installedPackages,
@@ -188,17 +256,38 @@ private:
     QVariantList m_installedPackagesCache;
     QStringList  m_validVariantsCache;
 
-    // Repo URL captured at requestVersionChange time, indexed by
-    // moduleName. The upgrade flow round-trips through package_manager,
-    // which echoes (name, releaseTag, mode) back via the
-    // upgradeUninstallDone event — name + version make it from the UI
-    // to the post-uninstall download, but the source repo would
-    // otherwise be lost, and the dep resolver would re-pick across
-    // every repo publishing the same name. Mirror of the .rep's
-    // pending-action state on our side, keyed by moduleName because
-    // that's what upgradeUninstallDone carries. Drained on use so the
-    // cache doesn't accumulate stale entries.
-    QHash<QString, QString> m_pendingUpgradeRepoByModule;
+    // Per-module upgrade meta captured at requestVersionChange time.
+    //   repositoryUrl: scopes the post-uninstall download to the row's
+    //     source repo, so a same-named package in another repo doesn't
+    //     win the resolver's date-tiebreak.
+    //   includeDeps: set false when the user picked "install just the
+    //     package" from the dep-confirm dialog; tells onUpgradeUninstallDone
+    //     to install only the top-level entry from the resolver and drop
+    //     any transitive picks.
+    // Drained on use in onUpgradeUninstallDone, keyed by moduleName
+    // because that's the identifier package_manager echoes back in the
+    // upgradeUninstallDone event.
+    struct PendingUpgradeMeta {
+        QString repositoryUrl;
+        bool    includeDeps = true;
+    };
+    QHash<QString, PendingUpgradeMeta> m_pendingUpgradeByModule;
+
+    // Pending dep-confirm requests, keyed by catalog name. Populated by
+    // runDepPreviewForAction when the resolver returns transitive
+    // changes; drained by confirmInstallWith{,out}Deps /
+    // cancelInstallConfirm. Survives a model refresh between click and
+    // confirm because the key is the package's stable name, not its row
+    // index.
+    struct PendingDepConfirm {
+        enum Action { Install = 0, Upgrade = 1, Downgrade = 2, Sidegrade = 3 };
+        QString name;            // catalog name (== key)
+        QString moduleName;      // runtime identity (for upgrade dispatch)
+        QString repositoryUrl;
+        QString version;         // dropdown-selected target version
+        int     action = Install;
+    };
+    QHash<QString, PendingDepConfirm> m_pendingDepConfirms;
 
     // Coalesces N rapid file-install / file-uninstall events into one
     // refreshPackages() — does NOT touch releases or selected-release state.

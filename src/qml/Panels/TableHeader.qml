@@ -119,11 +119,13 @@ GridLayout {
             onClicked: root.repositoriesClicked()
         }
 
-        // Single bulk-action button. Label includes the count so the
-        // user knows up front whether anything is in scope; the confirm
-        // popup (opened by the parent on click) breaks the count down by
-        // action type before anything actually runs.
+        // Single bulk-action button. Currently hidden — the bulk
+        // selection / confirm-summary surface is off (see the
+        // RunActionsConfirm comment block in PackageManager.qml).
+        // Kept compiled so re-enabling is a one-line `visible: true`
+        // away once the dep-aware per-row flow stabilises.
         LogosButton {
+            visible: false
             Layout.fillWidth: true
             Layout.minimumWidth: 130
             Layout.preferredWidth: 160
