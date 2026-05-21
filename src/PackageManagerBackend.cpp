@@ -50,6 +50,7 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     setSelectedCategoryIndex(0);
     setRunnableActionCount(0);
     setActionSummary(QVariantMap{});
+    setActionPlanItems(QVariantList{});
     setIsInstalling(false);
     setIsLoading(false);
 
@@ -460,6 +461,12 @@ void PackageManagerBackend::refreshActionSummary()
     const PackageActionPlan plan = m_packageModel->buildActionPlanForSelected();
     setRunnableActionCount(plan.total());
     setActionSummary(plan.toSummary());
+    // Per-row detail accompanying the category counts. The confirm
+    // popup pairs each item with its action header (install / upgrade /
+    // …) and shows "name: vFrom → vTo" so the user can verify the
+    // exact transitions before confirming. Computed every selection
+    // change for the same reason the counts are.
+    setActionPlanItems(plan.toItemList());
 }
 
 void PackageManagerBackend::refreshCatalog()

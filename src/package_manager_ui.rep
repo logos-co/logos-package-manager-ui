@@ -62,8 +62,17 @@ class PackageManagerUi
     // Per-action counts among the selected rows:
     //   { install: N, upgrade: N, downgrade: N, reinstall: N, retry: N }
     // Keys with a zero count are omitted. Feeds the confirm-summary
-    // popup before "Run Actions" actually fires.
+    // popup's category headers before "Run Actions" actually fires.
     PROP(QVariantMap actionSummary READONLY)
+    // Per-row detail accompanying actionSummary. One entry per
+    // selected runnable row, in model order:
+    //   { name, displayName, action, repository, fromVersion, toVersion }
+    // The popup groups by `action` (matching the keys in
+    // actionSummary) and renders one line per row underneath the
+    // category header, so the user sees exactly which package is
+    // upgrading from which version to which. fromVersion is empty
+    // on a fresh install (no prior installed copy).
+    PROP(QVariantList actionPlanItems READONLY)
     PROP(bool isInstalling READONLY)
     PROP(bool isLoading READONLY)
 

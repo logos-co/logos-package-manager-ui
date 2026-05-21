@@ -21,6 +21,11 @@ QtObject {
     // confirm-summary popup reads the map for its per-action breakdown.
     readonly property int runnableActionCount: backend ? backend.runnableActionCount : 0
     readonly property var actionSummary: backend ? backend.actionSummary : ({})
+    // Per-row breakdown matching actionSummary's category counts.
+    // [{ name, displayName, action, repository, fromVersion, toVersion }, ...]
+    // Consumed by the Run Actions confirm popup to render "name: vA → vB"
+    // lines under each action header.
+    readonly property var actionPlanItems: backend ? backend.actionPlanItems : []
     readonly property list<string> categories: backend ? backend.categories : []
     readonly property int selectedCategoryIndex: backend ? backend.selectedCategoryIndex : 0
 

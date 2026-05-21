@@ -83,6 +83,7 @@ Rectangle {
                         // only then does runSelectedActions() fire.
                         onRunActionsClicked: {
                             runActionsConfirm.summary = store.actionSummary
+                            runActionsConfirm.items   = store.actionPlanItems
                             runActionsConfirm.open()
                         }
                         onStateRequested: function(state) { store.setInstallStateFilter(state) }

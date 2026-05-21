@@ -55,13 +55,34 @@ struct PackageActionPlan {
     int downgradeCount = 0;
     int reinstallCount = 0;
 
+    // Per-row detail for the confirm-summary popup. One entry per
+    // runnable selected row, in model order. The popup uses these to
+    // render the "wallet_module: v1.0.0 → v1.0.1" line beneath each
+    // category header — actionSummary alone collapses identity into
+    // category counts and the user couldn't see which specific
+    // packages were being acted on.
+    struct Item {
+        QString name;            // catalog name (input to installNamed / dep resolver)
+        QString displayName;     // friendlier label (moduleName fallback to name)
+        QString action;          // "install" / "upgrade" / "downgrade" / "reinstall" / "retry"
+        QString repository;      // repositoryDisplayName (already user-facing)
+        QString fromVersion;     // installedVersion; empty on a fresh install
+        QString toVersion;       // selected (dropdown) version
+    };
+    QList<Item> items;
+
     int total() const { return installSpecs.size() + versionChanges.size(); }
     bool isEmpty() const { return total() == 0; }
 
     // { install: N, upgrade: N, downgrade: N, reinstall: N, retry: N }
     // — only non-zero counts; the confirm-summary popup renders one
-    // line per key in QML.
+    // category header line per key in QML.
     QVariantMap toSummary() const;
+
+    // [{ name, displayName, action, repository, fromVersion,
+    //    toVersion }, ...] — one entry per selected runnable row, in
+    // model order. The popup repeats over this and groups by `action`.
+    QVariantList toItemList() const;
 };
 
 class PackageListModel : public QAbstractListModel {

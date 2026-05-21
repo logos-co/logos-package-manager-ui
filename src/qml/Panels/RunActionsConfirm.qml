@@ -11,14 +11,20 @@ import Logos.Controls
 // arrangement let a mixed selection silently fire each button on its
 // eligible subset, so the user had no clear preview of what would
 // actually happen. The new "Run Actions" path goes through this popup —
-// the user sees the per-action breakdown ("Install 2 · Upgrade 1 ·
-// Reinstall 1") and explicitly confirms before anything runs. Uninstall
-// is intentionally NOT a category here: it's per-row only.
+// the user sees the per-action category header AND the specific
+// per-row transitions ("wallet_module: v1.0.0 → v1.0.1") underneath,
+// and explicitly confirms before anything runs. Uninstall is
+// intentionally NOT a category here: it's per-row only.
 //
-// Inputs: `summary` is a QVariantMap with non-zero counts only — keys
-// are "install" / "upgrade" / "downgrade" / "reinstall" / "retry",
-// matching PackageActionPlan::toSummary() in PackageListModel.cpp.
-// Anything else is ignored.
+// Inputs:
+//   `summary` — QVariantMap from PackageActionPlan::toSummary, non-zero
+//               counts only ({install: N, upgrade: N, ...}). Drives the
+//               category section headers.
+//   `items`   — QVariantList from PackageActionPlan::toItemList, one
+//               entry per selected runnable row in model order. Each
+//               entry has { name, displayName, action, repository,
+//               fromVersion, toVersion }. Grouped by `action` so each
+//               summary header is followed by the matching rows.
 //
 // Emits `confirmed()` when the user clicks Confirm; the caller is then
 // responsible for calling `BackendStore.runSelectedActions()`.
@@ -27,15 +33,16 @@ Popup {
     id: root
 
     // Set by the caller before open() — typically bound to
-    // `store.actionSummary` at the call site.
+    // `store.actionSummary` / `store.actionPlanItems` at the call site.
     property var summary: ({})
+    property var items: []
 
     signal confirmed()
 
     modal: true
     focus: true
     anchors.centerIn: Overlay.overlay
-    width: 380
+    width: 460
     padding: Theme.spacing.medium
 
     background: Rectangle {
@@ -48,13 +55,24 @@ Popup {
     QtObject {
         id: d
 
-        // The fixed display order. Listed actions that aren't in
-        // `summary` (or are zero) get skipped — the visible list only
-        // contains real, non-zero rows. Retry comes last because it's
-        // the rarest and visually de-emphasised by ordering.
+        // Fixed display order. Listed actions that aren't in `summary`
+        // (or are zero) get skipped — the visible list only contains
+        // real, non-zero rows. Retry comes last because it's the rarest
+        // and visually de-emphasised by ordering.
         readonly property var order: ["install", "upgrade", "downgrade", "reinstall", "retry"]
 
-        function label(key, n) {
+        // Filter on the fly so the Repeater binding stays declarative.
+        // Re-computed when items/summary changes (both are var props).
+        function itemsForAction(action) {
+            var list = root.items || []
+            var out = []
+            for (var i = 0; i < list.length; ++i) {
+                if (list[i] && list[i].action === action) out.push(list[i])
+            }
+            return out
+        }
+
+        function categoryLabel(key, n) {
             switch (key) {
             case "install":   return n === 1 ? qsTr("Install 1 package")
                                              : qsTr("Install %1 packages").arg(n)
@@ -68,6 +86,18 @@ Popup {
                                              : qsTr("Retry %1 failed installs").arg(n)
             default: return ""
             }
+        }
+
+        // "v1.0.0 → v1.0.1" for an upgrade/downgrade/reinstall;
+        // "v1.0.0" alone for a fresh install (no prior version);
+        // empty string when neither version is known.
+        function versionTransition(it) {
+            if (!it) return ""
+            var to   = it.toVersion ? "v" + it.toVersion : ""
+            var from = it.fromVersion ? "v" + it.fromVersion : ""
+            if (from && to && from !== to) return from + " → " + to
+            if (to) return to
+            return ""
         }
 
         function totalCount(s) {
@@ -94,10 +124,11 @@ Popup {
             wrapMode: Text.WordWrap
         }
 
-        // Summary lines — one per non-zero action.
+        // One section per non-zero action category. Section = header
+        // line + indented bullet list of the rows in that category.
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: Theme.spacing.small
+            spacing: Theme.spacing.medium
 
             Repeater {
                 model: d.order.filter(function(k) {
@@ -105,22 +136,60 @@ Popup {
                     return Number(v) > 0
                 })
 
-                RowLayout {
+                ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: Theme.spacing.small
+                    spacing: Theme.spacing.tiny
 
-                    LogosText {
-                        text: "•"
-                        color: Theme.palette.textSecondary
-                        font.pixelSize: Theme.typography.bodyText
-                    }
+                    // Cached property — Repeater delegates re-evaluate
+                    // their bindings when `model`/`root.items` changes
+                    // because the binding reads them.
+                    readonly property var rowsInSection: d.itemsForAction(modelData)
+
+                    // Category header ("Upgrade 2 packages")
                     LogosText {
                         Layout.fillWidth: true
-                        text: d.label(modelData,
+                        text: d.categoryLabel(modelData,
                               Number(root.summary[modelData] || 0))
                         color: Theme.palette.text
                         font.pixelSize: Theme.typography.bodyText
+                        font.weight: Theme.typography.weightBold
                         wrapMode: Text.WordWrap
+                    }
+
+                    // Per-row detail — bullets sit under the header
+                    // with a hanging indent so the eye groups them
+                    // with the category, not with the next category.
+                    Repeater {
+                        model: parent.rowsInSection
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.leftMargin: Theme.spacing.medium
+                            spacing: Theme.spacing.small
+
+                            LogosText {
+                                text: "•"
+                                color: Theme.palette.textSecondary
+                                font.pixelSize: Theme.typography.bodyText
+                            }
+                            LogosText {
+                                Layout.fillWidth: true
+                                text: {
+                                    var name = modelData.displayName || modelData.name || ""
+                                    var ver  = d.versionTransition(modelData)
+                                    var repo = modelData.repository || ""
+                                    // "name (repo): v1.0.0 → v1.0.1"
+                                    // — repo is suffixed only when set,
+                                    // so single-source catalogs don't
+                                    // get cluttered.
+                                    var head = repo ? (name + " (" + repo + ")") : name
+                                    return ver ? (head + ": " + ver) : head
+                                }
+                                color: Theme.palette.text
+                                font.pixelSize: Theme.typography.bodyText
+                                wrapMode: Text.WordWrap
+                            }
+                        }
                     }
                 }
             }

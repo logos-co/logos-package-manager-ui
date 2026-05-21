@@ -501,6 +501,23 @@ QVariantMap PackageActionPlan::toSummary() const
     return m;
 }
 
+QVariantList PackageActionPlan::toItemList() const
+{
+    QVariantList out;
+    out.reserve(items.size());
+    for (const Item& it : items) {
+        QVariantMap m;
+        m.insert(QStringLiteral("name"),         it.name);
+        m.insert(QStringLiteral("displayName"),  it.displayName);
+        m.insert(QStringLiteral("action"),       it.action);
+        m.insert(QStringLiteral("repository"),   it.repository);
+        m.insert(QStringLiteral("fromVersion"),  it.fromVersion);
+        m.insert(QStringLiteral("toVersion"),    it.toVersion);
+        out.append(m);
+    }
+    return out;
+}
+
 PackageActionPlan PackageListModel::buildActionPlanForSelected() const
 {
     PackageActionPlan plan;
@@ -526,31 +543,58 @@ PackageActionPlan PackageListModel::buildActionPlanForSelected() const
         s.version       = row.value("version").toString();
         return s;
     };
+    // Pre-fill the per-row item (without `action`, which the switch
+    // sets) so each branch only needs the one-line case-specific append.
+    auto itemFor = [](const QVariantMap& row) {
+        PackageActionPlan::Item it;
+        it.name        = row.value("name").toString();
+        // moduleName is the runtime identity (what package_manager
+        // uses on disk); name is the catalog identity. Prefer the
+        // friendlier moduleName for display when present, but fall
+        // back to name so the popup never shows a blank.
+        it.displayName = row.value("moduleName").toString();
+        if (it.displayName.isEmpty()) it.displayName = it.name;
+        it.repository  = row.value("repositoryDisplayName").toString();
+        it.fromVersion = row.value("installedVersion").toString();
+        it.toVersion   = row.value("version").toString();
+        return it;
+    };
     for (int i = 0; i < m_packages.size(); ++i) {
         const QVariantMap& row = m_packages[i];
         if (!row.value("isSelected").toBool()) continue;
         const int action = row.value("rowAction",
                               static_cast<int>(PackageTypes::NoOp)).toInt();
+        PackageActionPlan::Item it = itemFor(row);
         switch (action) {
         case static_cast<int>(PackageTypes::Install):
             plan.installSpecs.append(specFor(row));
             ++plan.installCount;
+            it.action = QStringLiteral("install");
+            plan.items.append(it);
             break;
         case static_cast<int>(PackageTypes::Retry):
             plan.installSpecs.append(specFor(row));
             ++plan.retryCount;
+            it.action = QStringLiteral("retry");
+            plan.items.append(it);
             break;
         case static_cast<int>(PackageTypes::Upgrade):
             plan.versionChanges.append(qMakePair(i, ModeUpgrade));
             ++plan.upgradeCount;
+            it.action = QStringLiteral("upgrade");
+            plan.items.append(it);
             break;
         case static_cast<int>(PackageTypes::Downgrade):
             plan.versionChanges.append(qMakePair(i, ModeDowngrade));
             ++plan.downgradeCount;
+            it.action = QStringLiteral("downgrade");
+            plan.items.append(it);
             break;
         case static_cast<int>(PackageTypes::Reinstall):
             plan.versionChanges.append(qMakePair(i, ModeSidegrade));
             ++plan.reinstallCount;
+            it.action = QStringLiteral("reinstall");
+            plan.items.append(it);
             break;
         default:
             // NoOp / NotAvailable — non-runnable, skip silently. The
