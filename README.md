@@ -1,19 +1,53 @@
 # logos-package-manager-ui
 
-A Qt/QML UI plugin that shows installed packages, their status, and available updates. Users can install, upgrade, downgrade, sidegrade, and uninstall packages through this UI.
+A Qt/QML UI plugin that browses **multi-repository** module catalogs and lets users install, upgrade, downgrade, sidegrade, and uninstall packages. The catalog comes from the [`package_downloader`](https://github.com/logos-co/logos-package-downloader-module) module (merged across every configured repository); the UI also manages the repository list (add / remove / enable / disable).
+
+> 📖 Catalog formats (`logos-repo.json` / `index.json`):
+> [logos-modules-release-tool/docs/catalog-format.md](https://github.com/logos-co/logos-modules-release-tool/blob/main/docs/catalog-format.md).
 
 ## Architecture
 
-PackageManagerBackend is a **stateless view** for uninstall/upgrade operations. It does not hold cascade state or drive confirmation dialogs — those concerns live in Basecamp's PluginManager, which owns the single cascade-confirmation dialog and orchestrates the two-phase ack protocol with the `package_manager` module.
+Each catalog row's primary action is resolved against its **currently
+selected version** (Install / Upgrade / Downgrade / Reinstall / Retry /
+Installed / Not available) and pinned to that row's **source repository**,
+so a package name published by two repos can't cross-wire.
 
-Entry-point flow:
-1. User clicks Uninstall/Upgrade in the PMU tab
+### Dependency-aware per-row actions (owned by PMU)
+
+When the user triggers an Install / Upgrade / Downgrade / Reinstall, PMU
+previews the dependency impact **before** anything downloads:
+
+1. `package_downloader.resolveDependencies(deps, installed)` resolves what
+   the action would change, omitting transitive deps already satisfied
+   on-disk.
+2. **No transitive changes** → proceed straight to the download/install.
+3. **Transitive changes** → the backend stashes the pending request
+   (keyed by an opaque `requestKey` = `repositoryUrl` + name, unique
+   across repos) and emits `installDepsConfirmationRequested`; QML shows
+   the `InstallDepsConfirm` dialog offering **Install with dependencies /
+   Install just this / Cancel**. The chosen path routes back through
+   `confirmInstallWith{,out}Deps` / `cancelInstallConfirm` by that key.
+
+So, unlike the uninstall/upgrade *cascade* dialog, PMU **does** own this
+dep-confirm preview state.
+
+### Uninstall / upgrade cascade (owned by Basecamp)
+
+For the destructive cascade confirmation, PackageManagerBackend is a
+stateless view — Basecamp's PluginManager owns the single
+cascade-confirmation dialog and the two-phase ack protocol:
+
+1. User clicks Uninstall / Upgrade in the PMU tab
 2. PMU calls `package_manager.requestUninstallAsync` / `requestUpgradeAsync`
-3. `package_manager` module emits `beforeUninstall` / `beforeUpgrade`
-4. Basecamp's PluginManager acks, shows cascade dialog, confirms/cancels
+3. `package_manager` emits `beforeUninstall` / `beforeUpgrade`
+4. Basecamp's PluginManager acks, shows the cascade dialog, confirms/cancels
 5. On completion, `package_manager` emits `corePluginFileInstalled` / `uiPluginFileInstalled` / `corePluginUninstalled` / `uiPluginUninstalled`, which PMU consumes (debounced) to refresh the catalog rows
 
 PMU subscribes to `uninstallCancelled` / `upgradeCancelled` events for error toast display. User-initiated cancels are silent; system-originated cancellations (e.g. the module's ack-timeout when no listener takes over the gated flow) are surfaced via the dedicated `cancellationOccurred(name, message)` signal, which QML renders as a plain toast. The install-progress channel (`installationProgressUpdated`) is reserved for install progress and install failures; routing cancellations through it would render them with a misleading "Failed to install" prefix.
+
+> Note: the bulk multi-select "Run Actions" surface is currently hidden
+> (`selectionMode: None`) — per-row actions are the supported path. The
+> backend plumbing for it remains in place behind that flag.
 
 ## How to Build
 
