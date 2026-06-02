@@ -139,12 +139,14 @@ class PackageManagerUi
     // surfaces transitive changes (deps to add or version-shift), the
     // backend stashes the pending request and emits
     // `installDepsConfirmationRequested`; QML routes the user's choice
-    // back through one of these three slots, keyed by the package's
-    // catalog `name` so the dispatch survives a row reshuffle between
-    // click and confirm.
-    SLOT(void confirmInstallWithDeps(QString packageName))
-    SLOT(void confirmInstallWithoutDeps(QString packageName))
-    SLOT(void cancelInstallConfirm(QString packageName))
+    // back through one of these three slots. The argument is the opaque
+    // `requestKey` carried by that signal — NOT the package name. In a
+    // multi-repo catalog two rows can share a package name, so keying
+    // by name let a second pending preview clobber the first; the
+    // requestKey (repo-scoped + name) is unique per pending request.
+    SLOT(void confirmInstallWithDeps(QString requestKey))
+    SLOT(void confirmInstallWithoutDeps(QString requestKey))
+    SLOT(void cancelInstallConfirm(QString requestKey))
     // Request a row's full details; reply via packageDetailsLoaded.
     SLOT(void requestPackageDetails(int index))
 
@@ -191,7 +193,8 @@ class PackageManagerUi
     //   toVersion    — dropdown-selected target version
     //   depChanges   — [{ name, action: install|upgrade|downgrade,
     //                     fromVersion, toVersion, repository }, ...]
-    SIGNAL(installDepsConfirmationRequested(QString packageName,
+    SIGNAL(installDepsConfirmationRequested(QString requestKey,
+                                            QString packageName,
                                             QString displayName,
                                             QString actionLabel,
                                             QString fromVersion,

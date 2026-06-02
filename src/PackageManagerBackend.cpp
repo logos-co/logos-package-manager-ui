@@ -1271,17 +1271,21 @@ void PackageManagerBackend::runDepPreviewForAction(const QString& packageName,
                 return;
             }
             // Stash + ask the user. The dialog dispatches back via
-            // confirmInstallWith{,out}Deps / cancelInstallConfirm,
-            // keyed by `packageName`.
+            // confirmInstallWith{,out}Deps / cancelInstallConfirm, keyed
+            // by an opaque requestKey. The key is repo-scoped so two
+            // rows sharing a package name across repos don't collide:
+            // `<repositoryUrl>\n<name>`. ('\n' can't appear in a URL or
+            // a package name, so it's an unambiguous separator.)
             PendingDepConfirm p;
             p.name          = packageName;
             p.moduleName    = moduleName;
             p.repositoryUrl = repoUrl;
             p.version       = version;
             p.action        = actionKind;
-            self->m_pendingDepConfirms.insert(packageName, p);
+            const QString requestKey = repoUrl + QLatin1Char('\n') + packageName;
+            self->m_pendingDepConfirms.insert(requestKey, p);
             emit self->installDepsConfirmationRequested(
-                packageName, displayName, actionLabel,
+                requestKey, packageName, displayName, actionLabel,
                 fromVersion, version, changes);
         });
 }
@@ -1328,28 +1332,28 @@ void PackageManagerBackend::dispatchPendingAction(const QString& packageName,
     }
 }
 
-void PackageManagerBackend::confirmInstallWithDeps(QString packageName)
+void PackageManagerBackend::confirmInstallWithDeps(QString requestKey)
 {
-    if (!m_pendingDepConfirms.contains(packageName)) return;
-    const PendingDepConfirm p = m_pendingDepConfirms.take(packageName);
+    if (!m_pendingDepConfirms.contains(requestKey)) return;
+    const PendingDepConfirm p = m_pendingDepConfirms.take(requestKey);
     dispatchPendingAction(p.name, p.moduleName, p.repositoryUrl, p.version,
                           p.action, /*includeDeps=*/true);
 }
 
-void PackageManagerBackend::confirmInstallWithoutDeps(QString packageName)
+void PackageManagerBackend::confirmInstallWithoutDeps(QString requestKey)
 {
-    if (!m_pendingDepConfirms.contains(packageName)) return;
-    const PendingDepConfirm p = m_pendingDepConfirms.take(packageName);
+    if (!m_pendingDepConfirms.contains(requestKey)) return;
+    const PendingDepConfirm p = m_pendingDepConfirms.take(requestKey);
     dispatchPendingAction(p.name, p.moduleName, p.repositoryUrl, p.version,
                           p.action, /*includeDeps=*/false);
 }
 
-void PackageManagerBackend::cancelInstallConfirm(QString packageName)
+void PackageManagerBackend::cancelInstallConfirm(QString requestKey)
 {
     // No-op beyond dropping the pending entry. No backend state was
     // mutated yet (the resolver call was a pure preview), so cancel is
     // equivalent to "never happened".
-    m_pendingDepConfirms.remove(packageName);
+    m_pendingDepConfirms.remove(requestKey);
 }
 
 void PackageManagerBackend::requestPackageDetails(int index)

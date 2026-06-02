@@ -42,6 +42,10 @@ import Logos.Controls
 Popup {
     id: root
 
+    // Opaque key identifying the backend's pending request. Echoed back
+    // verbatim in the three signals so the backend drains the right
+    // entry — package name alone isn't unique across repos.
+    property string requestKey: ""
     property string packageName: ""
     property string displayName: ""
     property string actionLabel: "Install"
@@ -49,14 +53,15 @@ Popup {
     property string toVersion: ""
     property var    depChanges: []
 
-    signal confirmedWithDeps(string packageName)
-    signal confirmedWithoutDeps(string packageName)
-    signal cancelled(string packageName)
+    signal confirmedWithDeps(string requestKey)
+    signal confirmedWithoutDeps(string requestKey)
+    signal cancelled(string requestKey)
 
-    // Convenience entry point so callers don't have to set seven props
-    // by hand — matches the openWith* pattern the basecamp
+    // Convenience entry point so callers don't have to set the props by
+    // hand — matches the openWith* pattern the basecamp
     // ConfirmationDialog uses.
     function openWith(payload) {
+        root.requestKey   = (payload && payload.requestKey)   || ""
         root.packageName  = (payload && payload.packageName)  || ""
         root.displayName  = (payload && payload.displayName)  || root.packageName
         root.actionLabel  = (payload && payload.actionLabel)  || "Install"
@@ -101,21 +106,25 @@ Popup {
         }
 
         // Title verb uses actionLabel directly so the dialog matches
-        // the per-row ActionPill the user just clicked.
+        // the per-row ActionPill the user just clicked. qsTr template
+        // with placeholders so translators control word order / quoting.
         function titleText() {
             var ver = root.toVersion ? " v" + root.toVersion : ""
-            return root.actionLabel + " '" + root.displayName + "'" + ver + "?"
+            return qsTr("%1 '%2'%3?").arg(root.actionLabel)
+                                     .arg(root.displayName)
+                                     .arg(ver)
         }
 
-        // Body lead-in. Explains the choice in plain terms — the
-        // button labels match the verbs used here ("apply all",
-        // "install only").
+        // Body lead-in. qsTr with a plural-aware template — the count and
+        // dependency/dependencies noun are placeholders so the string is
+        // translatable as a whole rather than concatenated fragments.
         function bodyText() {
             var n = (root.depChanges || []).length
-            var noun = n === 1 ? "dependency" : "dependencies"
-            return "This " + root.actionLabel.toLowerCase()
-                 + " requires changes to " + n + " " + noun
-                 + " that aren't already on disk in a compatible version."
+            return n === 1
+                ? qsTr("This %1 requires changes to 1 dependency that isn't already on disk in a compatible version.")
+                      .arg(root.actionLabel.toLowerCase())
+                : qsTr("This %1 requires changes to %2 dependencies that aren't already on disk in a compatible version.")
+                      .arg(root.actionLabel.toLowerCase()).arg(n)
         }
 
         // Action verb cap'd for inline display in the per-row line.
@@ -243,7 +252,7 @@ Popup {
                 text: qsTr("Install with dependencies")
                 onClicked: {
                     root._explicitClose = true
-                    root.confirmedWithDeps(root.packageName)
+                    root.confirmedWithDeps(root.requestKey)
                     root.close()
                 }
             }
@@ -254,7 +263,7 @@ Popup {
                 text: qsTr("Install just '%1'").arg(root.displayName)
                 onClicked: {
                     root._explicitClose = true
-                    root.confirmedWithoutDeps(root.packageName)
+                    root.confirmedWithoutDeps(root.requestKey)
                     root.close()
                 }
             }
@@ -265,7 +274,7 @@ Popup {
                 text: qsTr("Cancel")
                 onClicked: {
                     root._explicitClose = true
-                    root.cancelled(root.packageName)
+                    root.cancelled(root.requestKey)
                     root.close()
                 }
             }
@@ -280,6 +289,6 @@ Popup {
             root._explicitClose = false
             return
         }
-        root.cancelled(root.packageName)
+        root.cancelled(root.requestKey)
     }
 }

@@ -91,14 +91,15 @@ LogosTable {
         function emitDiff() {
             const prev = d.previousSelection
             const raw = root.selectedIndices
-            // Belt-and-braces: LogosTable.rowSelectable now disables the
-            // box itself for non-runnable rows (set just below), so the
-            // user can't toggle one on. This post-hoc filter still
-            // catches the edge case where a row was selected while
-            // runnable and later flipped to NoOp/NotAvailable via a
-            // dropdown change — the box's enabled binding re-evaluates,
-            // but the row's prior tick stays in selectedIndices until
-            // we sweep it here.
+            // NOTE: bulk selection is currently OFF (selectionMode:
+            // LogosTable.None above), so the table renders no checkbox
+            // column and this path is dormant — kept intact for when the
+            // bulk "Run Actions" surface is re-enabled. When it is, also
+            // re-add a LogosTable.rowSelectable binding so non-runnable
+            // rows can't be ticked in the first place; this post-hoc
+            // filter is then the belt-and-braces sweep for a row that was
+            // ticked while runnable and later flipped to NoOp/NotAvailable
+            // via a dropdown change.
             const cleaned = raw.filter(d.isRunnableIdx)
             if (cleaned.length !== raw.length) {
                 root.selectedIndices = cleaned

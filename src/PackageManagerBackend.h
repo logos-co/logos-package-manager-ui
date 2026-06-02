@@ -48,11 +48,14 @@ public slots:
     void requestPackageDetails(int index) override;
 
     // Resolver-confirm responses. See `installDepsConfirmationRequested`
-    // in the .rep for the flow. Keyed by catalog `name` (not row index)
-    // so a refresh between click and confirm doesn't drop the dispatch.
-    void confirmInstallWithDeps(QString packageName) override;
-    void confirmInstallWithoutDeps(QString packageName) override;
-    void cancelInstallConfirm(QString packageName) override;
+    // in the .rep for the flow. The argument is the opaque requestKey
+    // from that signal (repo-scoped + name) — unique per pending
+    // request, so a second preview for the same package name (possible
+    // across repos) can't clobber the first, and a refresh between click
+    // and confirm doesn't drop the dispatch.
+    void confirmInstallWithDeps(QString requestKey) override;
+    void confirmInstallWithoutDeps(QString requestKey) override;
+    void cancelInstallConfirm(QString requestKey) override;
 
     // Forward to PackageListModel::setRowVersion. Pure proxy — the model
     // owns the clamping, mirror-into-version/hash fields, and dataChanged
@@ -286,15 +289,18 @@ private:
     };
     QHash<QString, PendingUpgradeMeta> m_pendingUpgradeByModule;
 
-    // Pending dep-confirm requests, keyed by catalog name. Populated by
+    // Pending dep-confirm requests, keyed by an opaque requestKey
+    // (repositoryUrl + '\n' + name — see depConfirmKey()). Populated by
     // runDepPreviewForAction when the resolver returns transitive
     // changes; drained by confirmInstallWith{,out}Deps /
-    // cancelInstallConfirm. Survives a model refresh between click and
-    // confirm because the key is the package's stable name, not its row
-    // index.
+    // cancelInstallConfirm. The key is repo-scoped so two rows that
+    // share a package name across repos get distinct pending entries
+    // (keying by name alone let a second preview clobber the first),
+    // and it's value-derived (not a row index) so it survives a model
+    // refresh between click and confirm.
     struct PendingDepConfirm {
         enum Action { Install = 0, Upgrade = 1, Downgrade = 2, Sidegrade = 3 };
-        QString name;            // catalog name (== key)
+        QString name;            // catalog name (for display + dispatch)
         QString moduleName;      // runtime identity (for upgrade dispatch)
         QString repositoryUrl;
         QString version;         // dropdown-selected target version

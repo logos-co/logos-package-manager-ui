@@ -187,21 +187,25 @@ Rectangle {
     // wire format.
     InstallDepsConfirm {
         id: installDepsConfirm
-        onConfirmedWithDeps:    function(name) { store.confirmInstallWithDeps(name) }
-        onConfirmedWithoutDeps: function(name) { store.confirmInstallWithoutDeps(name) }
-        onCancelled:            function(name) { store.cancelInstallConfirm(name) }
+        // The dialog echoes back the opaque requestKey (not the package
+        // name) so the backend drains the exact pending entry — package
+        // name isn't unique across repos.
+        onConfirmedWithDeps:    function(key) { store.confirmInstallWithDeps(key) }
+        onConfirmedWithoutDeps: function(key) { store.confirmInstallWithoutDeps(key) }
+        onCancelled:            function(key) { store.cancelInstallConfirm(key) }
     }
 
-    // Backend signal → dialog payload. Six-arg signature mirrors the
-    // .rep — we just pack it into the QVariantMap the dialog's
-    // openWith() consumes.
+    // Backend signal → dialog payload. Mirrors the .rep signature
+    // (requestKey first), packed into the QVariantMap openWith() wants.
     Connections {
         target: store.backend
         ignoreUnknownSignals: true
-        function onInstallDepsConfirmationRequested(packageName, displayName,
-                                                    actionLabel, fromVersion,
-                                                    toVersion, depChanges) {
+        function onInstallDepsConfirmationRequested(requestKey, packageName,
+                                                    displayName, actionLabel,
+                                                    fromVersion, toVersion,
+                                                    depChanges) {
             installDepsConfirm.openWith({
+                requestKey:  requestKey,
                 packageName: packageName,
                 displayName: displayName,
                 actionLabel: actionLabel,
@@ -259,14 +263,14 @@ Rectangle {
             RowLayout {
                 Layout.fillWidth: true
                 LogosText {
-                    text: "Package Repositories"
+                    text: qsTr("Package Repositories")
                     font.pixelSize: Theme.typography.heading
                     font.weight: Theme.typography.weightBold
                     color: Theme.palette.text
                     Layout.fillWidth: true
                 }
                 LogosButton {
-                    text: "Refresh"
+                    text: qsTr("Refresh")
                     onClicked: if (store.backend) store.backend.refreshRepositories()
                     implicitWidth: 90
                     implicitHeight: 28
