@@ -264,7 +264,7 @@ Rectangle {
                 Layout.fillWidth: true
                 LogosText {
                     text: qsTr("Package Repositories")
-                    font.pixelSize: Theme.typography.heading
+                    font.pixelSize: Theme.typography.titleText
                     font.weight: Theme.typography.weightBold
                     color: Theme.palette.text
                     Layout.fillWidth: true
@@ -369,7 +369,7 @@ Rectangle {
                                             anchors.centerIn: parent
                                             text: "default"
                                             color: Theme.palette.info
-                                            font.pixelSize: Theme.typography.tertiaryText
+                                            font.pixelSize: Theme.typography.secondaryText
                                         }
                                     }
                                     Rectangle {
@@ -385,7 +385,7 @@ Rectangle {
                                             anchors.centerIn: parent
                                             text: "disabled"
                                             color: Theme.palette.textSecondary
-                                            font.pixelSize: Theme.typography.tertiaryText
+                                            font.pixelSize: Theme.typography.secondaryText
                                         }
                                     }
                                 }
@@ -393,7 +393,7 @@ Rectangle {
                                 LogosText {
                                     text: modelData.url
                                     color: Theme.palette.textSecondary
-                                    font.pixelSize: Theme.typography.tertiaryText
+                                    font.pixelSize: Theme.typography.secondaryText
                                     Layout.fillWidth: true
                                     // Plain elide on a single line — wrap +
                                     // elide together don't sum a sane
@@ -408,7 +408,7 @@ Rectangle {
                                     visible: modelData.description && modelData.description !== ""
                                     text: modelData.description || ""
                                     color: Theme.palette.textSecondary
-                                    font.pixelSize: Theme.typography.tertiaryText
+                                    font.pixelSize: Theme.typography.secondaryText
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
                                 }
@@ -422,7 +422,7 @@ Rectangle {
                                     visible: modelData.resolveError && modelData.resolveError !== ""
                                     text: "Error: " + (modelData.resolveError || "")
                                     color: Theme.palette.warningHover
-                                    font.pixelSize: Theme.typography.tertiaryText
+                                    font.pixelSize: Theme.typography.secondaryText
                                     Layout.fillWidth: true
                                     elide: Text.ElideRight
                                 }
@@ -491,7 +491,7 @@ Rectangle {
                     LogosText {
                         text: "Add a repository (URL to logos-repo.json)"
                         color: Theme.palette.textSecondary
-                        font.pixelSize: Theme.typography.tertiaryText
+                        font.pixelSize: Theme.typography.secondaryText
                     }
 
                     RowLayout {

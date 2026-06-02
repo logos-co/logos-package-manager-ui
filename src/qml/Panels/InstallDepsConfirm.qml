@@ -140,7 +140,7 @@ Popup {
         LogosText {
             Layout.fillWidth: true
             text: d.titleText()
-            font.pixelSize: Theme.typography.heading
+            font.pixelSize: Theme.typography.titleText
             font.weight: Theme.typography.weightBold
             color: Theme.palette.text
             wrapMode: Text.WordWrap
@@ -149,7 +149,7 @@ Popup {
         LogosText {
             Layout.fillWidth: true
             text: d.bodyText()
-            font.pixelSize: Theme.typography.bodyText
+            font.pixelSize: Theme.typography.primaryText
             color: Theme.palette.textSecondary
             wrapMode: Text.WordWrap
         }
@@ -227,7 +227,7 @@ Popup {
                             return ver ? (head + "  " + ver) : head
                         }
                         color: Theme.palette.text
-                        font.pixelSize: Theme.typography.bodyText
+                        font.pixelSize: Theme.typography.primaryText
                         elide: Text.ElideMiddle
                     }
                 }

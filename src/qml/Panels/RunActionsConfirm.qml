@@ -118,7 +118,7 @@ Popup {
             Layout.fillWidth: true
             text: qsTr("Run actions on %1 selected row(s)?")
                   .arg(d.totalCount(root.summary))
-            font.pixelSize: Theme.typography.heading
+            font.pixelSize: Theme.typography.titleText
             font.weight: Theme.typography.weightBold
             color: Theme.palette.text
             wrapMode: Text.WordWrap
@@ -151,7 +151,7 @@ Popup {
                         text: d.categoryLabel(modelData,
                               Number(root.summary[modelData] || 0))
                         color: Theme.palette.text
-                        font.pixelSize: Theme.typography.bodyText
+                        font.pixelSize: Theme.typography.primaryText
                         font.weight: Theme.typography.weightBold
                         wrapMode: Text.WordWrap
                     }
@@ -170,7 +170,7 @@ Popup {
                             LogosText {
                                 text: "•"
                                 color: Theme.palette.textSecondary
-                                font.pixelSize: Theme.typography.bodyText
+                                font.pixelSize: Theme.typography.primaryText
                             }
                             LogosText {
                                 Layout.fillWidth: true
@@ -186,7 +186,7 @@ Popup {
                                     return ver ? (head + ": " + ver) : head
                                 }
                                 color: Theme.palette.text
-                                font.pixelSize: Theme.typography.bodyText
+                                font.pixelSize: Theme.typography.primaryText
                                 wrapMode: Text.WordWrap
                             }
                         }
