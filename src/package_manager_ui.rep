@@ -37,14 +37,42 @@ class PackageManagerUi
         PlatformMismatch    = 3
     }
 
+    // Per-row primary action — resolved against the row's currently
+    // selected dropdown version. Drives the Action column label + the
+    // pill's click target. Uninstall lives in the row's overflow menu,
+    // not here. See PackageTypes.h for the long comment.
+    ENUM RowAction {
+        Install      = 0,
+        Upgrade      = 1,
+        Downgrade    = 2,
+        Reinstall    = 3,
+        Retry        = 4,
+        NotAvailable = 5,
+        NoOp         = 6
+    }
+
     PROP(QStringList categories)
     PROP(int selectedCategoryIndex)
     PROP(QStringList availableTypes READONLY)
     PROP(int selectedTypeIndex)
-    PROP(QStringList releases)
-    PROP(int selectedReleaseIndex)
-    PROP(bool hasInstallableSelection READONLY)
-    PROP(bool hasUninstallableSelection READONLY)
+    // Number of selected rows whose rowAction is runnable (anything
+    // other than NoOp / NotAvailable). Drives the "Run Actions (N)"
+    // header button label + enabled state.
+    PROP(int runnableActionCount READONLY)
+    // Per-action counts among the selected rows:
+    //   { install: N, upgrade: N, downgrade: N, reinstall: N, retry: N }
+    // Keys with a zero count are omitted. Feeds the confirm-summary
+    // popup's category headers before "Run Actions" actually fires.
+    PROP(QVariantMap actionSummary READONLY)
+    // Per-row detail accompanying actionSummary. One entry per
+    // selected runnable row, in model order:
+    //   { name, displayName, action, repository, fromVersion, toVersion }
+    // The popup groups by `action` (matching the keys in
+    // actionSummary) and renders one line per row underneath the
+    // category header, so the user sees exactly which package is
+    // upgrading from which version to which. fromVersion is empty
+    // on a fresh install (no prior installed copy).
+    PROP(QVariantList actionPlanItems READONLY)
     PROP(bool isInstalling READONLY)
     PROP(bool isLoading READONLY)
 
@@ -56,11 +84,36 @@ class PackageManagerUi
     PROP(QString sortRole)
     PROP(int sortOrder)
 
+    // Repositories panel state — populated on demand by refreshRepositories().
+    // Each entry mirrors `package_downloader.listRepositories()`:
+    //   {
+    //     url, enabled, isDefault,
+    //     name, displayName, description, homepage, indexUrl,
+    //     trustedSignerDids: [...], resolveError
+    //   }
+    // When the underlying logos-repo.json fetch fails the entry still
+    // appears (URL + enabled), with `resolveError` populated so the panel
+    // can render an error chip rather than silently dropping the row.
+    PROP(QVariantList repositories READONLY)
+    PROP(bool repositoriesLoading READONLY)
+
     // Refresh releases + catalog from package_downloader. Top-bar Reload button.
     SLOT(void refreshCatalog())
-    // Bulk install every checkbox-selected installable row.
+    // Bulk: run each selected row's resolved primary action. Installs
+    // (and Retries) batch through the dependency-resolving downloader;
+    // Upgrade/Downgrade/Reinstall dispatch per-row to package_manager.
+    // Uninstall is NEVER in the plan — uninstall stays a per-row,
+    // explicit gesture via the row's overflow menu.
+    SLOT(void runSelectedActions())
+    // Legacy bulk-install slot — kept for backwards compat with any
+    // out-of-tree caller. The UI now drives bulk work through
+    // `runSelectedActions()` (which subsumes installs + version
+    // changes); this slot is unwired from the header button.
     SLOT(void installSelected())
-    // Bulk uninstall every checkbox-selected uninstallable row (single multi-uninstall request).
+    // Legacy bulk-uninstall slot — kept for backwards compat. The new
+    // UX surfaces Uninstall only per-row through the row overflow menu,
+    // since a destructive default in the bulk path was the original
+    // source of mixed-selection confusion.
     SLOT(void uninstallSelected())
     // Toggle a row's checkbox state.
     SLOT(void togglePackage(int index, bool checked))
@@ -70,12 +123,48 @@ class PackageManagerUi
     SLOT(void reloadPackage(int index))
     // Per-row uninstall.
     SLOT(void uninstall(int index))
+
+    // Pick a different version for the row at `index`. The QML version
+    // dropdown calls this on user selection; the next install picks up
+    // the row's `selectedVersionIndex` and downloads the corresponding
+    // (version, rootHash) via package_downloader.downloadPinned.
+    SLOT(void setRowVersion(int index, int versionIndex))
+
     // Per-row upgrade / downgrade / reinstall. Forwards to package_manager.requestUpgrade.
     SLOT(void upgradePackage(int index))
     SLOT(void downgradePackage(int index))
     SLOT(void sidegradePackage(int index))
+
+    // Resolver-confirm responses. When a per-row action's dep preview
+    // surfaces transitive changes (deps to add or version-shift), the
+    // backend stashes the pending request and emits
+    // `installDepsConfirmationRequested`; QML routes the user's choice
+    // back through one of these three slots. The argument is the opaque
+    // `requestKey` carried by that signal — NOT the package name. In a
+    // multi-repo catalog two rows can share a package name, so keying
+    // by name let a second pending preview clobber the first; the
+    // requestKey (repo-scoped + name) is unique per pending request.
+    SLOT(void confirmInstallWithDeps(QString requestKey))
+    SLOT(void confirmInstallWithoutDeps(QString requestKey))
+    SLOT(void cancelInstallConfirm(QString requestKey))
     // Request a row's full details; reply via packageDetailsLoaded.
     SLOT(void requestPackageDetails(int index))
+
+    // Map a backend moduleName back to its user-facing package `name` so
+    // the cascade dialog renders dependents with the same label shown in
+    // the Package column. Returns moduleName unchanged when no catalog
+    // row matches (e.g. a dependent outside the active category filter).
+    SLOT(QString displayNameForModule(QString moduleName))
+
+    // Repository management — thin wrappers around
+    // `package_downloader.{add,remove,setEnabled}Repository`. Each kicks
+    // off an async call and emits `repositoryOperationCompleted` when
+    // the underlying call returns; the panel listens to that to refresh
+    // the list and surface any error.
+    SLOT(void refreshRepositories())
+    SLOT(void addRepository(QString url))
+    SLOT(void removeRepository(QString url))
+    SLOT(void setRepositoryEnabled(QString url, bool enabled))
 
     // User-actionable error; errorType maps to the ErrorType enum.
     SIGNAL(errorOccurred(int errorType))
@@ -86,7 +175,29 @@ class PackageManagerUi
     // Backend cleared model selection programmatically (e.g. release switch);
     // QML should mirror by clearing LogosTable.selectedIndices.
     SIGNAL(selectionsCleared())
+    // Result of an `addRepository` / `removeRepository` / `setRepositoryEnabled`
+    // round-trip. `operation` is one of "add" | "remove" | "setEnabled";
+    // `error` is empty on success.
+    SIGNAL(repositoryOperationCompleted(QString operation, QString url, bool success, QString error))
     // System-originated cancel of an in-flight uninstall/upgrade (e.g. ack timeout).
     // `message` is pre-formatted for verbatim toast display.
     SIGNAL(cancellationOccurred(QString name, QString message))
+
+    // Per-row dep preview surfaced transitive changes — QML should open
+    // the dep-confirm dialog so the user picks one of three paths.
+    // Payload:
+    //   packageName  — catalog name (keys the confirm slots)
+    //   displayName  — human-friendly label (moduleName fallback to name)
+    //   actionLabel  — "Install" | "Reinstall" | "Upgrade" | "Downgrade"
+    //   fromVersion  — installed version, "" if not installed
+    //   toVersion    — dropdown-selected target version
+    //   depChanges   — [{ name, action: install|upgrade|downgrade,
+    //                     fromVersion, toVersion, repository }, ...]
+    SIGNAL(installDepsConfirmationRequested(QString requestKey,
+                                            QString packageName,
+                                            QString displayName,
+                                            QString actionLabel,
+                                            QString fromVersion,
+                                            QString toVersion,
+                                            QVariantList depChanges))
 }

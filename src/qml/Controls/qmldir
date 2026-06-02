@@ -1,3 +1,2 @@
 module Controls
-PackageActionButton 1.0 PackageActionButton.qml
-StatusBadge 1.0 StatusBadge.qml
+ActionPill 1.0 ActionPill.qml

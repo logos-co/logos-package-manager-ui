@@ -50,13 +50,15 @@ test("smoke: subtitle renders", async (app) => {
 
 test("smoke: top-bar action labels render", async (app) => {
   await waitForPmuiLoaded(app);
-  // Uninstall is gated on selection, may not always be visible.
-  await app.expectTexts(["Reload", "Install"]);
+  // Install is now a per-row action (ActionPill), not a top-bar button; the
+  // always-present top-bar buttons are Reload and Repositories.
+  await app.expectTexts(["Reload", "Repositories"]);
 });
 
 test("structure: table headers render", async (app) => {
   await waitForPmuiLoaded(app);
-  await app.expectTexts(["Package", "Type", "Description", "Status"]);
+  // The old single "Status" column was split into per-row "Version" + "Action".
+  await app.expectTexts(["Package", "Type", "Version", "Action", "Description"]);
 });
 
 test("store: exposes the documented properties with sane defaults", async (app) => {
@@ -190,8 +192,11 @@ test("paginator: applying a filter resets currentPage to 1", async (app) => {
   await waitForPmuiLoaded(app);
 
   // PagingProxy resets currentPage on source-model reset, which a filter change triggers.
-  await app.click("All");
-  await app.click("Installed");
+  // Use exact, unambiguous tab labels: bare "All" also matches the Types-sidebar
+  // entry (a different-typed clickable the click router can't drive), so drive the
+  // reset off the two unambiguous state tabs instead.
+  await app.click("Not Installed", { exact: true });
+  await app.click("Installed", { exact: true });
   await app.waitFor(
     async () => {
       const p = await storeProperty(app, "currentPage");
@@ -234,19 +239,30 @@ test("details panel: hidden by default (no selection)", async (app) => {
   }
 });
 
-test("bulk install: button is initially disabled (no selection)", async (app) => {
+// The old top-bar bulk Install/Uninstall buttons (gated on
+// hasInstallableSelection / hasUninstallableSelection) were replaced by a
+// single dependency-aware per-row action flow. Those two booleans are gone;
+// the surviving store-level invariants are runnableActionCount (drives the
+// hidden "Run Actions (N)" button) and actionSummary (the per-category
+// breakdown). With nothing selected, neither should report pending work.
+test("actions: runnableActionCount is 0 with no selection", async (app) => {
   await waitForPmuiLoaded(app);
-  const has = await storeProperty(app, "hasInstallableSelection");
-  if (has !== false) {
-    throw new Error(`hasInstallableSelection=${has} on initial load (expected false)`);
+  const count = await storeProperty(app, "runnableActionCount");
+  if (count !== 0) {
+    throw new Error(`runnableActionCount=${count} on initial load (expected 0)`);
   }
 });
 
-test("bulk uninstall: button is initially disabled (no selection)", async (app) => {
+test("actions: actionSummary reports no pending actions with no selection", async (app) => {
   await waitForPmuiLoaded(app);
-  const has = await storeProperty(app, "hasUninstallableSelection");
-  if (has !== false) {
-    throw new Error(`hasUninstallableSelection=${has} on initial load (expected false)`);
+  const summary = await storeProperty(app, "actionSummary");
+  // actionSummary carries only non-zero category counts, so an empty/zero
+  // total means nothing is queued.
+  const total = summary && typeof summary === "object"
+    ? Object.values(summary).reduce((a, b) => a + (Number(b) || 0), 0)
+    : 0;
+  if (total !== 0) {
+    throw new Error(`actionSummary totals ${total} on initial load (expected 0): ${JSON.stringify(summary)}`);
   }
 });
 

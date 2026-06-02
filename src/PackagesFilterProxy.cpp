@@ -41,6 +41,10 @@ void PackagesFilterProxy::recomputeRoleCaches()
     m_roleByName.clear();
     m_typeFilterRole    = -1;
     m_installStatusRole = -1;
+    m_repositoryNameRole        = -1;
+    m_repositoryDisplayNameRole = -1;
+    m_repositoryUrlRole         = -1;
+    m_nameRole                  = -1;
     m_searchRoles.clear();
     if (!sourceModel()) return;
 
@@ -50,6 +54,15 @@ void PackagesFilterProxy::recomputeRoleCaches()
 
     m_typeFilterRole    = m_roleByName.value(QByteArrayLiteral("type"), -1);
     m_installStatusRole = m_roleByName.value(QByteArrayLiteral("installStatus"), -1);
+
+    // Source-grouping roles. The lessThan override consults these to pin
+    // the repo order ahead of the user-selected sort role; without them
+    // resolved we fall back to plain sorting (acceptable for the unit
+    // tests that don't surface multi-repo roles).
+    m_repositoryNameRole        = m_roleByName.value(QByteArrayLiteral("repositoryName"), -1);
+    m_repositoryDisplayNameRole = m_roleByName.value(QByteArrayLiteral("repositoryDisplayName"), -1);
+    m_repositoryUrlRole         = m_roleByName.value(QByteArrayLiteral("repositoryUrl"), -1);
+    m_nameRole                  = m_roleByName.value(QByteArrayLiteral("name"), -1);
 
     for (const QByteArray& name : { QByteArrayLiteral("name"),
                                     QByteArrayLiteral("description") }) {
@@ -125,4 +138,88 @@ void PackagesFilterProxy::setSortOrderInt(int order)
     m_sortOrder = o;
     if (!m_sortRoleName.isEmpty())
         sort(0, m_sortOrder);
+}
+
+bool PackagesFilterProxy::lessThan(const QModelIndex& left,
+                                   const QModelIndex& right) const
+{
+    // Source grouping is the primary sort key — regardless of which column
+    // the user clicks to sort by. The default repository
+    // ("logos-modules-official") always groups first; user repos follow,
+    // sorted by displayName (case-insensitive). Within a group the
+    // user-selected role (sortRole()) decides ordering. This mirrors the
+    // backend's initial setPackagesFromVariantList ordering so the QML
+    // section headers (`repositoryDisplayName`) keep producing one strip
+    // per repo no matter how the user pivots the sort.
+    //
+    // Inversion note: QSortFilterProxyModel applies the active sortOrder
+    // by flipping the comparator's result for descending. That'd also
+    // flip the repo-group ordering, which the user does NOT want — repos
+    // should keep their pinned order even when the user picks descending
+    // on, say, the Package column. We compensate by inverting the
+    // group-rank result when sortOrder is descending, so the *net* effect
+    // after Qt's post-flip is the canonical group order. The within-group
+    // role comparison is left untouched and gets the expected flip.
+    if (!sourceModel())
+        return QSortFilterProxyModel::lessThan(left, right);
+
+    auto groupRank = [this](const QModelIndex& idx) -> std::pair<int, QString> {
+        // Priority 0 = the canonical default repo (its `name` in
+        // logos-repo.json is "logos-modules-official"), 1 = everyone else.
+        QString name = (m_repositoryNameRole >= 0)
+                           ? sourceModel()->data(idx, m_repositoryNameRole).toString()
+                           : QString();
+        const int pri = (name == QLatin1String("logos-modules-official")) ? 0 : 1;
+        // Within the "everyone else" bucket, use displayName as the
+        // grouping key with a name → URL fallback chain, mirroring the
+        // backend's sourceKey().
+        QString key;
+        if (m_repositoryDisplayNameRole >= 0)
+            key = sourceModel()->data(idx, m_repositoryDisplayNameRole).toString();
+        if (key.isEmpty() && !name.isEmpty())
+            key = name;
+        if (key.isEmpty() && m_repositoryUrlRole >= 0)
+            key = sourceModel()->data(idx, m_repositoryUrlRole).toString();
+        return {pri, key};
+    };
+
+    const auto ra = groupRank(left);
+    const auto rb = groupRank(right);
+
+    if (ra.first != rb.first || ra.second.compare(rb.second, Qt::CaseInsensitive) != 0) {
+        // Different repository — produce a result that, after Qt's
+        // descending-flip, still puts default repo first.
+        const bool asc = (ra.first < rb.first)
+                         || (ra.first == rb.first
+                             && ra.second.compare(rb.second, Qt::CaseInsensitive) < 0);
+        return (m_sortOrder == Qt::DescendingOrder) ? !asc : asc;
+    }
+
+    // Same source group — fall through to the user-selected sort role.
+    // When sortRole() is the default DisplayRole, QSortFilterProxyModel's
+    // default lessThan handles the QVariant comparison sensibly; for
+    // string-typed roles (`name`, `type`, etc.) it's a locale-aware
+    // string compare. Either way we want it case-insensitive for stable
+    // ordering — bypass the default and compare data() directly.
+    const int role = sortRole();
+    const QVariant la = sourceModel()->data(left,  role);
+    const QVariant ra2 = sourceModel()->data(right, role);
+
+    // Strings are by far the dominant case (package name, type,
+    // description). Fall back to QVariant's operator< for numerics.
+    if (la.userType() == QMetaType::QString && ra2.userType() == QMetaType::QString) {
+        const int c = la.toString().compare(ra2.toString(), Qt::CaseInsensitive);
+        if (c != 0) return c < 0;
+    } else if (la != ra2) {
+        return QSortFilterProxyModel::lessThan(left, right);
+    }
+
+    // Stable tiebreaker — within-group, within-role ties order by package
+    // name so the same input produces the same row order across refreshes.
+    if (m_nameRole >= 0) {
+        const QString na = sourceModel()->data(left,  m_nameRole).toString();
+        const QString nb = sourceModel()->data(right, m_nameRole).toString();
+        return na.compare(nb, Qt::CaseInsensitive) < 0;
+    }
+    return false;
 }

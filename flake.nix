@@ -4,7 +4,6 @@
   inputs = {
     logos-module-builder.url = "github:logos-co/logos-module-builder";
 
-    nix-bundle-lgx.url = "github:logos-co/nix-bundle-lgx";
     package_manager.url = "github:logos-co/logos-package-manager-module";
     package_downloader.url = "github:logos-co/logos-package-downloader-module";
   };
