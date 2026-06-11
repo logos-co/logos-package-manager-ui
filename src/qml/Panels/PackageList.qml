@@ -179,6 +179,22 @@ LogosTable {
             sortable: true
         },
         LogosTableColumn {
+            title: qsTr("Size")
+            role: "size"
+            minWidth: 80
+            preferredWidth: 90
+            sortable: true
+            cellDelegate: sizeCellComponent
+        },
+        LogosTableColumn {
+            title: qsTr("Date Updated")
+            role: "dateUpdated"
+            minWidth: 110
+            preferredWidth: 120
+            sortable: true
+            cellDelegate: dateCellComponent
+        },
+        LogosTableColumn {
             // Per-row Version dropdown. Populated from
             // rowItem.availableVersions (date-sorted, newest first); the
             // currently selected entry mirrors into VersionRole on
@@ -239,6 +255,36 @@ LogosTable {
                     root.actionRequested(rowIndex, action)
                 }
             }
+        }
+    }
+
+    Component {
+        id: sizeCellComponent
+        LogosText {
+            anchors.fill: parent
+            text: rowItem ? d.formatSize(rowItem.size) : ""
+            color: Theme.palette.text
+            font.pixelSize: Theme.typography.primaryText
+            horizontalAlignment: (columnDef.alignment & Qt.AlignHCenter) ? Text.AlignHCenter
+                               : (columnDef.alignment & Qt.AlignRight)   ? Text.AlignRight
+                               : Text.AlignLeft
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+    }
+
+    Component {
+        id: dateCellComponent
+        LogosText {
+            anchors.fill: parent
+            text: rowItem ? d.formatDate(rowItem.dateUpdated) : ""
+            color: Theme.palette.text
+            font.pixelSize: Theme.typography.primaryText
+            horizontalAlignment: (columnDef.alignment & Qt.AlignHCenter) ? Text.AlignHCenter
+                               : (columnDef.alignment & Qt.AlignRight)   ? Text.AlignRight
+                               : Text.AlignLeft
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
         }
     }
 

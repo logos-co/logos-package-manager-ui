@@ -148,6 +148,7 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     connect(m_refreshDebounceTimer, &QTimer::timeout,
             this, &PackageManagerBackend::refreshPackages);
     subscribePackageManagerRefreshEvents();
+    subscribePackageDownloaderEvents();
 
     // Filter-apply debounce — see header comment. 30ms is short enough to
     // feel instant for a single click but long enough to coalesce the
@@ -1570,6 +1571,19 @@ void PackageManagerBackend::subscribePackageManagerRefreshEvents()
     logos.package_manager.on("uiPluginUninstalled",     deselectAndArm);
 }
 
+void PackageManagerBackend::subscribePackageDownloaderEvents()
+{
+    if (!clientReady("package_downloader")) return;
+
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_downloader.on("catalogChanged", [self](const QVariantList&) {
+        if (!self) return;
+        if (self->m_refreshDebounceTimer) self->m_refreshDebounceTimer->start();
+        self->refreshRepositories();
+    });
+}
+
 void PackageManagerBackend::subscribePackageManagerUpgradeEvents()
 {
     if (!packageManagerReady()) return;
@@ -1732,13 +1746,6 @@ void PackageManagerBackend::addRepository(QString url)
             const QString err = r.value(QStringLiteral("error")).toString();
             emit self->repositoryOperationCompleted(
                 QStringLiteral("add"), u, ok, err);
-            // Refresh the repo list regardless: on success the new row
-            // should appear; on failure the user may want to see the
-            // current state to retry. Refresh the package catalog only on
-            // success — the catalog reflects the union across all enabled
-            // repos, so a new repo's packages need to be merged in.
-            self->refreshRepositories();
-            if (ok) self->refreshCatalog();
         });
 }
 
@@ -1760,9 +1767,6 @@ void PackageManagerBackend::removeRepository(QString url)
             const QString err = r.value(QStringLiteral("error")).toString();
             emit self->repositoryOperationCompleted(
                 QStringLiteral("remove"), u, ok, err);
-            self->refreshRepositories();
-            // The removed repo's packages need to drop out of the catalog.
-            if (ok) self->refreshCatalog();
         });
 }
 
@@ -1784,10 +1788,6 @@ void PackageManagerBackend::setRepositoryEnabled(QString url, bool enabled)
             const QString err = r.value(QStringLiteral("error")).toString();
             emit self->repositoryOperationCompleted(
                 QStringLiteral("setEnabled"), u, ok, err);
-            self->refreshRepositories();
-            // Toggling enabled flips a repo's contribution to the union
-            // catalog — refresh so the package list adds/removes accordingly.
-            if (ok) self->refreshCatalog();
         });
 }
 
