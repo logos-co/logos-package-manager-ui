@@ -225,6 +225,10 @@ private:
     // PMU then drives the download+install of the new one.
     void subscribePackageManagerUpgradeEvents();
 
+    // Auto-refresh the catalog + repositories popup whenever the
+    // package_downloader emits catalogChanged
+    void subscribePackageDownloaderEvents();
+
     // Handler for upgradeUninstallDone. Payload keys by moduleName; the
     // catalog `name` (used by the downloader) is resolved via PackageListModel.
     void onUpgradeUninstallDone(const QString& moduleName,
