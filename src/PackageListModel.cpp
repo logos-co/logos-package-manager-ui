@@ -23,6 +23,7 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
     switch (role) {
         case NameRole:               return package.value("name");
         case ModuleNameRole:         return package.value("moduleName");
+        case DisplayNameRole:        return package.value("displayName");
         case DescriptionRole:        return package.value("description");
         case TypeRole:               return package.value("type");
         case CategoryRole:           return package.value("category");
@@ -62,6 +63,7 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
     return {
         {NameRole,                    "name"},
         {ModuleNameRole,              "moduleName"},
+        {DisplayNameRole,             "displayName"},
         {DescriptionRole,             "description"},
         {TypeRole,                    "type"},
         {CategoryRole,                "category"},
@@ -548,11 +550,11 @@ PackageActionPlan PackageListModel::buildActionPlanForSelected() const
     auto itemFor = [](const QVariantMap& row) {
         PackageActionPlan::Item it;
         it.name        = row.value("name").toString();
-        // moduleName is the runtime identity (what package_manager
-        // uses on disk); name is the catalog identity. Prefer the
-        // friendlier moduleName for display when present, but fall
-        // back to name so the popup never shows a blank.
-        it.displayName = row.value("moduleName").toString();
+        // Prefer the row's displayName (manifest's display_name); fall back
+        // to moduleName (runtime identity) and finally to the catalog name
+        // so the popup never shows a blank.
+        it.displayName = row.value("displayName").toString();
+        if (it.displayName.isEmpty()) it.displayName = row.value("moduleName").toString();
         if (it.displayName.isEmpty()) it.displayName = it.name;
         it.repository  = row.value("repositoryDisplayName").toString();
         it.fromVersion = row.value("installedVersion").toString();

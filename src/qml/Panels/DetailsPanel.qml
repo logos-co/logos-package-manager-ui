@@ -29,8 +29,13 @@ Rectangle {
 
         function formatDetails(detail) {
             if (!detail || !detail.name) return ""
-            var out = detail.name + "\n\n"
+            var header = (detail.displayName && detail.displayName.length > 0)
+                         ? detail.displayName : detail.name
+            var out = header + "\n\n"
 
+            if (detail.name && detail.name !== header) {
+                out += qsTr("Package: %1").arg(detail.name) + "\n"
+            }
             if (detail.moduleName && detail.moduleName !== detail.name) {
                 out += qsTr("Module Name: %1").arg(detail.moduleName) + "\n"
             }

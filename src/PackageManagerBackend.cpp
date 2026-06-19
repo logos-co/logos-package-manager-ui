@@ -274,8 +274,13 @@ static QVariantMap buildPackageRow(const QVariantMap& obj,
     if (moduleName.isEmpty()) moduleName = manifest.value("name").toString();
     if (moduleName.isEmpty()) moduleName = name;
 
+    QString displayName = obj.value("displayName").toString();
+    if (displayName.isEmpty()) displayName = manifest.value("display_name").toString();
+    if (displayName.isEmpty()) displayName = moduleName;
+
     pkg["name"] = name;
     pkg["moduleName"] = moduleName;
+    pkg["displayName"] = displayName;
     // Header fields: prefer the catalog-row's lifted copy (which
     // getCatalogJson sets from versions[0].manifest), fall back to the
     // manifest itself if the catalog row didn't surface the field.

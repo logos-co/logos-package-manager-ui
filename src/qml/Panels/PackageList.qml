@@ -162,7 +162,7 @@ LogosTable {
     columns: [
         LogosTableColumn {
             title: qsTr("Package")
-            role: "name"
+            role: "displayName"
             minWidth: 200
             preferredWidth: 220
             sortable: true
