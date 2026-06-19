@@ -92,6 +92,7 @@ public:
     enum PackageRoles {
         NameRole = Qt::UserRole + 1,
         ModuleNameRole,
+        DisplayNameRole,
         DescriptionRole,
         TypeRole,
         CategoryRole,

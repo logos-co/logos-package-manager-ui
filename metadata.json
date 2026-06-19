@@ -1,5 +1,6 @@
 {
   "name": "package_manager_ui",
+  "display_name": "Package Manager",
   "version": "1.0.0",
   "type": "ui_qml",
   "category": "ui",
