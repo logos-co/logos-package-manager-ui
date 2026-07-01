@@ -456,6 +456,36 @@ QAbstractItemModel* PackageManagerBackend::packages() const
     return m_packagesPagingProxy;
 }
 
+bool PackageManagerBackend::resolveRowIdentifier(int proxyRow,
+                                                 QString* outName,
+                                                 QString* outRepoUrl) const
+{
+    if (proxyRow < 0 || !m_packagesPagingProxy || !m_packageModel) return false;
+    const QModelIndex idx = m_packagesPagingProxy->index(proxyRow, 0);
+    if (!idx.isValid()) return false;
+    const QString name = m_packagesPagingProxy
+        ->data(idx, PackageListModel::NameRole).toString();
+    const QString repoUrl = m_packagesPagingProxy
+        ->data(idx, PackageListModel::RepositoryUrlRole).toString();
+    if (name.isEmpty()) return false;
+    if (outName)    *outName    = name;
+    if (outRepoUrl) *outRepoUrl = repoUrl;
+    return true;
+}
+
+int PackageManagerBackend::findPackageRowAtProxyRow(int proxyRow) const
+{
+    QString name, repoUrl;
+    if (!resolveRowIdentifier(proxyRow, &name, &repoUrl)) return -1;
+    return m_packageModel ? m_packageModel->findPackageRow(name, repoUrl) : -1;
+}
+
+QVariantMap PackageManagerBackend::findPackageAtProxyRow(int proxyRow) const
+{
+    const int row = findPackageRowAtProxyRow(proxyRow);
+    return row >= 0 ? m_packageModel->packageAt(row) : QVariantMap();
+}
+
 void PackageManagerBackend::refreshActionSummary()
 {
     if (!m_packageModel) return;
@@ -887,14 +917,14 @@ void PackageManagerBackend::runSelectedActions()
 
 void PackageManagerBackend::installPackage(int index)
 {
-    const QVariantMap pkg = m_packageModel->packageAt(index);
+    const QVariantMap pkg = findPackageAtProxyRow(index);
     if (pkg.isEmpty()) {
-        qWarning() << "PackageManagerBackend::installPackage invalid index:" << index;
+        qWarning() << "PackageManagerBackend::installPackage no row at proxy index" << index;
         return;
     }
     const QString name = pkg.value("name").toString();
     if (name.isEmpty()) {
-        qWarning() << "PackageManagerBackend::installPackage missing name for index:" << index;
+        qWarning() << "PackageManagerBackend::installPackage missing name at proxy index" << index;
         return;
     }
     // Dep preview first — if the resolver surfaces transitive changes,
@@ -1364,10 +1394,8 @@ void PackageManagerBackend::cancelInstallConfirm(QString requestKey)
 
 void PackageManagerBackend::requestPackageDetails(int index)
 {
-    QVariantMap pkg = m_packageModel->packageAt(index);
-    if (pkg.isEmpty()) {
-        return;
-    }
+    const QVariantMap pkg = findPackageAtProxyRow(index);
+    if (pkg.isEmpty()) return;
     emit packageDetailsLoaded(pkg);
 }
 
@@ -1381,15 +1409,18 @@ void PackageManagerBackend::togglePackage(int index, bool checked)
     // the confirm-summary. The QML side also hides the checkbox for
     // these rows, but we enforce it here so out-of-band selections
     // (keyboard, scripted tests, future shift-click) can't sneak in.
-    if (checked && m_packageModel) {
-        const QVariantMap row = m_packageModel->packageAt(index);
-        const int action = row.value(QStringLiteral("rowAction"),
+    if (!m_packageModel) return;
+    const int row = findPackageRowAtProxyRow(index);
+    if (row < 0) return;
+    if (checked) {
+        const QVariantMap pkg = m_packageModel->packageAt(row);
+        const int action = pkg.value(QStringLiteral("rowAction"),
                               static_cast<int>(PackageTypes::NoOp)).toInt();
         if (action == static_cast<int>(PackageTypes::NoOp)
             || action == static_cast<int>(PackageTypes::NotAvailable))
             return;
     }
-    m_packageModel->updatePackageSelection(index, checked);
+    m_packageModel->updatePackageSelection(row, checked);
 }
 
 void PackageManagerBackend::uninstallSelected()
@@ -1429,14 +1460,14 @@ void PackageManagerBackend::uninstall(int index)
         return;
     }
 
-    const QVariantMap pkg = m_packageModel->packageAt(index);
+    const QVariantMap pkg = findPackageAtProxyRow(index);
     if (pkg.isEmpty()) {
-        qWarning() << "PackageManagerBackend::uninstall invalid index:" << index;
+        qWarning() << "PackageManagerBackend::uninstall no row at proxy index" << index;
         return;
     }
     const QString name = pkg.value("moduleName").toString();
     if (name.isEmpty()) {
-        qWarning() << "PackageManagerBackend::uninstall: row has no moduleName at index" << index;
+        qWarning() << "PackageManagerBackend::uninstall: row has no moduleName at proxy index" << index;
         return;
     }
 
@@ -1459,22 +1490,27 @@ void PackageManagerBackend::uninstall(int index)
 
 void PackageManagerBackend::upgradePackage(int index)
 {
-    requestVersionChange(index, UpgradeMode::Upgrade);
+    const int row = findPackageRowAtProxyRow(index);
+    if (row >= 0) requestVersionChange(row, UpgradeMode::Upgrade);
 }
 
 void PackageManagerBackend::downgradePackage(int index)
 {
-    requestVersionChange(index, UpgradeMode::Downgrade);
+    const int row = findPackageRowAtProxyRow(index);
+    if (row >= 0) requestVersionChange(row, UpgradeMode::Downgrade);
 }
 
 void PackageManagerBackend::sidegradePackage(int index)
 {
-    requestVersionChange(index, UpgradeMode::Sidegrade);
+    const int row = findPackageRowAtProxyRow(index);
+    if (row >= 0) requestVersionChange(row, UpgradeMode::Sidegrade);
 }
 
 void PackageManagerBackend::setRowVersion(int index, int versionIndex)
 {
-    if (m_packageModel) m_packageModel->setRowVersion(index, versionIndex);
+    if (!m_packageModel) return;
+    const int row = findPackageRowAtProxyRow(index);
+    if (row >= 0) m_packageModel->setRowVersion(row, versionIndex);
 }
 
 void PackageManagerBackend::requestVersionChange(int index, UpgradeMode mode)

@@ -194,6 +194,8 @@ public:
     PackageActionPlan buildActionPlanForSelected() const;
 
     QVariantMap packageAt(int index) const;
+    int findPackageRow(const QString& name, const QString& repositoryUrl) const;
+
     QString displayNameForModule(const QString& moduleName) const;
     void clearAllSelections();
     void clearFailedRows();

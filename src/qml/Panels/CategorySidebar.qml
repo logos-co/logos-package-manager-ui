@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 import Logos.Theme
@@ -7,7 +8,7 @@ import Logos.Controls
 // Sidebar with two filter sections: Categories on top, Types below,
 // separated by a thin divider per Figma. Each section is independent —
 // users can pick one category AND one type concurrently.
-ColumnLayout {
+Item {
     id: root
 
     property list<string> categories: []
@@ -19,69 +20,87 @@ ColumnLayout {
     signal categorySelected(int index)
     signal typeSelected(int index)
 
-    spacing: Theme.spacing.tiny
+    implicitWidth: 200
+    implicitHeight: innerCol.implicitHeight
 
-    LogosText {
-        Layout.topMargin: Theme.spacing.tiny
-        Layout.bottomMargin: Theme.spacing.tiny
-        text: qsTr("Categories")
-        font.pixelSize: Theme.typography.subtitleText
-        font.weight: Theme.typography.weightRegular
-        color: Theme.palette.text
-    }
+    Flickable {
+        id: scrollArea
+        anchors.fill: parent
+        clip: true
+        contentWidth: width
+        contentHeight: innerCol.implicitHeight
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: LogosScrollBar {
+            policy: ScrollBar.AsNeeded
+            visible: scrollArea.contentHeight > scrollArea.height
+        }
 
-    ListView {
-        id: categoriesView
-        Layout.fillWidth: true
-        Layout.preferredHeight: contentHeight
-        interactive: false
-        spacing: Theme.spacing.tiny
-        model: root.categories
-        currentIndex: root.currentIndex
+        ColumnLayout {
+            id: innerCol
+            width: scrollArea.width
+            spacing: Theme.spacing.tiny
 
-        delegate: SidebarNavItem {
-            width: ListView.view.width
-            text: modelData
-            highlighted: ListView.isCurrentItem
-            onClicked: root.categorySelected(index)
+            LogosText {
+                Layout.topMargin: Theme.spacing.tiny
+                Layout.bottomMargin: Theme.spacing.tiny
+                text: qsTr("Categories")
+                font.pixelSize: Theme.typography.subtitleText
+                font.weight: Theme.typography.weightRegular
+                color: Theme.palette.text
+            }
+
+            ListView {
+                id: categoriesView
+                Layout.fillWidth: true
+                Layout.preferredHeight: contentHeight
+                interactive: false
+                spacing: Theme.spacing.tiny
+                model: root.categories
+                currentIndex: root.currentIndex
+
+                delegate: SidebarNavItem {
+                    width: ListView.view.width
+                    text: modelData
+                    highlighted: ListView.isCurrentItem
+                    onClicked: root.categorySelected(index)
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spacing.xlarge
+                Layout.bottomMargin: Theme.spacing.xlarge
+                height: 1
+                color: Theme.palette.borderSubtle
+            }
+
+            LogosText {
+                Layout.topMargin: Theme.spacing.tiny
+                Layout.bottomMargin: Theme.spacing.tiny
+                text: qsTr("Types")
+                font.pixelSize: Theme.typography.subtitleText
+                font.weight: Theme.typography.weightRegular
+                color: Theme.palette.text
+            }
+
+            ListView {
+                id: typesView
+                Layout.fillWidth: true
+                Layout.preferredHeight: contentHeight
+                interactive: false
+                spacing: Theme.spacing.tiny
+                model: root.types
+                currentIndex: root.currentTypeIndex
+
+                delegate: SidebarNavItem {
+                    width: ListView.view.width
+                    text: modelData
+                    highlighted: ListView.isCurrentItem
+                    onClicked: root.typeSelected(index)
+                }
+            }
         }
     }
-
-    Rectangle {
-        Layout.fillWidth: true
-        Layout.topMargin: Theme.spacing.xlarge
-        Layout.bottomMargin: Theme.spacing.xlarge
-        height: 1
-        color: Theme.palette.borderSubtle
-    }
-
-    LogosText {
-        Layout.topMargin: Theme.spacing.tiny
-        Layout.bottomMargin: Theme.spacing.tiny
-        text: qsTr("Types")
-        font.pixelSize: Theme.typography.subtitleText
-        font.weight: Theme.typography.weightRegular
-        color: Theme.palette.text
-    }
-
-    ListView {
-        id: typesView
-        Layout.fillWidth: true
-        Layout.preferredHeight: contentHeight
-        interactive: false
-        spacing: Theme.spacing.tiny
-        model: root.types
-        currentIndex: root.currentTypeIndex
-
-        delegate: SidebarNavItem {
-            width: ListView.view.width
-            text: modelData
-            highlighted: ListView.isCurrentItem
-            onClicked: root.typeSelected(index)
-        }
-    }
-
-    Item { Layout.fillWidth: true; Layout.fillHeight: true }
 
     component SidebarNavItem: LogosItemDelegate {
         id: cell

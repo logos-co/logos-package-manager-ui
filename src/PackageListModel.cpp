@@ -439,6 +439,20 @@ QVariantMap PackageListModel::packageAt(int index) const
     return m_packages.at(index);
 }
 
+int PackageListModel::findPackageRow(const QString& name,
+                                     const QString& repositoryUrl) const
+{
+    if (name.isEmpty()) return -1;
+    for (int i = 0; i < m_packages.size(); ++i) {
+        const QVariantMap& pkg = m_packages.at(i);
+        if (pkg.value("name").toString() != name) continue;
+        if (repositoryUrl.isEmpty()
+            || pkg.value("repositoryUrl").toString() == repositoryUrl)
+            return i;
+    }
+    return -1;
+}
+
 QString PackageListModel::displayNameForModule(const QString& moduleName) const
 {
     if (moduleName.isEmpty()) return QString();
