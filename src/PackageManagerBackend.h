@@ -322,6 +322,9 @@ private:
     // refreshPackages() — does NOT touch releases or selected-release state.
     QTimer* m_refreshDebounceTimer = nullptr;
 
+    void finishInitialSetup(int attempt = 0);
+    bool m_initialSetupComplete = false;
+
     // Defers applyCategoryFilter / applyTypeFilter so click events return
     // immediately (instant local highlight) and rapid clicks coalesce into
     // one apply pass. Pending flags pick which apply* runs when the timer fires.

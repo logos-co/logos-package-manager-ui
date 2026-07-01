@@ -131,13 +131,6 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
         m_logosAPI = new LogosAPI("core", this);
     }
 
-    // Wire up the uninstall/upgrade cancellation event handlers. The module
-    // fires these on every cancellation path (user cancel + ack timeout +
-    // error paths); we filter the "user cancelled" reason to stay silent and
-    // surface the others as toast messages via the existing progress-update
-    // signal the QML layer already renders.
-    subscribePackageManagerCancellationEvents();
-
     // Auto-refresh the catalog on package_manager file mutations. Covers both
     // PMU- and Basecamp-initiated flows since the module is the common point.
     // Targets refreshPackages() (not refreshCatalog) because file mutations
@@ -147,8 +140,6 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     m_refreshDebounceTimer->setInterval(150);
     connect(m_refreshDebounceTimer, &QTimer::timeout,
             this, &PackageManagerBackend::refreshPackages);
-    subscribePackageManagerRefreshEvents();
-    subscribePackageDownloaderEvents();
 
     // Filter-apply debounce — see header comment. 30ms is short enough to
     // feel instant for a single click but long enough to coalesce the
@@ -170,19 +161,33 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
         if (typePending) applyTypeFilter();
     });
 
-    // Listen for upgrade-uninstall-done events so PMU can drive the
-    // download+install step automatically. Without this, confirmUpgrade only
-    // removes the old version and the user would have to manually re-install.
+    QTimer::singleShot(0, this, [this]() { finishInitialSetup(0); });
+}
+
+void PackageManagerBackend::finishInitialSetup(int attempt)
+{
+    if (m_initialSetupComplete) return;
+    if (!bothClientsReady()) {
+        constexpr int kMaxAttempts = 50;
+        if (attempt >= kMaxAttempts) {
+            qWarning() << "PackageManagerBackend: modules never became ready — "
+                          "event subscriptions and initial catalog load skipped.";
+            return;
+        }
+        QTimer::singleShot(200, this, [this, attempt]() {
+            finishInitialSetup(attempt + 1);
+        });
+        return;
+    }
+    m_initialSetupComplete = true;
+
+    subscribePackageManagerCancellationEvents();
+    subscribePackageManagerRefreshEvents();
+    subscribePackageDownloaderEvents();
     subscribePackageManagerUpgradeEvents();
 
-    // Defer the first catalog refresh until the event loop starts so
-    // ui-host can signal ready and the Package Manager tab appears
-    // immediately.
-    QTimer::singleShot(0, this, &PackageManagerBackend::refreshCatalog);
-    // Same rationale for the repositories panel: bootstrap it eagerly
-    // (one async listRepositories call) so the Manage Repositories
-    // popup isn't empty on first open.
-    QTimer::singleShot(0, this, &PackageManagerBackend::refreshRepositories);
+    refreshCatalog();
+    refreshRepositories();
 }
 
 // ─────────────────────────── file-local helpers ───────────────────────────

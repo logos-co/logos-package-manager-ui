@@ -84,7 +84,7 @@ test("store: idle state — not installing once catalog has loaded", async (app)
       const loading = await storeProperty(app, "isLoading");
       if (loading) throw new Error("still loading");
     },
-    { timeout: 10000, interval: 500, description: "catalog to finish loading" }
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
   );
   const isInstalling = await storeProperty(app, "isInstalling");
   if (isInstalling) throw new Error("isInstalling should be false at idle");
@@ -148,6 +148,15 @@ test("filter tabs: All/Installed/Not Installed labels render", async (app) => {
 
 test("filter tabs: clicking 'Not Installed' updates store.installStateFilter", async (app) => {
   await waitForPmuiLoaded(app);
+
+  // Wait for the catalog to finish loading before driving the tabs
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
 
   // Use exact matching: substring would let "Installed" match the "Not Installed"
   // tab, and the bare "All" matches the sidebar's Types entry before the tab.
