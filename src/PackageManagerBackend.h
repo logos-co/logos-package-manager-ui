@@ -246,6 +246,12 @@ private:
     bool bothClientsReady() const;        // package_downloader AND package_manager
     bool packageManagerReady() const;     // package_manager only
 
+    bool resolveRowIdentifier(int proxyRow,
+                              QString* outName,
+                              QString* outRepoUrl) const;
+    int         findPackageRowAtProxyRow(int proxyRow) const;
+    QVariantMap findPackageAtProxyRow(int proxyRow) const;
+
     // (`versionCmp` now lives in `src/RowActionResolver.h` so both this
     // file's buildPackageRow AND PackageListModel::setRowVersion can
     // call it. The per-row Action — surfaced as `rowAction` and bound
@@ -315,6 +321,9 @@ private:
     // Coalesces N rapid file-install / file-uninstall events into one
     // refreshPackages() — does NOT touch releases or selected-release state.
     QTimer* m_refreshDebounceTimer = nullptr;
+
+    void finishInitialSetup(int attempt = 0);
+    bool m_initialSetupComplete = false;
 
     // Defers applyCategoryFilter / applyTypeFilter so click events return
     // immediately (instant local highlight) and rapid clicks coalesce into

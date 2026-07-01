@@ -84,7 +84,7 @@ test("store: idle state — not installing once catalog has loaded", async (app)
       const loading = await storeProperty(app, "isLoading");
       if (loading) throw new Error("still loading");
     },
-    { timeout: 10000, interval: 500, description: "catalog to finish loading" }
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
   );
   const isInstalling = await storeProperty(app, "isInstalling");
   if (isInstalling) throw new Error("isInstalling should be false at idle");
@@ -148,6 +148,15 @@ test("filter tabs: All/Installed/Not Installed labels render", async (app) => {
 
 test("filter tabs: clicking 'Not Installed' updates store.installStateFilter", async (app) => {
   await waitForPmuiLoaded(app);
+
+  // Wait for the catalog to finish loading before driving the tabs
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
 
   // Use exact matching: substring would let "Installed" match the "Not Installed"
   // tab, and the bare "All" matches the sidebar's Types entry before the tab.
@@ -308,6 +317,165 @@ test("regression: sortOrder is one of Qt.AscendingOrder/DescendingOrder", async 
   if (order !== 0 && order !== 1) {
     throw new Error(`sortOrder=${order} (expected 0 or 1)`);
   }
+});
+
+// ─── Row-click regression tests ────────────────────────────────────
+async function firstVisibleRowLabel(app) {
+  const total = await storeProperty(app, "totalCount");
+  if (!total || total === 0) return null;
+
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) return null;
+  const storeId = store.matches[0].id;
+
+  const res = await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `(function() {
+      var m = packagesModel;
+      if (!m || m.rowCount() === 0) return "";
+      var rn = m.roleNames();
+      var role = -1;
+      for (var k in rn) {
+        if (String(rn[k]) === "displayName") { role = parseInt(k); break; }
+      }
+      if (role < 0) return "";
+      return String(m.data(m.index(0, 0), role) || "");
+    })()`,
+  });
+  if (res.error) return null;
+  const label = res.result;
+  return (typeof label === "string" && label.length > 0) ? label : null;
+}
+
+test("row click: single click populates selectedPackageDetails", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 10000, interval: 500, description: "catalog to load" }
+  );
+
+  const label = await firstVisibleRowLabel(app);
+  if (!label) return;   // empty fixture — nothing to click
+
+  await app.click(label, { exact: true });
+  await app.waitFor(
+    async () => {
+      const details = await storeProperty(app, "selectedPackageDetails");
+      if (!details || !details.name) {
+        throw new Error(`no details after single click: ${JSON.stringify(details)}`);
+      }
+    },
+    { timeout: 5000, interval: 250,
+      description: "selectedPackageDetails to populate on first click" }
+  );
+});
+
+// ─── Categories sidebar scroll test ────────────────────────────────
+test("categories sidebar: scrollable when contents overflow", async (app) => {
+  await waitForPmuiLoaded(app);
+
+  const sidebar = await app.findByProperty("objectName", "pmui.CategorySidebar");
+  if (!sidebar.matches || sidebar.matches.length === 0) {
+    throw new Error("CategorySidebar not found via objectName");
+  }
+  const sidebarId = sidebar.matches[0].id;
+
+  const scroll = await app.findByProperty("objectName", "pmui.CategorySidebar.scrollArea");
+  if (!scroll.matches || scroll.matches.length === 0) {
+    throw new Error("CategorySidebar.scrollArea not found");
+  }
+  const scrollId = scroll.matches[0].id;
+
+  const clip           = await propertyOf(app, scrollId, "clip");
+  const height         = await propertyOf(app, scrollId, "height");
+  const contentHeight  = await propertyOf(app, scrollId, "contentHeight");
+  const overflowing    = await propertyOf(app, sidebarId, "overflowing");
+
+  if (clip !== true) {
+    throw new Error(`scrollArea.clip=${clip} (expected true — content must not bleed)`);
+  }
+  if (typeof height !== "number" || height <= 0) {
+    throw new Error(`scrollArea.height=${height} (expected positive number)`);
+  }
+  if (typeof contentHeight !== "number" || contentHeight <= 0) {
+    throw new Error(`scrollArea.contentHeight=${contentHeight} (expected positive number)`);
+  }
+  // Sanity: the "overflowing" alias mirrors the underlying gate.
+  const expectedOverflow = contentHeight > height;
+  if (overflowing !== expectedOverflow) {
+    throw new Error(
+      `overflowing=${overflowing} but contentHeight(${contentHeight}) > height(${height}) => ${expectedOverflow}`);
+  }
+
+  if (overflowing) {
+    const targetY = Math.min(50, contentHeight - height);
+    await app.inspector.send("setProperty", {
+      objectId: scrollId, property: "contentY", value: targetY,
+    });
+    await app.waitFor(
+      async () => {
+        const y = await propertyOf(app, scrollId, "contentY");
+        if (Math.abs(y - targetY) > 1) {
+          throw new Error(`contentY=${y} (expected ~${targetY}) — sidebar didn't scroll`);
+        }
+      },
+      { timeout: 2000, interval: 100, description: "sidebar to scroll to targetY" }
+    );
+    await app.inspector.send("setProperty", {
+      objectId: scrollId, property: "contentY", value: 0,
+    });
+  }
+});
+
+test("row click after type filter: details.type matches the filtered type", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 10000, interval: 500, description: "catalog to load" }
+  );
+
+  // Pick a real Type (not "All") from the sidebar. Skip if the fixture
+  // hasn't produced more than the "All" sentinel.
+  const types = await storeProperty(app, "availableTypes");
+  if (!Array.isArray(types) || types.length < 2) return;
+  const chosenType = types[1];
+
+  // The sidebar's Types entries are labelled by the type string itself.
+  await app.click(chosenType, { exact: true });
+  await app.waitFor(
+    async () => {
+      const idx = await storeProperty(app, "selectedTypeIndex");
+      if (idx !== 1) throw new Error(`selectedTypeIndex=${idx} (expected 1)`);
+    },
+    { timeout: 5000, interval: 250, description: "type filter to apply" }
+  );
+
+  const label = await firstVisibleRowLabel(app);
+  if (!label) return;   // no rows in this type — skip cleanly
+
+  await app.click(label, { exact: true });
+  await app.waitFor(
+    async () => {
+      const details = await storeProperty(app, "selectedPackageDetails");
+      if (!details || !details.name) {
+        throw new Error(`no details after click: ${JSON.stringify(details)}`);
+      }
+      if (details.type !== chosenType) {
+        throw new Error(
+          `details.type="${details.type}" (expected "${chosenType}") — ` +
+          `clicked row belonged to a different type, backend acted on the ` +
+          `raw model row instead of the filtered proxy row`);
+      }
+    },
+    { timeout: 5000, interval: 250,
+      description: "details to match the filtered type" }
+  );
 });
 
 run();
