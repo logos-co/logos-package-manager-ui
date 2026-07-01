@@ -11,6 +11,7 @@ import Logos.Controls
 Item {
     id: root
 
+
     property list<string> categories: []
     property int currentIndex: 0
 
@@ -20,11 +21,17 @@ Item {
     signal categorySelected(int index)
     signal typeSelected(int index)
 
+    // Exposed for the ui-tests categories-scroll test 
+    readonly property alias scrollArea: scrollArea
+    readonly property bool overflowing: scrollArea.contentHeight > scrollArea.height
+
+    objectName: "pmui.CategorySidebar"
     implicitWidth: 200
     implicitHeight: innerCol.implicitHeight
 
     Flickable {
         id: scrollArea
+        objectName: "pmui.CategorySidebar.scrollArea"
         anchors.fill: parent
         clip: true
         contentWidth: width
