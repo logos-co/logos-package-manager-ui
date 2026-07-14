@@ -20,10 +20,18 @@
       configFile = ./metadata.json;
       flakeInputs = inputs;
 
+      # `headers`, NOT `lib` — deliberately.
+      #
+      # The module builder copies every *.so/*.dylib an external library ships
+      # into the plugin's output lib/, and ui-host then scans that directory and
+      # tries to load each file as a Qt plugin. Pointing at logos-package's
+      # `lib` output put liblgx.dylib there, ui-host failed to load it as a
+      # plugin, and the whole UI never rendered. The `headers` output ships no
+      # library at all, so there is nothing to copy.
       externalLibInputs = {
         lgx = {
           input = inputs.logos-package;
-          packages.default = "lib";
+          packages.default = "headers";
         };
       };
 
