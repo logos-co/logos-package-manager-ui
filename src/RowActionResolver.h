@@ -1,13 +1,12 @@
 #pragma once
 
-// Single source of truth for the dotted-numeric version compare AND for
-// the per-row Action resolution. The Action surfaced in the table's
-// Action column must reflect the row's CURRENTLY SELECTED dropdown
-// version, so this logic has to be reachable from two places: the
-// initial row build in PackageManagerBackend.cpp::buildPackageRow (sets
-// it against versions[0]) and PackageListModel::setRowVersion (recomputes
-// against the picked version). The previous arrangement kept versionCmp
-// file-local in PackageManagerBackend.cpp, which is exactly why
+// Single source of truth for the per-row Action resolution. The Action
+// surfaced in the table's Action column must reflect the row's CURRENTLY
+// SELECTED dropdown version, so this logic has to be reachable from two
+// places: the initial row build in PackageManagerBackend.cpp::buildPackageRow
+// (sets it against versions[0]) and PackageListModel::setRowVersion
+// (recomputes against the picked version). The previous arrangement kept
+// versionCmp file-local in PackageManagerBackend.cpp, which is exactly why
 // setRowVersion couldn't recompute — and exactly why the "Upgrade" badge
 // kept lying about installed/older picks.
 //
@@ -15,31 +14,25 @@
 // the model.
 
 #include <QString>
-#include <QStringList>
-#include <algorithm>
+
+#include <logos/semver.hpp>
 
 #include "PackageTypes.h"
 
 namespace rowaction {
 
-// Three-way dotted-numeric compare ("1.2.3" vs "1.2.10"). Missing
-// trailing components are treated as 0. Returns -1 / 0 / +1.
+// Three-way version compare. Returns -1 / 0 / +1.
 //
-// Same semantics as the previous file-local versionCmp in
-// PackageManagerBackend.cpp — moved here verbatim so both buildPackageRow
-// and setRowVersion can use it.
+// Delegates to the shared semver implementation in logos-package — the same
+// code lgx, lgpm and lgpd use. It used to split on '.' and QString::toInt()
+// each component (discarding the `ok` flag), so "0-rc1".toInt() silently
+// yielded 0 and every pre-release compared EQUAL to its own release:
+// `1.0.0-rc.1` and `1.0.0` looked identical, so an available upgrade from an
+// rc to the real release showed no Upgrade action at all. `1.0.0-rc.2` vs
+// `1.0.0-rc.10` compared equal too.
 inline int versionCmp(const QString& a, const QString& b)
 {
-    const QStringList aParts = a.split('.');
-    const QStringList bParts = b.split('.');
-    const int n = std::max(aParts.size(), bParts.size());
-    for (int i = 0; i < n; ++i) {
-        const int av = (i < aParts.size()) ? aParts[i].toInt() : 0;
-        const int bv = (i < bParts.size()) ? bParts[i].toInt() : 0;
-        if (av < bv) return -1;
-        if (av > bv) return  1;
-    }
-    return 0;
+    return logos::semver::compare(a.toStdString(), b.toStdString());
 }
 
 // Resolve the per-row primary action given (installed, selected,
