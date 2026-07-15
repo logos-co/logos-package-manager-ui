@@ -43,6 +43,11 @@
       # Copy the directories across intact instead; CMakeLists puts `vendor/` on
       # the include path. preConfigure gets the per-system resolved derivation.
       preConfigure = { externalLibs }: ''
+        # Clear any previously staged headers first, so an incremental/local
+        # build after the logos-package input changes can't leave a stale tree
+        # behind. (Nix sandbox builds start clean, but `nix develop` reuses the
+        # source dir.)
+        rm -rf vendor
         mkdir -p vendor
         cp -r ${externalLibs.lgx}/include/logos vendor/
         cp -r ${externalLibs.lgx}/include/semver vendor/
