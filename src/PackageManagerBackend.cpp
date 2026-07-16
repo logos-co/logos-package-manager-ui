@@ -1283,46 +1283,30 @@ void PackageManagerBackend::runDepPreviewForAction(const QString& packageName,
         const QString ver = m.value("version").toString();
         if (!n.isEmpty() && !ver.isEmpty()) installedByName.insert(n, ver);
     }
-    // displayName + fromVersion + action label for the signal payload.
-    const QString displayName = moduleName.isEmpty() ? packageName : moduleName;
-    const QString fromVersion = installedByName.value(displayName);
-    static const char* kActionLabels[] = {"Install", "Upgrade", "Downgrade", "Reinstall"};
-    const QString actionLabel = (actionKind >= 0 && actionKind <= 3)
-                                ? QString::fromLatin1(kActionLabels[actionKind])
-                                : QStringLiteral("Install");
-
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.resolveDependenciesAsync(depsJson, installedJson,
         [self, packageName, moduleName, repoUrl, version, actionKind,
-         displayName, fromVersion, actionLabel,
          installedByName, repoUrlToName]
         (QVariantList resolved) {
             if (!self) return;
             const QVariantList changes = self->computeDepChanges(
                 resolved, installedByName, repoUrlToName);
-            // Always confirm — even a plain single-package install with no
-            // transitive changes surfaces a confirmation (the dialog renders a
-            // simple "Install <pkg> <version>?" when `changes` is empty). This
-            // is deliberate: an install must never happen silently. When there
-            // ARE changes the same dialog lists them.
-            // Stash + ask the user. The dialog dispatches back via
-            // confirmInstallWith{,out}Deps / cancelInstallConfirm, keyed
-            // by an opaque requestKey. The key is repo-scoped so two
-            // rows sharing a package name across repos don't collide:
-            // `<repositoryUrl>\n<name>`. ('\n' can't appear in a URL or
-            // a package name, so it's an unambiguous separator.)
-            PendingDepConfirm p;
-            p.name          = packageName;
-            p.moduleName    = moduleName;
-            p.repositoryUrl = repoUrl;
-            p.version       = version;
-            p.action        = actionKind;
-            const QString requestKey = repoUrl + QLatin1Char('\n') + packageName;
-            self->m_pendingDepConfirms.insert(requestKey, p);
-            emit self->installDepsConfirmationRequested(
-                requestKey, packageName, displayName, actionLabel,
-                fromVersion, version, changes);
+            // Route the confirmation to the HOST (basecamp) instead of showing
+            // PMU's own dialog: serialise the resolved change list and hand it
+            // to the package_manager gate (requestInstall / requestUpgrade).
+            // basecamp subscribes to beforeInstall / beforeUpgrade and shows
+            // ONE dialog — titled for the action and listing these `changes` —
+            // so the user no longer sees a PMU dialog followed by a basecamp
+            // one. An install must still never happen silently, but that
+            // confirmation now lives entirely in the host. The old in-PMU
+            // InstallDepsConfirm path (installDepsConfirmationRequested +
+            // confirmInstallWith{,out}Deps) is retired and never emitted.
+            const QString changesJson = QString::fromUtf8(
+                QJsonDocument(QJsonArray::fromVariantList(changes))
+                    .toJson(QJsonDocument::Compact));
+            self->dispatchPendingAction(packageName, moduleName, repoUrl,
+                                        version, actionKind, changesJson);
         });
 }
 
@@ -1331,17 +1315,27 @@ void PackageManagerBackend::dispatchPendingAction(const QString& packageName,
                                                   const QString& repoUrl,
                                                   const QString& version,
                                                   int actionKind,
-                                                  bool includeDeps)
+                                                  const QString& depChangesJson)
 {
-    // Central dispatch for resolver-confirm responses (and the silent
-    // "no transitive changes" path). Each branch matches the per-row
-    // entry-point it'd otherwise have run, just with the includeDeps
-    // flag plumbed through. The upgrade family stashes
-    // PendingUpgradeMeta so onUpgradeUninstallDone picks up the
-    // includeDeps choice at the post-uninstall download step.
+    // Central dispatch: route the action through the package_manager gate so
+    // the HOST (basecamp) owns the confirmation dialog. `depChangesJson` is the
+    // resolved transitive change list, echoed into the module's beforeInstall /
+    // beforeUpgrade event so the host dialog can list it. On approval the module
+    // emits installApproved / upgradeUninstallDone; PMU then runs the actual
+    // download+install (onInstallApproved / onUpgradeUninstallDone). Deps are
+    // always included now — the host dialog is confirm-or-cancel, with no
+    // "just the package" split — so PendingUpgradeMeta.includeDeps stays true.
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageManagerBackend> self(this);
     switch (static_cast<PendingDepConfirm::Action>(actionKind)) {
     case PendingDepConfirm::Install:
-        installSinglePackageAsync(packageName, repoUrl, version, includeDeps);
+        logos.package_manager.requestInstallAsync(packageName, version, repoUrl, depChangesJson,
+            [self](QVariantMap result) {
+                if (!self) return;
+                if (!result.value("success", false).toBool())
+                    emit self->errorOccurred(
+                        static_cast<int>(PackageTypes::InstallationAlreadyInProgress));
+            });
         return;
     case PendingDepConfirm::Upgrade:
     case PendingDepConfirm::Downgrade:
@@ -1349,14 +1343,12 @@ void PackageManagerBackend::dispatchPendingAction(const QString& packageName,
         if (!moduleName.isEmpty()) {
             PendingUpgradeMeta meta;
             meta.repositoryUrl = repoUrl;
-            meta.includeDeps   = includeDeps;
+            meta.includeDeps   = true;
             m_pendingUpgradeByModule.insert(moduleName, meta);
         }
         const int mode = (actionKind == PendingDepConfirm::Downgrade) ? 1
                        : (actionKind == PendingDepConfirm::Sidegrade) ? 2 : 0;
-        LogosModules logos(m_logosAPI);
-        QPointer<PackageManagerBackend> self(this);
-        logos.package_manager.requestUpgradeAsync(moduleName, version, mode,
+        logos.package_manager.requestUpgradeAsync(moduleName, version, mode, depChangesJson,
             [self](QVariantMap result) {
                 if (!self) return;
                 if (!result.value("success", false).toBool())
@@ -1368,20 +1360,20 @@ void PackageManagerBackend::dispatchPendingAction(const QString& packageName,
     }
 }
 
+// Retired: the in-PMU dep-confirm dialog is superseded by the host gate — the
+// confirmation now lives in basecamp (see runDepPreviewForAction, which routes
+// straight to the package_manager gate). These .rep slots remain so the
+// generated interface stays satisfied, but the signal that drove them
+// (installDepsConfirmationRequested) is no longer emitted, so they never run.
+// Drain any stale pending entry defensively and do nothing else.
 void PackageManagerBackend::confirmInstallWithDeps(QString requestKey)
 {
-    if (!m_pendingDepConfirms.contains(requestKey)) return;
-    const PendingDepConfirm p = m_pendingDepConfirms.take(requestKey);
-    dispatchPendingAction(p.name, p.moduleName, p.repositoryUrl, p.version,
-                          p.action, /*includeDeps=*/true);
+    m_pendingDepConfirms.remove(requestKey);
 }
 
 void PackageManagerBackend::confirmInstallWithoutDeps(QString requestKey)
 {
-    if (!m_pendingDepConfirms.contains(requestKey)) return;
-    const PendingDepConfirm p = m_pendingDepConfirms.take(requestKey);
-    dispatchPendingAction(p.name, p.moduleName, p.repositoryUrl, p.version,
-                          p.action, /*includeDeps=*/false);
+    m_pendingDepConfirms.remove(requestKey);
 }
 
 void PackageManagerBackend::cancelInstallConfirm(QString requestKey)
@@ -1582,6 +1574,15 @@ void PackageManagerBackend::subscribePackageManagerCancellationEvents()
                             obj.value("releaseTag").toString(),
                             reason);
         });
+
+    // Fresh-install gate cancellation (host declined, or the ack timed out with
+    // no host listening). "user cancelled" is filtered by the helper — no toast
+    // when the user themselves clicked Cancel.
+    subscribe("installCancelled",
+        [](const QJsonObject& obj, const QString& reason) {
+            return QStringLiteral("Install of '%1' cancelled: %2")
+                       .arg(obj.value("name").toString(), reason);
+        });
 }
 
 void PackageManagerBackend::subscribePackageManagerRefreshEvents()
@@ -1644,6 +1645,30 @@ void PackageManagerBackend::subscribePackageManagerUpgradeEvents()
                                          obj.value("releaseTag").toString(),
                                          obj.value("mode").toInt());
         });
+
+    // installApproved fires after the host confirms a fresh catalog install
+    // through the gate. Payload: { name, releaseTag, repositoryUrl }. PMU runs
+    // the actual download+install — the sibling of onUpgradeUninstallDone for
+    // the no-old-version-to-remove case.
+    logos.package_manager.on("installApproved",
+        [self](const QVariantList& data) {
+            if (!self) return;
+            const QJsonObject obj = parseEventPayload(data);
+            if (obj.isEmpty()) return;
+            self->onInstallApproved(obj.value("name").toString(),
+                                    obj.value("releaseTag").toString(),
+                                    obj.value("repositoryUrl").toString());
+        });
+}
+
+void PackageManagerBackend::onInstallApproved(const QString& name,
+                                              const QString& releaseTag,
+                                              const QString& repositoryUrl)
+{
+    // Host approved the gated install — run the real download+install. The
+    // gate's whole job was the confirmation; deps are always included (the
+    // host dialog is confirm-or-cancel, no "just the package" split).
+    installSinglePackageAsync(name, repositoryUrl, releaseTag, /*includeDeps=*/true);
 }
 
 void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
