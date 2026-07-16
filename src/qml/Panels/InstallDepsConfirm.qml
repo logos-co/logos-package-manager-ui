@@ -120,6 +120,10 @@ Popup {
         // translatable as a whole rather than concatenated fragments.
         function bodyText() {
             var n = (root.depChanges || []).length
+            if (n === 0)
+                // Plain single-package confirm — no transitive changes. The
+                // title already names the package + version being installed.
+                return qsTr("No other packages need to change.")
             return n === 1
                 ? qsTr("This %1 requires changes to 1 dependency that isn't already on disk in a compatible version.")
                       .arg(root.actionLabel.toLowerCase())
@@ -249,7 +253,12 @@ Popup {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 38
                 radius: Theme.spacing.radiusLarge
-                text: qsTr("Install with dependencies")
+                // Verb tracks actionLabel (Install / Upgrade / Downgrade /
+                // Reinstall). With no dep changes the with/without-deps split is
+                // meaningless — a single plain "<action>" confirms it.
+                text: (root.depChanges || []).length > 0
+                      ? qsTr("%1 with dependencies").arg(root.actionLabel)
+                      : root.actionLabel
                 onClicked: {
                     root._explicitClose = true
                     root.confirmedWithDeps(root.requestKey)
@@ -260,7 +269,9 @@ Popup {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 38
                 radius: Theme.spacing.radiusLarge
-                text: qsTr("Install just '%1'").arg(root.displayName)
+                // Redundant when there are no transitive changes.
+                visible: (root.depChanges || []).length > 0
+                text: qsTr("%1 just '%2'").arg(root.actionLabel).arg(root.displayName)
                 onClicked: {
                     root._explicitClose = true
                     root.confirmedWithoutDeps(root.requestKey)
