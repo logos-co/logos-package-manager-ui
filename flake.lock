@@ -62408,11 +62408,11 @@
         "logos-package-downloader": "logos-package-downloader"
       },
       "locked": {
-        "lastModified": 1784209035,
-        "narHash": "sha256-rc3SHfjZDOAyFhr1ILXQtUoGP4ffKsURBFhSDJOq6Z4=",
+        "lastModified": 1784219443,
+        "narHash": "sha256-QZxsYmMinnaVuxQAb1Ee9NjWCw4iI/lrEB8g0C3rCQY=",
         "owner": "logos-co",
         "repo": "logos-package-downloader-module",
-        "rev": "02fcb4abd85fe2eef26094dd3cb46ed5585867c8",
+        "rev": "bb05a5f252cf7a4e43008d6831d01da25315e2a3",
         "type": "github"
       },
       "original": {

@@ -985,7 +985,7 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     const QString depsJson = buildDepsJson({spec});
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
-    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
+    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
         [self, packageName, includeDeps](QVariantList results) {
             if (!self) return;
             // Filter to top-level entries when the caller asked for
@@ -1152,7 +1152,7 @@ void PackageManagerBackend::installSpecs(const QList<PackageInstallSpec>& specs,
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
-    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
+    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
         [self, includeDeps](QVariantList results) {
             if (!self) return;
             if (!includeDeps) {
@@ -1301,16 +1301,11 @@ void PackageManagerBackend::runDepPreviewForAction(const QString& packageName,
             if (!self) return;
             const QVariantList changes = self->computeDepChanges(
                 resolved, installedByName, repoUrlToName);
-            if (changes.isEmpty()) {
-                // No transitive changes needed — proceed silently with
-                // the full path (includeDeps=true; resolver returns
-                // only top-level so the install is unchanged in scope
-                // from "no preview" behaviour).
-                self->dispatchPendingAction(packageName, moduleName, repoUrl,
-                                            version, actionKind,
-                                            /*includeDeps=*/true);
-                return;
-            }
+            // Always confirm — even a plain single-package install with no
+            // transitive changes surfaces a confirmation (the dialog renders a
+            // simple "Install <pkg> <version>?" when `changes` is empty). This
+            // is deliberate: an install must never happen silently. When there
+            // ARE changes the same dialog lists them.
             // Stash + ask the user. The dialog dispatches back via
             // confirmInstallWith{,out}Deps / cancelInstallConfirm, keyed
             // by an opaque requestKey. The key is repo-scoped so two
@@ -1715,7 +1710,7 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
 
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
-    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson,
+    logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
         [self, displayName, mode, includeDeps = meta.includeDeps]
         (QVariantList results) {
             if (!self) return;
