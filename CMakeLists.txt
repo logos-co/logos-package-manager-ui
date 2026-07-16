@@ -24,4 +24,8 @@ logos_module(
         src/PackagesPagingProxy.cpp
         src/PackageTypes.h
         src/PackageTypes.cpp
+    INCLUDE_DIRS
+        # Shared semver headers, staged from logos-package by the flake's
+        # preConfigure. Headers only — nothing here links liblgx.
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor
 )

@@ -4,3 +4,5 @@ result-*
 build/
 generated_code/
 logos-cpp-sdk/
+# Shared semver headers staged from logos-package by the flake's preConfigure.
+vendor/
