@@ -253,10 +253,11 @@ Popup {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 38
                 radius: Theme.spacing.radiusLarge
-                // With no dep changes, the with/without-deps split is
-                // meaningless — a single plain "<action>" confirms the install.
+                // Verb tracks actionLabel (Install / Upgrade / Downgrade /
+                // Reinstall). With no dep changes the with/without-deps split is
+                // meaningless — a single plain "<action>" confirms it.
                 text: (root.depChanges || []).length > 0
-                      ? qsTr("Install with dependencies")
+                      ? qsTr("%1 with dependencies").arg(root.actionLabel)
                       : root.actionLabel
                 onClicked: {
                     root._explicitClose = true
@@ -270,7 +271,7 @@ Popup {
                 radius: Theme.spacing.radiusLarge
                 // Redundant when there are no transitive changes.
                 visible: (root.depChanges || []).length > 0
-                text: qsTr("Install just '%1'").arg(root.displayName)
+                text: qsTr("%1 just '%2'").arg(root.actionLabel).arg(root.displayName)
                 onClicked: {
                     root._explicitClose = true
                     root.confirmedWithoutDeps(root.requestKey)
