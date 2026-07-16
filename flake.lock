@@ -62427,11 +62427,11 @@
         "logos-package-manager": "logos-package-manager_43"
       },
       "locked": {
-        "lastModified": 1784208334,
-        "narHash": "sha256-3aA1n6M1P41nMgeZmZ/s72WOY87FrxFSOIGJ4c4NfM8=",
+        "lastModified": 1784232744,
+        "narHash": "sha256-f6txL+Wnlxx5eTdu5klr8qtzvPy49dFtNo30qd74PtQ=",
         "owner": "logos-co",
         "repo": "logos-package-manager-module",
-        "rev": "439b580b115718a3b2e1637f2816b8ea6ea7decc",
+        "rev": "411ea1135780741acd243564c33840bc838729f7",
         "type": "github"
       },
       "original": {
