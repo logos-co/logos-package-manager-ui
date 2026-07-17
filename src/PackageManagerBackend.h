@@ -154,17 +154,20 @@ private:
                                 const QString& version,
                                 int actionKind);
 
-    // Run the actual install / upgrade / downgrade / sidegrade for the
-    // (packageName, repo, version) the user picked. Called from
-    // runDepPreviewForAction (no-changes path) and from
-    // confirmInstallWith{,out}Deps (post-dialog). includeDeps controls
-    // whether transitive resolver picks are installed or filtered out.
+    // Route the install / upgrade / downgrade / sidegrade the user picked
+    // through the package_manager gate (requestInstall / requestUpgrade) so
+    // the host (basecamp) owns the confirmation dialog. `depChangesJson` is the
+    // resolved transitive change list, forwarded verbatim into the gate so the
+    // host dialog can list it. Called from runDepPreviewForAction once the
+    // resolver returns. The module's installApproved / upgradeUninstallDone
+    // event then drives the actual download+install (onInstallApproved /
+    // onUpgradeUninstallDone).
     void dispatchPendingAction(const QString& packageName,
                                const QString& moduleName,
                                const QString& repoUrl,
                                const QString& version,
                                int actionKind,
-                               bool includeDeps);
+                               const QString& depChangesJson);
 
     // Compute the user-facing change list. Walks `resolved` (output of
     // package_downloader.resolveDependencies) for transitive (topLevel
@@ -234,6 +237,13 @@ private:
     void onUpgradeUninstallDone(const QString& moduleName,
                                 const QString& releaseTag,
                                 int mode);
+
+    // Handler for installApproved — the fresh-install sibling of
+    // onUpgradeUninstallDone. The host confirmed the gated catalog install;
+    // PMU runs the download+install for (name, version=releaseTag, repo).
+    void onInstallApproved(const QString& name,
+                           const QString& releaseTag,
+                           const QString& repositoryUrl);
 
     // onDone invoked with (success, errorMsg) regardless of outcome.
     void installOnePackage(const QVariantMap& dl,
