@@ -188,8 +188,8 @@ private:
                                     const QVariantList& installedPackages,
                                     const QStringList& validVariants);
 
-    // Apply the current category filter to the cached full package list and
-    // rebuild the model rows.
+    // Push categories[selectedCategoryIndex] into the filter proxy
+    // (index 0 / out-of-range / "All" → empty filter).
     void applyCategoryFilter();
 
     // Rebuild availableTypes from m_allPackagesCache ("All" + sorted distinct
@@ -286,7 +286,7 @@ private:
     LogosAPI*            m_logosAPI;
     int m_reloadGeneration = 0;
 
-    // Unfiltered catalog. Slices for category / type filters without a
+    // Unfiltered catalog. Category / type filters run on the proxy without a
     // network round-trip. Reset on each reload.
     QVariantList m_allPackagesCache;
     QVariantList m_installedPackagesCache;

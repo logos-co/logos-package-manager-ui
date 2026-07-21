@@ -30,6 +30,13 @@ void PackagesFilterProxy::setTypeFilter(const QString& type)
     invalidateFilter();
 }
 
+void PackagesFilterProxy::setCategoryFilter(const QString& category)
+{
+    if (category == m_categoryFilter) return;
+    m_categoryFilter = category;
+    invalidateFilter();
+}
+
 void PackagesFilterProxy::setSourceModel(QAbstractItemModel* sourceModel)
 {
     QSortFilterProxyModel::setSourceModel(sourceModel);
@@ -39,8 +46,9 @@ void PackagesFilterProxy::setSourceModel(QAbstractItemModel* sourceModel)
 void PackagesFilterProxy::recomputeRoleCaches()
 {
     m_roleByName.clear();
-    m_typeFilterRole    = -1;
-    m_installStatusRole = -1;
+    m_typeFilterRole     = -1;
+    m_categoryFilterRole = -1;
+    m_installStatusRole  = -1;
     m_repositoryNameRole        = -1;
     m_repositoryDisplayNameRole = -1;
     m_repositoryUrlRole         = -1;
@@ -52,8 +60,9 @@ void PackagesFilterProxy::recomputeRoleCaches()
     for (auto it = roles.cbegin(); it != roles.cend(); ++it)
         m_roleByName.insert(it.value(), it.key());
 
-    m_typeFilterRole    = m_roleByName.value(QByteArrayLiteral("type"), -1);
-    m_installStatusRole = m_roleByName.value(QByteArrayLiteral("installStatus"), -1);
+    m_typeFilterRole     = m_roleByName.value(QByteArrayLiteral("type"), -1);
+    m_categoryFilterRole = m_roleByName.value(QByteArrayLiteral("category"), -1);
+    m_installStatusRole  = m_roleByName.value(QByteArrayLiteral("installStatus"), -1);
 
     // Source-grouping roles. The lessThan override consults these to pin
     // the repo order ahead of the user-selected sort role; without them
@@ -85,6 +94,13 @@ bool PackagesFilterProxy::filterAcceptsRow(int sourceRow,
     if (!m_typeFilter.isEmpty() && m_typeFilterRole >= 0) {
         const QString rowType = sourceModel()->data(idx, m_typeFilterRole).toString();
         if (rowType.compare(m_typeFilter, Qt::CaseInsensitive) != 0)
+            return false;
+    }
+
+    if (!m_categoryFilter.isEmpty() && m_categoryFilterRole >= 0) {
+        const QString rowCategory =
+            sourceModel()->data(idx, m_categoryFilterRole).toString();
+        if (rowCategory.compare(m_categoryFilter, Qt::CaseInsensitive) != 0)
             return false;
     }
 
