@@ -69,15 +69,9 @@ public slots:
     // QAbstractItemModel interface that gets remoted.
     QString displayNameForModule(QString moduleName) override;
 
-    // Repository management — thin wrappers over package_downloader's
-    // multi-repo API. Each kicks off an async invokeRemote and emits
-    // repositoryOperationCompleted with the result. addRepository and
-    // removeRepository also trigger a refreshRepositories() so the
-    // panel's bound list re-renders without an explicit reload.
-    void refreshRepositories() override;
-    void addRepository(QString url) override;
-    void removeRepository(QString url) override;
-    void setRepositoryEnabled(QString url, bool enabled) override;
+    // Emits navigateToRepositoriesRequested() across the QtRO boundary so
+    // basecamp's ContentViews.qml can route to Settings → Repositories.
+    void navigateToRepositories() override;
 
 private:
     // Mirrors package_manager's UpgradeMode; passed to requestUpgrade as int
@@ -228,8 +222,7 @@ private:
     // PMU then drives the download+install of the new one.
     void subscribePackageManagerUpgradeEvents();
 
-    // Auto-refresh the catalog + repositories popup whenever the
-    // package_downloader emits catalogChanged
+    // Auto-refresh the catalog whenever the package_downloader emits catalogChanged.
     void subscribePackageDownloaderEvents();
 
     // Handler for upgradeUninstallDone. Payload keys by moduleName; the

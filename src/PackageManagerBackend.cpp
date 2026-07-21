@@ -183,7 +183,6 @@ void PackageManagerBackend::finishInitialSetup(int attempt)
     subscribePackageManagerUpgradeEvents();
 
     refreshCatalog();
-    refreshRepositories();
 }
 
 // ─────────────────────────── file-local helpers ───────────────────────────
@@ -1601,7 +1600,6 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
     logos.package_downloader.on("catalogChanged", [self](const QVariantList&) {
         if (!self) return;
         if (self->m_refreshDebounceTimer) self->m_refreshDebounceTimer->start();
-        self->refreshRepositories();
     });
 }
 
@@ -1748,92 +1746,12 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
 
-// ── Repositories panel ─────────────────────────────────────────────────────
-//
-// Proxies the multi-repo API exposed by package_downloader. The QML panel
-// binds to `repositories` (a QVariantList) and never speaks to the
-// downloader module directly; that keeps the panel logic on one side of
-// the QRO replica boundary.
+// ── Navigation ─────────────────────────────────────────────────────────────
 
-void PackageManagerBackend::refreshRepositories()
+void PackageManagerBackend::navigateToRepositories()
 {
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        setRepositories(QVariantList{});
-        setRepositoriesLoading(false);
-        return;
-    }
-    setRepositoriesLoading(true);
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    logos.package_downloader.listRepositoriesAsync(
-        [self](QVariantList list) {
-            if (!self) return;
-            self->setRepositories(list);
-            self->setRepositoriesLoading(false);
-        });
-}
-
-void PackageManagerBackend::addRepository(QString url)
-{
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        emit repositoryOperationCompleted(
-            QStringLiteral("add"), url, false,
-            QStringLiteral("package_downloader is not connected"));
-        return;
-    }
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    const QString u = url;  // capture by value
-    logos.package_downloader.addRepositoryAsync(
-        u, [self, u](QVariantMap r) {
-            if (!self) return;
-            const bool ok  = r.value(QStringLiteral("success")).toBool();
-            const QString err = r.value(QStringLiteral("error")).toString();
-            emit self->repositoryOperationCompleted(
-                QStringLiteral("add"), u, ok, err);
-        });
-}
-
-void PackageManagerBackend::removeRepository(QString url)
-{
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        emit repositoryOperationCompleted(
-            QStringLiteral("remove"), url, false,
-            QStringLiteral("package_downloader is not connected"));
-        return;
-    }
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    const QString u = url;
-    logos.package_downloader.removeRepositoryAsync(
-        u, [self, u](QVariantMap r) {
-            if (!self) return;
-            const bool ok  = r.value(QStringLiteral("success")).toBool();
-            const QString err = r.value(QStringLiteral("error")).toString();
-            emit self->repositoryOperationCompleted(
-                QStringLiteral("remove"), u, ok, err);
-        });
-}
-
-void PackageManagerBackend::setRepositoryEnabled(QString url, bool enabled)
-{
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        emit repositoryOperationCompleted(
-            QStringLiteral("setEnabled"), url, false,
-            QStringLiteral("package_downloader is not connected"));
-        return;
-    }
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    const QString u = url;
-    logos.package_downloader.setRepositoryEnabledAsync(
-        u, enabled, [self, u](QVariantMap r) {
-            if (!self) return;
-            const bool ok  = r.value(QStringLiteral("success")).toBool();
-            const QString err = r.value(QStringLiteral("error")).toString();
-            emit self->repositoryOperationCompleted(
-                QStringLiteral("setEnabled"), u, ok, err);
-        });
+    qDebug() << "PackageManagerBackend: navigate to repositories settings requested";
+    emit navigateToRepositoriesRequested();
 }
 
 QString PackageManagerBackend::displayNameForModule(QString moduleName)

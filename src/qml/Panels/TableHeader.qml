@@ -42,10 +42,7 @@ GridLayout {
     // signal does NOT execute anything directly.
     signal runActionsClicked()
     signal stateRequested(int state)
-    // Multi-repo: opens the "Manage Repositories" popup that the
-    // top-level PackageManager.qml hosts. The button lives here for
-    // proximity with the other bulk actions; the popup lives at the
-    // top level so it can overlay the whole package-manager area.
+    // Requests navigation to basecamp Settings → Repositories.
     signal repositoriesClicked()
 
     columnSpacing: Theme.spacing.large
