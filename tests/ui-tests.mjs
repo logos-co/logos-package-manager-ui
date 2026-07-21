@@ -51,8 +51,8 @@ test("smoke: subtitle renders", async (app) => {
 test("smoke: top-bar action labels render", async (app) => {
   await waitForPmuiLoaded(app);
   // Install is now a per-row action (ActionPill), not a top-bar button; the
-  // always-present top-bar buttons are Reload and Repositories.
-  await app.expectTexts(["Reload", "Repositories"]);
+  // always-present top-bar buttons are Reload and Manage Repositories.
+  await app.expectTexts(["Reload", "Manage Repositories"]);
 });
 
 test("structure: table headers render", async (app) => {
