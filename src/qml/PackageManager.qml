@@ -90,10 +90,51 @@ Rectangle {
                         onRepositoriesClicked: store.navigateToRepositories()
                     }
 
+                    // Empty state — shown when the catalog has no packages and
+                    // the backend is not loading (typically: no repos configured).
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: store.totalCount === 0 && !store.isLoading
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            spacing: Theme.spacing.medium
+                            width: Math.min(parent.width * 0.6, 420)
+
+                            LogosText {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("No repositories configured")
+                                font.pixelSize: Theme.typography.subtitleText
+                                font.weight: Theme.typography.weightMedium
+                                color: Theme.palette.text
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+
+                            LogosText {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.fillWidth: true
+                                text: qsTr("Add a package repository to browse and install plugins and modules.")
+                                font.pixelSize: Theme.typography.primaryText
+                                color: Theme.palette.textSecondary
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                            }
+
+                            LogosButton {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.topMargin: Theme.spacing.small
+                                text: qsTr("Manage Repositories")
+                                onClicked: store.navigateToRepositories()
+                            }
+                        }
+                    }
+
                     PackageList {
                         id: packageList
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        visible: store.totalCount > 0 || store.isLoading
 
                         packagesModel: store.packagesModel
                         sortRole: store.sortRole
