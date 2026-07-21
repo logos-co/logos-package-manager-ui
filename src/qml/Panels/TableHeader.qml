@@ -5,7 +5,6 @@ import Logos.Theme
 import Logos.Controls
 import Logos.Icons
 
-import icons
 
 // Table header: title "Packages" + install-state tabs on the left,
 // reload icon / Manage Repositories / "Run Actions (N)" on the right.
@@ -73,7 +72,7 @@ GridLayout {
                     root.stateRequested(currentIndex)
             }
 
-            LogosTabButton { text: qsTr("All"); iconSource: PackageIcons.pages }
+            LogosTabButton { text: qsTr("All"); iconSource: LogosIcons.pages }
             LogosTabButton { text: qsTr("Installed") }
             LogosTabButton { text: qsTr("Not Installed") }
         }
