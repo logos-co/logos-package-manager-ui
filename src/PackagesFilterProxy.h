@@ -29,6 +29,11 @@ public:
     void setTypeFilter(const QString& type);
     QString typeFilter() const { return m_typeFilter; }
 
+    // Package "category" filter — case-insensitive match against the row's
+    // `category` role. Empty string = no category filter.
+    void setCategoryFilter(const QString& category);
+    QString categoryFilter() const { return m_categoryFilter; }
+
     // Sort by role *name* — looks up the role int via roleNames() and
     // delegates to QSortFilterProxyModel::sort.
     void setSortRoleByName(const QString& roleName);
@@ -59,14 +64,16 @@ private:
     QString           m_searchText;
     int               m_installStateFilter = 0;
     QString           m_typeFilter;
+    QString           m_categoryFilter;
     QString           m_sortRoleName;
     Qt::SortOrder     m_sortOrder = Qt::AscendingOrder;
 
     // Single source of truth for "role-name string → role-int" lookups.
     // Populated once per setSourceModel; consulted by filter / sort paths.
     QHash<QByteArray, int> m_roleByName;
-    int m_typeFilterRole    = -1;
-    int m_installStatusRole = -1;
+    int m_typeFilterRole     = -1;
+    int m_categoryFilterRole = -1;
+    int m_installStatusRole  = -1;
     int m_repositoryNameRole        = -1;
     int m_repositoryDisplayNameRole = -1;
     int m_repositoryUrlRole         = -1;

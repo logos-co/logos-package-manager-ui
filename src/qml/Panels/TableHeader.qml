@@ -3,11 +3,11 @@ import QtQuick.Layouts
 
 import Logos.Theme
 import Logos.Controls
+import Logos.Icons
 
-import icons
 
 // Table header: title "Packages" + install-state tabs on the left,
-// Reload / Repositories / "Run Actions (N)" on the right.
+// reload icon / Manage Repositories / "Run Actions (N)" on the right.
 //
 // The bulk button is now ONE: Install + Uninstall got merged into a
 // single user-chosen-per-row plan that fires from "Run Actions". The
@@ -41,10 +41,7 @@ GridLayout {
     // signal does NOT execute anything directly.
     signal runActionsClicked()
     signal stateRequested(int state)
-    // Multi-repo: opens the "Manage Repositories" popup that the
-    // top-level PackageManager.qml hosts. The button lives here for
-    // proximity with the other bulk actions; the popup lives at the
-    // top level so it can overlay the whole package-manager area.
+    // Requests navigation to basecamp Settings → Repositories.
     signal repositoriesClicked()
 
     columnSpacing: Theme.spacing.large
@@ -75,7 +72,7 @@ GridLayout {
                     root.stateRequested(currentIndex)
             }
 
-            LogosTabButton { text: qsTr("All"); iconSource: PackageIcons.pages }
+            LogosTabButton { text: qsTr("All"); iconSource: LogosIcons.pages }
             LogosTabButton { text: qsTr("Installed") }
             LogosTabButton { text: qsTr("Not Installed") }
         }
@@ -91,17 +88,18 @@ GridLayout {
 
         Item { Layout.fillWidth: root.columns === 2 }
 
-        // The global "Release" picker that used to live here is removed —
-        // each row now carries its own Version dropdown.
-
         LogosButton {
+            id: reloadBtn
+            objectName: "pmui.reloadButton"
             Layout.fillWidth: true
             Layout.minimumWidth: 80
-            Layout.preferredWidth: 100
-            Layout.maximumWidth: 100
+            Layout.preferredWidth: 130
+            Layout.maximumWidth: 130
             Layout.preferredHeight: 40
             radius: Theme.spacing.radiusLarge
             text: qsTr("Reload")
+            icon.source:LogosIcons.refresh
+            icon.size: 18
             enabled: !root.isInstalling && !root.isLoading
             onClicked: root.reloadClicked()
         }
@@ -110,11 +108,11 @@ GridLayout {
         LogosButton {
             Layout.fillWidth: true
             Layout.minimumWidth: 100
-            Layout.preferredWidth: 130
-            Layout.maximumWidth: 130
+            Layout.preferredWidth: 150
+            Layout.maximumWidth: 150
             Layout.preferredHeight: 40
             radius: Theme.spacing.radiusLarge
-            text: qsTr("Repositories")
+            text: qsTr("Manage Repositories")
             enabled: !root.isInstalling
             onClicked: root.repositoriesClicked()
         }

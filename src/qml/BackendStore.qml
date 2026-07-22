@@ -41,12 +41,6 @@ QtObject {
     readonly property list<string> availableTypes: backend ? backend.availableTypes : ["All"]
     readonly property int selectedTypeIndex: backend ? backend.selectedTypeIndex : 0
 
-    // Multi-repo: list mirrors package_downloader.listRepositories().
-    // Refreshed eagerly by the backend on construction + after every
-    // add/remove/setEnabled call.
-    readonly property var repositories: backend ? backend.repositories : []
-    readonly property bool repositoriesLoading: backend ? backend.repositoriesLoading : false
-
     readonly property alias selectedPackageDetails: d.selectedPackageDetails
 
     property QtObject d: QtObject {
@@ -121,10 +115,9 @@ QtObject {
     function setSortRole(role)           { if (backend) backend.pushSortRole(role) }
     function setSortOrder(order)         { if (backend) backend.pushSortOrder(order) }
 
-    // Multi-repo intents.
+    // Per-row version change.
     function setRowVersion(i, vi)            { if (backend) backend.setRowVersion(i, vi) }
-    function refreshRepositories()           { if (backend) backend.refreshRepositories() }
-    function addRepository(url)              { if (backend) backend.addRepository(url) }
-    function removeRepository(url)           { if (backend) backend.removeRepository(url) }
-    function setRepositoryEnabled(url, on)   { if (backend) backend.setRepositoryEnabled(url, on) }
+
+    // Request basecamp to navigate to Settings → Repositories.
+    function navigateToRepositories()        { if (backend) backend.navigateToRepositories() }
 }

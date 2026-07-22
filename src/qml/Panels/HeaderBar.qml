@@ -21,14 +21,14 @@ RowLayout {
         LogosText {
             text: qsTr("Package Manager")
             font.pixelSize: Theme.typography.pageTitleText
-            font.weight: Theme.typography.weightRegular
+            font.weight: Theme.typography.weightBold
             color: Theme.palette.text
         }
 
         LogosText {
             text: qsTr("Manage your plugins and packages.")
-            font.pixelSize: Theme.typography.subtitleText
-            color: Theme.colors.getColor(Theme.palette.text, 0.6)
+            font.pixelSize: Theme.typography.primaryText
+            color: Theme.palette.textSecondary
         }
     }
 

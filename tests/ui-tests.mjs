@@ -51,8 +51,8 @@ test("smoke: subtitle renders", async (app) => {
 test("smoke: top-bar action labels render", async (app) => {
   await waitForPmuiLoaded(app);
   // Install is now a per-row action (ActionPill), not a top-bar button; the
-  // always-present top-bar buttons are Reload and Repositories.
-  await app.expectTexts(["Reload", "Repositories"]);
+  // always-present top-bar buttons are Reload and Manage Repositories.
+  await app.expectTexts(["Reload", "Manage Repositories"]);
 });
 
 test("structure: table headers render", async (app) => {
@@ -274,6 +274,56 @@ test("actions: actionSummary reports no pending actions with no selection", asyn
     throw new Error(`actionSummary totals ${total} on initial load (expected 0): ${JSON.stringify(summary)}`);
   }
 });
+
+test("empty state: 'No repositories configured' message visible when catalog is empty", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+
+  const totalBefore = await storeProperty(app, "totalCount");
+
+  if (totalBefore === 0) {
+    // Fixture already has no packages — empty state should be visible immediately.
+    await app.expectTexts(["No repositories configured"]);
+    await app.expectTexts(["Add a package repository to browse and install plugins and modules."]);
+    return;
+  }
+
+  // Force 0 results via an unmatchable search string, then assert the
+  // empty state renders and the package list is hidden.
+  const search = await app.findByProperty("placeholderText", "Search packages…");
+  if (!search.matches || search.matches.length === 0) throw new Error("Search bar not found");
+  const searchId = search.matches[0].id;
+
+  await app.inspector.send("setProperty", {
+    objectId: searchId, property: "text", value: "nothing-matches-this-zzzzz",
+  });
+  await app.waitFor(
+    async () => {
+      const t = await storeProperty(app, "totalCount");
+      if (t !== 0) throw new Error(`expected 0 results, got ${t}`);
+    },
+    { timeout: 5000, interval: 250, description: "filter to return 0 results" }
+  );
+
+  await app.expectTexts(["No repositories configured"]);
+  await app.expectTexts(["Add a package repository to browse and install plugins and modules."]);
+
+  // Restore so later tests start from a clean state.
+  await app.inspector.send("setProperty", { objectId: searchId, property: "text", value: "" });
+  await app.waitFor(
+    async () => {
+      const t = await storeProperty(app, "totalCount");
+      if (t !== totalBefore) throw new Error(`expected ${totalBefore} after clear, got ${t}`);
+    },
+    { timeout: 5000, interval: 250, description: "totalCount to recover" }
+  );
+}, { skip: ["offscreen"] });
 
 test("reload: clicking the reload button triggers a refresh cycle", async (app) => {
   await waitForPmuiLoaded(app);

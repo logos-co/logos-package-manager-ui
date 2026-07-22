@@ -108,13 +108,11 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     connect(m_packagesPagingProxy, &PackagesPagingProxy::currentPageChanged,
             this, [this](int page) { setCurrentPage(page); });
 
-    // Category change is a pure client-side filter over the cached full
-    // catalog — no network round-trip. refreshPackages() already fetches
-    // every package (category="All"); applyCategoryFilter() slices that
-    // cache down to the user's pick and rebuilds the model rows. Routed
-    // through the filter-apply debounce so a click feels instant in QML
-    // (the click handler returns immediately) and rapid clicks coalesce
-    // into a single applyCategoryFilter pass.
+    // Category / type changes are pure client-side proxy filters over the
+    // cached full catalog — no network round-trip and no model rebuild.
+    // Routed through the filter-apply debounce so a click feels instant in
+    // QML (the click handler returns immediately) and rapid clicks coalesce
+    // into a single apply pass.
     connect(this, &PackageManagerUiSimpleSource::selectedCategoryIndexChanged,
             this, [this]() {
                 m_categoryFilterPending = true;
@@ -149,10 +147,8 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     m_filterApplyTimer->setSingleShot(true);
     m_filterApplyTimer->setInterval(30);
     connect(m_filterApplyTimer, &QTimer::timeout, this, [this]() {
-        // Apply only what's actually pending — a type-only click should
-        // not trigger a full applyCategoryFilter (which calls setPackages
-        // and resets the model). Reset the flags first so a re-entrant
-        // signal during apply* doesn't cause a double-fire.
+        // Apply only what's actually pending. Reset the flags first so a
+        // re-entrant signal during apply* doesn't cause a double-fire.
         const bool catPending  = m_categoryFilterPending;
         const bool typePending = m_typeFilterPending;
         m_categoryFilterPending = false;
@@ -187,7 +183,6 @@ void PackageManagerBackend::finishInitialSetup(int attempt)
     subscribePackageManagerUpgradeEvents();
 
     refreshCatalog();
-    refreshRepositories();
 }
 
 // ─────────────────────────── file-local helpers ───────────────────────────
@@ -565,8 +560,8 @@ void PackageManagerBackend::refreshPackages()
 
     // One round-trip for the catalog (union across every enabled
     // repository); category list is derived from it client-side so
-    // subsequent category clicks slice m_allPackagesCache without a
-    // network round-trip.
+    // subsequent category clicks only update the proxy filter — no
+    // network round-trip and no model rebuild.
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.getCatalogAsync([self, currentGeneration](QVariantList packagesArray) {
@@ -598,9 +593,9 @@ void PackageManagerBackend::refreshPackages()
                 self->m_allPackagesCache = packagesArray;
                 self->m_installedPackagesCache = installedPackages;
                 self->m_validVariantsCache = validVariants;
-                // Type list is derived from the unfiltered cache, not from
-                // the category-filtered slice, so switching categories
-                // doesn't make Type tabs flicker in/out.
+                self->setPackagesFromVariantList(self->m_allPackagesCache,
+                                                 self->m_installedPackagesCache,
+                                                 self->m_validVariantsCache);
                 self->recomputeAvailableTypes();
                 self->applyCategoryFilter();
                 self->setIsLoading(false);
@@ -611,32 +606,15 @@ void PackageManagerBackend::refreshPackages()
 
 void PackageManagerBackend::applyCategoryFilter()
 {
-    // Pure client-side filter over m_allPackagesCache. No network work.
-    // When the selected index is out of bounds (e.g. release change
-    // surfaced a different categories list), .value(idx, "All") falls
-    // back to the "no filter" pseudo-category.
-    //
-    // Comparisons are case-insensitive: category labels originate from
-    // package manifests authored by many hands, so "Networking" /
-    // "networking" / "NETWORKING" should all bucket together rather
-    // than silently diverge based on capitalisation. The "All" sentinel
-    // is matched case-insensitively for the same reason.
-    const QString selected = categories().value(selectedCategoryIndex(), QStringLiteral("All"));
-
-    QVariantList filtered;
-    if (selected.isEmpty() || selected.compare(QStringLiteral("All"), Qt::CaseInsensitive) == 0) {
-        filtered = m_allPackagesCache;
-    } else {
-        filtered.reserve(m_allPackagesCache.size());
-        for (const QVariant& v : m_allPackagesCache) {
-            const QVariantMap pkg = v.toMap();
-            if (pkg.value("category").toString().compare(selected, Qt::CaseInsensitive) == 0) {
-                filtered.append(v);
-            }
-        }
+    if (!m_packagesFilterProxy) return;
+    const QString selected =
+        categories().value(selectedCategoryIndex(), QStringLiteral("All"));
+    QString categoryFilter;
+    if (!selected.isEmpty()
+        && selected.compare(QStringLiteral("All"), Qt::CaseInsensitive) != 0) {
+        categoryFilter = selected;
     }
-
-    setPackagesFromVariantList(filtered, m_installedPackagesCache, m_validVariantsCache);
+    m_packagesFilterProxy->setCategoryFilter(categoryFilter);
 }
 
 void PackageManagerBackend::recomputeAvailableTypes()
@@ -1622,7 +1600,6 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
     logos.package_downloader.on("catalogChanged", [self](const QVariantList&) {
         if (!self) return;
         if (self->m_refreshDebounceTimer) self->m_refreshDebounceTimer->start();
-        self->refreshRepositories();
     });
 }
 
@@ -1769,92 +1746,12 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
 
-// ── Repositories panel ─────────────────────────────────────────────────────
-//
-// Proxies the multi-repo API exposed by package_downloader. The QML panel
-// binds to `repositories` (a QVariantList) and never speaks to the
-// downloader module directly; that keeps the panel logic on one side of
-// the QRO replica boundary.
+// ── Navigation ─────────────────────────────────────────────────────────────
 
-void PackageManagerBackend::refreshRepositories()
+void PackageManagerBackend::navigateToRepositories()
 {
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        setRepositories(QVariantList{});
-        setRepositoriesLoading(false);
-        return;
-    }
-    setRepositoriesLoading(true);
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    logos.package_downloader.listRepositoriesAsync(
-        [self](QVariantList list) {
-            if (!self) return;
-            self->setRepositories(list);
-            self->setRepositoriesLoading(false);
-        });
-}
-
-void PackageManagerBackend::addRepository(QString url)
-{
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        emit repositoryOperationCompleted(
-            QStringLiteral("add"), url, false,
-            QStringLiteral("package_downloader is not connected"));
-        return;
-    }
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    const QString u = url;  // capture by value
-    logos.package_downloader.addRepositoryAsync(
-        u, [self, u](QVariantMap r) {
-            if (!self) return;
-            const bool ok  = r.value(QStringLiteral("success")).toBool();
-            const QString err = r.value(QStringLiteral("error")).toString();
-            emit self->repositoryOperationCompleted(
-                QStringLiteral("add"), u, ok, err);
-        });
-}
-
-void PackageManagerBackend::removeRepository(QString url)
-{
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        emit repositoryOperationCompleted(
-            QStringLiteral("remove"), url, false,
-            QStringLiteral("package_downloader is not connected"));
-        return;
-    }
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    const QString u = url;
-    logos.package_downloader.removeRepositoryAsync(
-        u, [self, u](QVariantMap r) {
-            if (!self) return;
-            const bool ok  = r.value(QStringLiteral("success")).toBool();
-            const QString err = r.value(QStringLiteral("error")).toString();
-            emit self->repositoryOperationCompleted(
-                QStringLiteral("remove"), u, ok, err);
-        });
-}
-
-void PackageManagerBackend::setRepositoryEnabled(QString url, bool enabled)
-{
-    if (!m_logosAPI || !m_logosAPI->getClient("package_downloader")->isConnected()) {
-        emit repositoryOperationCompleted(
-            QStringLiteral("setEnabled"), url, false,
-            QStringLiteral("package_downloader is not connected"));
-        return;
-    }
-    LogosModules logos(m_logosAPI);
-    QPointer<PackageManagerBackend> self(this);
-    const QString u = url;
-    logos.package_downloader.setRepositoryEnabledAsync(
-        u, enabled, [self, u](QVariantMap r) {
-            if (!self) return;
-            const bool ok  = r.value(QStringLiteral("success")).toBool();
-            const QString err = r.value(QStringLiteral("error")).toString();
-            emit self->repositoryOperationCompleted(
-                QStringLiteral("setEnabled"), u, ok, err);
-        });
+    qDebug() << "PackageManagerBackend: navigate to repositories settings requested";
+    emit navigateToRepositoriesRequested();
 }
 
 QString PackageManagerBackend::displayNameForModule(QString moduleName)

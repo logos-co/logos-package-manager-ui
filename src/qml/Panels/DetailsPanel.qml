@@ -4,6 +4,7 @@ import QtQuick.Layouts
 
 import Logos.Theme
 import Logos.Controls
+import Logos.Icons
 import Logos.PackageManagerUi 1.0
 
 // Right-side details panel
@@ -107,11 +108,11 @@ Rectangle {
                 color: Theme.palette.text
             }
 
-            LogosButton {
-                Layout.preferredWidth: 28
-                Layout.preferredHeight: 28
-                radius: Theme.spacing.radiusPill
-                text: "✕"
+            LogosIconButton {
+                iconSource: LogosIcons.close
+                size: 28
+                iconSize: 14
+                iconColor: Theme.palette.textTertiary
                 onClicked: root.closeRequested()
             }
         }
