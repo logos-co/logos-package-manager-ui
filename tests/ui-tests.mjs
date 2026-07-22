@@ -69,12 +69,15 @@ test("store: exposes the documented properties with sane defaults", async (app) 
   const isInstalling = await storeProperty(app, "isInstalling");
   const pageSize = await storeProperty(app, "pageSize");
   const currentPage = await storeProperty(app, "currentPage");
+  const repositoryCount = await storeProperty(app, "repositoryCount");
 
   if (typeof isLoading   !== "boolean") throw new Error(`isLoading not boolean: ${isLoading}`);
   if (typeof isInstalling !== "boolean") throw new Error(`isInstalling not boolean: ${isInstalling}`);
   if (typeof pageSize    !== "number")  throw new Error(`pageSize not number: ${pageSize}`);
   if (typeof currentPage !== "number")  throw new Error(`currentPage not number: ${currentPage}`);
+  if (typeof repositoryCount !== "number") throw new Error(`repositoryCount not number: ${repositoryCount}`);
   if (currentPage < 1) throw new Error(`currentPage must be 1-indexed, got ${currentPage}`);
+  if (repositoryCount < 0) throw new Error(`repositoryCount must be >= 0, got ${repositoryCount}`);
 });
 
 test("store: idle state — not installing once catalog has loaded", async (app) => {
@@ -275,7 +278,7 @@ test("actions: actionSummary reports no pending actions with no selection", asyn
   }
 });
 
-test("empty state: 'No repositories configured' message visible when catalog is empty", async (app) => {
+test("empty state: keyed on repositoryCount, not filtered totalCount", async (app) => {
   await waitForPmuiLoaded(app);
   await app.waitFor(
     async () => {
@@ -285,17 +288,23 @@ test("empty state: 'No repositories configured' message visible when catalog is 
     { timeout: 20000, interval: 500, description: "catalog to finish loading" }
   );
 
-  const totalBefore = await storeProperty(app, "totalCount");
+  const repoCount = await storeProperty(app, "repositoryCount");
+  if (typeof repoCount !== "number") {
+    throw new Error(`repositoryCount type=${typeof repoCount}`);
+  }
 
-  if (totalBefore === 0) {
-    // Fixture already has no packages — empty state should be visible immediately.
+  if (repoCount === 0) {
+    // No repos configured — empty state is the correct surface.
     await app.expectTexts(["No repositories configured"]);
     await app.expectTexts(["Add a package repository to browse and install plugins and modules."]);
     return;
   }
 
-  // Force 0 results via an unmatchable search string, then assert the
-  // empty state renders and the package list is hidden.
+  // Repos are configured. Filtering the package list to 0 must NOT show
+  // the "No repositories configured" empty state (that used to flicker
+  // on category / type / install-state switches because it keyed off
+  // filtered totalCount).
+  const totalBefore = await storeProperty(app, "totalCount");
   const search = await app.findByProperty("placeholderText", "Search packages…");
   if (!search.matches || search.matches.length === 0) throw new Error("Search bar not found");
   const searchId = search.matches[0].id;
@@ -311,8 +320,12 @@ test("empty state: 'No repositories configured' message visible when catalog is 
     { timeout: 5000, interval: 250, description: "filter to return 0 results" }
   );
 
-  await app.expectTexts(["No repositories configured"]);
-  await app.expectTexts(["Add a package repository to browse and install plugins and modules."]);
+  const repoAfterFilter = await storeProperty(app, "repositoryCount");
+  if (repoAfterFilter === 0) {
+    throw new Error("repositoryCount must stay > 0 when only the package filter is empty");
+  }
+  // Package list chrome stays mounted (empty state would hide it).
+  await app.expectTexts(["Package", "Type", "Version", "Action", "Description"]);
 
   // Restore so later tests start from a clean state.
   await app.inspector.send("setProperty", { objectId: searchId, property: "text", value: "" });
@@ -323,6 +336,32 @@ test("empty state: 'No repositories configured' message visible when catalog is 
     },
     { timeout: 5000, interval: 250, description: "totalCount to recover" }
   );
+}, { skip: ["offscreen"] });
+
+test("empty state: install-state filter switches do not drop repositoryCount", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+
+  const repoBefore = await storeProperty(app, "repositoryCount");
+  if (repoBefore === 0) return; // nothing to regress against
+
+  await app.click("Not Installed", { exact: true });
+  await app.click("Installed", { exact: true });
+  await app.click("All", { exact: true });
+
+  const repoAfter = await storeProperty(app, "repositoryCount");
+  if (repoAfter !== repoBefore) {
+    throw new Error(
+      `repositoryCount changed during install-state filter switches: before=${repoBefore} after=${repoAfter}`
+    );
+  }
+  await app.expectTexts(["Package", "Type", "Version", "Action", "Description"]);
 }, { skip: ["offscreen"] });
 
 test("reload: clicking the reload button triggers a refresh cycle", async (app) => {

@@ -64,6 +64,7 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     setSortRole(QString());
     setSortOrder(Qt::AscendingOrder);
     setTotalCount(0);
+    setRepositoryCount(0);
 
     // Stack: raw model → filter+sort proxy → paging proxy. ui-host's
     // dynamic remoting scans backend Q_PROPERTYs of QAbstractItemModel*
@@ -598,7 +599,14 @@ void PackageManagerBackend::refreshPackages()
                                                  self->m_validVariantsCache);
                 self->recomputeAvailableTypes();
                 self->applyCategoryFilter();
-                self->setIsLoading(false);
+
+                LogosModules logos4(self->m_logosAPI);
+                logos4.package_downloader.listRepositoriesAsync(
+                    [self, currentGeneration](QVariantList repos) {
+                        if (!self || self->m_reloadGeneration != currentGeneration) return;
+                        self->setRepositoryCount(repos.size());
+                        self->setIsLoading(false);
+                    });
             });
         });
     });
