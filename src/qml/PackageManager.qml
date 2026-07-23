@@ -90,12 +90,11 @@ Rectangle {
                         onRepositoriesClicked: store.navigateToRepositories()
                     }
 
-                    // Empty state — shown when the catalog has no packages and
-                    // the backend is not loading (typically: no repos configured).
+                    // Empty state — only when no repositories are configured.
                     Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: store.totalCount === 0 && !store.isLoading
+                        visible: store.repositoryCount === 0 && !store.isLoading
 
                         ColumnLayout {
                             anchors.centerIn: parent
@@ -134,7 +133,7 @@ Rectangle {
                         id: packageList
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: store.totalCount > 0 || store.isLoading
+                        visible: store.repositoryCount > 0 || store.isLoading
 
                         packagesModel: store.packagesModel
                         sortRole: store.sortRole

@@ -81,6 +81,7 @@ class PackageManagerUi
     PROP(int pageSize)
     PROP(int currentPage)
     PROP(int totalCount READONLY)
+    PROP(int repositoryCount READONLY)
     PROP(QString sortRole)
     PROP(int sortOrder)
 
