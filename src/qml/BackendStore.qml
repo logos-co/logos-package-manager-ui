@@ -11,7 +11,9 @@ QtObject {
     // ─── Properties: inputs (overridable for tests) ───
     property string moduleName: "package_manager_ui"
     property var backend: logos.module(moduleName)
-    property var packagesModel: logos.model(moduleName, "packages")
+    // prefetch=true: the replica caches all roles for the page before it
+    // reports populated, so rows never render empty
+    property var packagesModel: logos.model(moduleName, "packages", true)
 
     // ─── Properties: reactive state (bind from views) ───
     readonly property bool isInstalling: backend ? backend.isInstalling : false
