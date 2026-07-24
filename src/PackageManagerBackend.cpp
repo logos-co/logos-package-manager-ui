@@ -263,7 +263,20 @@ static QVariantMap buildPackageRow(const QVariantMap& obj,
     QVariantMap pkg;
     const QString name = obj.value("name").toString();
 
-    const QVariantList rawVersions = obj.value("versions").toList();
+    // Order versions by SemVer (highest first), not by the catalog's newest-by-`releasedAt`
+    // order. Otherwise a build published later but with a LOWER semver — e.g. a devnet
+    // sentinel `0.0.999` released after `0.2.0` — sorts to `versions[0]` and becomes the
+    // default selection, silently installing the wrong/devnet build
+    // (logos-co/logos-package-manager-ui#54). This also fixes the dropdown order and the
+    // `selectedVersionIndex = 0` default below, since both derive from `rawVersions`.
+    // Uses the shared `versionCmp` (logos::semver::compare); SemVer is now enforced upstream.
+    QVariantList rawVersions = obj.value("versions").toList();
+    std::sort(rawVersions.begin(), rawVersions.end(),
+              [](const QVariant& a, const QVariant& b) {
+                  const QString va = a.toMap().value("manifest").toMap().value("version").toString();
+                  const QString vb = b.toMap().value("manifest").toMap().value("version").toString();
+                  return versionCmp(va, vb) > 0; // descending: highest semver first
+              });
     QVariantMap selectedVersion;
     if (!rawVersions.isEmpty()) selectedVersion = rawVersions.first().toMap();
 
