@@ -90,11 +90,15 @@ Rectangle {
                         onRepositoriesClicked: store.navigateToRepositories()
                     }
 
-                    // Empty state — only when no repositories are configured.
+                    // Empty state — only when no repositories are configured
+                    // AND there are no local-only installed packages to fall
+                    // back on. Any local rows keep the list rendered.
                     Item {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: store.repositoryCount === 0 && !store.isLoading
+                        visible: store.repositoryCount === 0
+                                 && store.totalCount === 0
+                                 && !store.isLoading
 
                         ColumnLayout {
                             anchors.centerIn: parent
@@ -133,7 +137,9 @@ Rectangle {
                         id: packageList
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: store.repositoryCount > 0 || store.isLoading
+                        visible: store.repositoryCount > 0
+                                 || store.totalCount > 0
+                                 || store.isLoading
 
                         packagesModel: store.packagesModel
                         sortRole: store.sortRole

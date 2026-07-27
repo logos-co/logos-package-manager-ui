@@ -567,4 +567,112 @@ test("row click after type filter: details.type matches the filtered type", asyn
   );
 });
 
+// ─── "Local" synthetic-repo tests ──────────────────────────────────
+// PackageManagerBackend synthesises rows for installed packages the
+// catalog doesn't publish. They carry repositoryUrl="" and
+// repositoryDisplayName="Local", and sit in a section tier below all
+// real repos. These tests assert the invariant without requiring a
+// specific test fixture — they inspect the model in place.
+
+async function inspectPackagesModel(app, expression) {
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) return null;
+  const storeId = store.matches[0].id;
+
+  const res = await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `(function() {
+      var m = packagesModel;
+      if (!m) return null;
+      ${expression}
+    })()`,
+  });
+  if (res.error) return null;
+  return res.result;
+}
+
+test("local section: any empty-repositoryUrl row is labelled 'local'", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+
+  // Walk the whole packagesModel via QML JS — cheap even at fixture scale.
+  // For every row where repositoryUrl is empty, the row MUST carry the
+  // canonical lowercase "local" repositoryDisplayName. If no such row
+  // exists the fixture has no local-only packages and the invariant is
+  // vacuously satisfied (test returns "ok").
+  const outcome = await inspectPackagesModel(app, `
+    var rn = m.roleNames();
+    var urlRole = -1, dispRole = -1, nameRole = -1;
+    for (var k in rn) {
+      var s = String(rn[k]);
+      if      (s === "repositoryUrl")         urlRole  = parseInt(k);
+      else if (s === "repositoryDisplayName") dispRole = parseInt(k);
+      else if (s === "moduleName")            nameRole = parseInt(k);
+    }
+    if (urlRole < 0 || dispRole < 0) return "missing-roles";
+    var offenders = [];
+    for (var i = 0; i < m.rowCount(); ++i) {
+      var idx = m.index(i, 0);
+      var url = String(m.data(idx, urlRole) || "");
+      if (url.length > 0) continue;
+      var disp = String(m.data(idx, dispRole) || "");
+      if (disp !== "local") {
+        var name = nameRole >= 0 ? String(m.data(idx, nameRole) || "") : "";
+        offenders.push(name + ": '" + disp + "'");
+      }
+    }
+    return offenders.length === 0 ? "ok" : "bad:" + offenders.join(",");
+  `);
+
+  if (outcome === null) throw new Error("could not inspect packagesModel");
+  if (outcome === "missing-roles") {
+    throw new Error("packagesModel is missing repositoryUrl / repositoryDisplayName roles");
+  }
+  if (outcome !== "ok") {
+    throw new Error("empty-repo rows with wrong repositoryDisplayName: " + outcome);
+  }
+});
+
+test("local section: 'No repositories configured' hides when local rows exist", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+
+  const repoCount = await storeProperty(app, "repositoryCount");
+  const totalCount = await storeProperty(app, "totalCount");
+  // Empty-state CTA is visible iff repositoryCount === 0 AND totalCount === 0.
+  // Any other combination should not surface the CTA — verify by absence of
+  // its subtitle text.
+  if (repoCount > 0 || totalCount > 0) {
+    const res = await app.findByProperty(
+      "text", "Add a package repository to browse and install plugins and modules.");
+    if (res.matches && res.matches.length > 0) {
+      for (const m of res.matches) {
+        try {
+          const visible = await propertyOf(app, m.id, "visible");
+          if (visible) {
+            throw new Error(
+              `empty-state CTA visible with repositoryCount=${repoCount} ` +
+              `and totalCount=${totalCount} — expected hidden`);
+          }
+        } catch (e) {
+          if (String(e.message).startsWith("empty-state CTA")) throw e;
+          // property missing on that match — skip
+        }
+      }
+    }
+  }
+});
+
 run();

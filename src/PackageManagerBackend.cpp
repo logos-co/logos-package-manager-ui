@@ -433,6 +433,57 @@ static QVariantMap buildPackageRow(const QVariantMap& obj,
     return pkg;
 }
 
+// Build a "Local" row for an installed package that has no catalog entry.
+// Rendered under a synthetic "Local" section that sits below all real repos
+// in the grouped list. No versions/rowAction — the row exists only to show
+// that the module is present on disk; upgrades reappear when a repo publishes
+// it.
+static QVariantMap buildLocalPackageRow(const QVariantMap& installed)
+{
+    QVariantMap pkg;
+    const QString name = installed.value("name").toString();
+    QString moduleName = installed.value("moduleName").toString();
+    if (moduleName.isEmpty()) moduleName = name;
+
+    QString displayName = installed.value("displayName").toString();
+    if (displayName.isEmpty()) displayName = moduleName;
+
+    pkg["name"]        = name;
+    pkg["moduleName"]  = moduleName;
+    pkg["displayName"] = displayName;
+    pkg["description"] = installed.value("description").toString();
+    pkg["type"]        = installed.value("type").toString();
+    // Preserve the module's own category (Networking / Chat / …). "Local" is
+    // a repo-slot label, not a category — the Categories sidebar reflects
+    // real values, not this synthetic bucket.
+    pkg["category"]    = installed.value("category").toString();
+    pkg["size"]        = 0;
+    pkg["dateUpdated"] = QString();
+
+    pkg["repositoryUrl"]         = QString();
+    pkg["repositoryName"]        = QStringLiteral("local");
+    pkg["repositoryDisplayName"] = QStringLiteral("local");
+
+    pkg["availableVersions"]    = QVariantList{};
+    pkg["selectedVersionIndex"] = 0;
+
+    const QString installedVersion = installed.value("version").toString();
+    const QString installedHash    = installed.value("hashes").toMap().value("root").toString();
+    pkg["version"]          = installedVersion;
+    pkg["hash"]             = installedHash;
+    pkg["installedVersion"] = installedVersion;
+    pkg["installedHash"]    = installedHash;
+    pkg["installType"]      = installed.value("installType").toString();
+    pkg["installStatus"]    = static_cast<int>(PackageTypes::Installed);
+    pkg["errorMessage"]     = QString();
+    pkg["isVariantAvailable"]   = true;
+    pkg["notAvailableReason"]   = static_cast<int>(PackageTypes::Available);
+    pkg["rowAction"]        = static_cast<int>(PackageTypes::NoOp);
+    pkg["updateAvailable"]  = false;
+    pkg["dependencies"]     = QStringList{};
+    return pkg;
+}
+
 // ──────────────────── connection-readiness predicates ────────────────────
 
 bool PackageManagerBackend::clientReady(const char* moduleName) const
@@ -702,16 +753,38 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
     }
 
     QList<QVariantMap> packages;
-    packages.reserve(packagesArray.size());
-    for (const QVariant& value : packagesArray)
-        packages.append(buildPackageRow(value.toMap(), installedByName, validVariants));
+    packages.reserve(packagesArray.size() + installedPackages.size());
+    QSet<QString> catalogModuleNames;
+    catalogModuleNames.reserve(packagesArray.size());
+    for (const QVariant& value : packagesArray) {
+        const QVariantMap row = buildPackageRow(value.toMap(), installedByName, validVariants);
+        catalogModuleNames.insert(row.value("moduleName").toString());
+        packages.append(row);
+    }
+
+    // Any USER-installed package the catalog doesn't publish gets a
+    // synthetic "Local"-repo row so it still shows up in the grouped list.
+    // Embedded packages ship inside the app bundle — they're already
+    // discoverable through the built-in module surface, so listing them
+    // under Local would double-count and mislead.
+    for (const QVariant& val : installedPackages) {
+        const QVariantMap inst = val.toMap();
+        const QString name = inst.value("name").toString();
+        if (name.isEmpty()) continue;
+        if (inst.value("installType").toString() != QLatin1String("user")) continue;
+        QString moduleName = inst.value("moduleName").toString();
+        if (moduleName.isEmpty()) moduleName = name;
+        if (catalogModuleNames.contains(moduleName)) continue;
+        packages.append(buildLocalPackageRow(inst));
+    }
 
     // Group rows by source: the hardcoded default repository always
     // comes first (priority 0), then any user-added repos sorted by
-    // their canonical name (priority 1). Within each source rows sort
-    // by package name. The QML uses `isFirstOfSource` (tagged below)
-    // to draw a section header above the first row of each group
-    // instead of a per-row Source column.
+    // their canonical name (priority 1), and the synthetic "local"
+    // bucket last (priority 2). Within each source rows sort by
+    // package name. The QML uses `isFirstOfSource` (tagged below) to
+    // draw a section header above the first row of each group instead
+    // of a per-row Source column.
     //
     // Default-repo identification is by `repositoryName` matching the
     // canonical "logos-modules-official" string baked into logos-repo.json
@@ -720,7 +793,9 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
     // lib AND this match string need to update together.
     auto sourcePriority = [](const QVariantMap& row) -> int {
         const QString n = row.value("repositoryName").toString();
-        return n == QLatin1String("logos-modules-official") ? 0 : 1;
+        if (n == QLatin1String("logos-modules-official")) return 0;
+        if (n == QLatin1String("local")) return 2;
+        return 1;
     };
     auto sourceKey = [](const QVariantMap& row) -> QString {
         // Use displayName when present (human label like "Logos Official"),
