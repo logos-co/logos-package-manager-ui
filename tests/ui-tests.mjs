@@ -758,12 +758,14 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
   if (!roleIds || typeof roleIds !== "object") {
     throw new Error(`packageRoleIds unavailable on BackendStore: ${JSON.stringify(roleIds)}`);
   }
-  const sizeRole = roleIds.size;
-  const dateRole = roleIds.dateUpdated;
-  const avRole   = roleIds.availableVersions;
-  if (typeof sizeRole !== "number" || typeof dateRole !== "number" || typeof avRole !== "number") {
+  const sizeRole   = roleIds.size;
+  const dateRole   = roleIds.dateUpdated;
+  const avRole     = roleIds.availableVersions;
+  const selVerRole = roleIds.selectedVersionIndex;
+  if (typeof sizeRole !== "number" || typeof dateRole !== "number" ||
+      typeof avRole !== "number" || typeof selVerRole !== "number") {
     throw new Error(
-      "packageRoleIds is missing size / dateUpdated / availableVersions: " +
+      "packageRoleIds missing size/dateUpdated/availableVersions/selectedVersionIndex: " +
       JSON.stringify(roleIds));
   }
 
@@ -777,24 +779,29 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
     return res.result;
   }
 
-  // Find a row with ≥2 available versions, and read its (size, date) at
-  // picks 0 and 1. Returns a compact string so we don't hit the QJSValue
-  // opacity issue on nested objects.
+  // Pick a row where availableVersions[0] and [1] DIFFER in size or date.
+  // Skipping fixture-degenerate rows here — where two versions coincidentally
+  // share both fields — is what makes this test non-flaky: the assertion at
+  // the bottom can only prove the wiring works if the picked row's versions
+  // produce observably different values.
   const initial = await evalOnStore(`(function() {
       var m = packagesModel;
       if (!m) return "no-model";
-      var SIZE = ${sizeRole}, DATE = ${dateRole}, AV = ${avRole};
+      var AV = ${avRole}, SIZE = ${sizeRole}, DATE = ${dateRole};
       for (var i = 0; i < m.rowCount(); ++i) {
         var idx = m.index(i, 0);
         var av  = m.data(idx, AV);
         if (!av || av.length < 2) continue;
+        var v0 = av[0] || {}, v1 = av[1] || {};
+        if (String(v0.size) === String(v1.size) &&
+            String(v0.releasedAt) === String(v1.releasedAt)) continue;
         return String(i) + "|" +
                String(m.data(idx, SIZE) || "") + "|" +
                String(m.data(idx, DATE) || "");
       }
-      return "no-multi-version";
+      return "no-usable-row";
     })()`, "initial sample");
-  if (initial === "no-multi-version") return;   // no multi-version row in this fixture
+  if (initial === "no-usable-row") return;   // no distinguishable multi-version row
   if (typeof initial !== "string" || initial.startsWith("no-")) {
     throw new Error(`could not sample initial state: ${initial}`);
   }
@@ -804,6 +811,13 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
   // Move the picker to index 1.
   await evalOnStore(`setRowVersion(${rowIndex}, 1)`, "setRowVersion(1)");
 
+  await app.waitFor(async () => {
+    const idx = await evalOnStore(
+      `packagesModel.data(packagesModel.index(${rowIndex}, 0), ${selVerRole})`,
+      "selectedVersionIndex poll");
+    if (Number(idx) !== 1) throw new Error(`selectedVersionIndex=${idx}, expected 1`);
+  }, { timeout: 5000, interval: 100, description: "setRowVersion to propagate to replica" });
+
   const after = await evalOnStore(`(function() {
       var m = packagesModel;
       var idx = m.index(${rowIndex}, 0);
@@ -812,17 +826,16 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
     })()`, "post-switch sample");
   const [size1, date1] = String(after).split("|");
 
-  // Restore.
+  // Restore (fire-and-forget — no other test observes this row's picker).
   await evalOnStore(`setRowVersion(${rowIndex}, 0)`, "setRowVersion(0)");
 
-  // At least one must have changed. Publishers could theoretically set
-  // identical size AND releasedAt on two versions, but that's essentially
-  // never the case for a real catalog — a failure here almost certainly
-  // means the wiring is broken.
+  // The write landed (gate above proved it). If size/date still match v0
+  // the row-build → applyPickedSizeAndDate wiring is broken.
   if (size0 === size1 && date0 === date1) {
     throw new Error(
-      `size AND date unchanged after picker move — wiring broken? ` +
-      `size=${size0}, date=${date0}`);
+      `setRowVersion landed (selectedVersionIndex=1) but size/date didn't ` +
+      `update: v0 size=${size0} date=${date0} · v1 read-back size=${size1} date=${date1}. ` +
+      `applyPickedSizeAndDate in PackageListModel::setRowVersion is broken.`);
   }
 });
 
