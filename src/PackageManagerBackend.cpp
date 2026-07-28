@@ -66,6 +66,14 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
     setTotalCount(0);
     setRepositoryCount(0);
 
+    {
+        QVariantMap ids;
+        const auto rn = m_packageModel->roleNames();
+        for (auto it = rn.cbegin(); it != rn.cend(); ++it)
+            ids.insert(QString::fromUtf8(it.value()), int(it.key()));
+        setPackageRoleIds(ids);
+    }
+
     // Stack: raw model → filter+sort proxy → paging proxy. ui-host's
     // dynamic remoting scans backend Q_PROPERTYs of QAbstractItemModel*
     // and remotes each — exposing the *paging* proxy as `packages`

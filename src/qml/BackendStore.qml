@@ -14,6 +14,12 @@ QtObject {
     // prefetch=true: the replica caches all roles for the page before it
     // reports populated, so rows never render empty
     property var packagesModel: logos.model(moduleName, "packages", true)
+    readonly property var packageRoleIds: {
+        var out = ({})
+        var src = backend ? backend.packageRoleIds : null
+        if (src) for (var k in src) out[k] = src[k]
+        return out
+    }
 
     // ─── Properties: reactive state (bind from views) ───
     readonly property bool isInstalling: backend ? backend.isInstalling : false

@@ -617,6 +617,33 @@ async function resetStoreFilters(app) {
   });
 }
 
+// Read the backend-exposed role name → int map for `packagesModel`. Must
+// go through `evaluate` + JSON — `getProperties` on a `property var` /
+// QVariantMap yields the string "<QJSValue>" instead of the map's
+// entries (QML's property system wraps var-typed values in QJSValue,
+// which the inspector can't unpack). Evaluate returns actual JS values,
+// and JSON.stringify guarantees a plain-string transport.
+async function fetchPackageRoleIds(app) {
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) {
+    throw new Error("BackendStore not found");
+  }
+  const storeId = store.matches[0].id;
+  const res = await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `(function() {
+      var src = backend ? backend.packageRoleIds : null;
+      if (!src) return "";
+      var out = {};
+      for (var k in src) out[k] = src[k];
+      return JSON.stringify(out);
+    })()`,
+  });
+  if (res.error) throw new Error(`packageRoleIds eval threw: ${res.error}`);
+  if (!res.result || typeof res.result !== "string") return null;
+  try { return JSON.parse(res.result); } catch (_) { return null; }
+}
+
 test("local section: any empty-repositoryUrl row is labelled 'local'", async (app) => {
   await waitForPmuiLoaded(app);
   await app.waitFor(
@@ -626,10 +653,25 @@ test("local section: any empty-repositoryUrl row is labelled 'local'", async (ap
     },
     { timeout: 20000, interval: 500, description: "catalog to finish loading" }
   );
-  // Previous tests may have narrowed the model with a type/category pick;
-  // walking the replica in that state can leave roles uncached and trip
-  // the eval. Reset filters first.
   await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  // roleNames() isn't Q_INVOKABLE on QAbstractItemModel, so we resolve
+  // role IDs via the backend PROP exposed on the store as packageRoleIds
+  // (populated once at backend construction from PackageListModel::roleNames).
+  const roleIds = await fetchPackageRoleIds(app);
+  if (!roleIds || typeof roleIds !== "object") {
+    throw new Error(`packageRoleIds unavailable on BackendStore: ${JSON.stringify(roleIds)}`);
+  }
+  const urlRole  = roleIds.repositoryUrl;
+  const dispRole = roleIds.repositoryDisplayName;
+  const nameRole = roleIds.moduleName;
+  if (typeof urlRole !== "number" || typeof dispRole !== "number") {
+    throw new Error(
+      "packageRoleIds is missing repositoryUrl / repositoryDisplayName: " +
+      JSON.stringify(roleIds));
+  }
 
   // Walk the whole packagesModel via QML JS — cheap even at fixture scale.
   // For every row where repositoryUrl is empty, the row MUST carry the
@@ -637,23 +679,15 @@ test("local section: any empty-repositoryUrl row is labelled 'local'", async (ap
   // exists the fixture has no local-only packages and the invariant is
   // vacuously satisfied (test returns "ok").
   const outcome = await inspectPackagesModel(app, `
-    var rn = m.roleNames();
-    var urlRole = -1, dispRole = -1, nameRole = -1;
-    for (var k in rn) {
-      var s = String(rn[k]);
-      if      (s === "repositoryUrl")         urlRole  = parseInt(k);
-      else if (s === "repositoryDisplayName") dispRole = parseInt(k);
-      else if (s === "moduleName")            nameRole = parseInt(k);
-    }
-    if (urlRole < 0 || dispRole < 0) return "missing-roles";
+    var URL = ${urlRole}, DISP = ${dispRole}, NAME = ${typeof nameRole === "number" ? nameRole : -1};
     var offenders = [];
     for (var i = 0; i < m.rowCount(); ++i) {
       var idx = m.index(i, 0);
-      var url = String(m.data(idx, urlRole) || "");
+      var url = String(m.data(idx, URL) || "");
       if (url.length > 0) continue;
-      var disp = String(m.data(idx, dispRole) || "");
+      var disp = String(m.data(idx, DISP) || "");
       if (disp !== "local") {
-        var name = nameRole >= 0 ? String(m.data(idx, nameRole) || "") : "";
+        var name = NAME >= 0 ? String(m.data(idx, NAME) || "") : "";
         offenders.push(name + ": '" + disp + "'");
       }
     }
@@ -661,9 +695,6 @@ test("local section: any empty-repositoryUrl row is labelled 'local'", async (ap
   `);
 
   if (outcome === null) throw new Error("packagesModel is null on BackendStore");
-  if (outcome === "missing-roles") {
-    throw new Error("packagesModel is missing repositoryUrl / repositoryDisplayName roles");
-  }
   if (outcome !== "ok") {
     throw new Error("empty-repo rows with wrong repositoryDisplayName: " + outcome);
   }
@@ -717,9 +748,24 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
     async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
     { timeout: 20000, interval: 500, description: "catalog to finish loading" }
   );
-  // See note on the local-section test — a filtered replica can leave
-  // roles uncached and make the eval throw.
+  // Empty fixture on offscreen CI → skip. Same reason as the local-section
+  // test above.
   await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  const roleIds = await fetchPackageRoleIds(app);
+  if (!roleIds || typeof roleIds !== "object") {
+    throw new Error(`packageRoleIds unavailable on BackendStore: ${JSON.stringify(roleIds)}`);
+  }
+  const sizeRole = roleIds.size;
+  const dateRole = roleIds.dateUpdated;
+  const avRole   = roleIds.availableVersions;
+  if (typeof sizeRole !== "number" || typeof dateRole !== "number" || typeof avRole !== "number") {
+    throw new Error(
+      "packageRoleIds is missing size / dateUpdated / availableVersions: " +
+      JSON.stringify(roleIds));
+  }
 
   const store = await app.findByProperty("objectName", "pmui.BackendStore");
   if (!store.matches || store.matches.length === 0) throw new Error("BackendStore not found");
@@ -737,27 +783,19 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
   const initial = await evalOnStore(`(function() {
       var m = packagesModel;
       if (!m) return "no-model";
-      var rn = m.roleNames();
-      var sizeRole = -1, dateRole = -1, avRole = -1;
-      for (var k in rn) {
-        var s = String(rn[k]);
-        if      (s === "size")              sizeRole = parseInt(k);
-        else if (s === "dateUpdated")       dateRole = parseInt(k);
-        else if (s === "availableVersions") avRole   = parseInt(k);
-      }
-      if (sizeRole < 0 || dateRole < 0 || avRole < 0) return "missing-roles";
+      var SIZE = ${sizeRole}, DATE = ${dateRole}, AV = ${avRole};
       for (var i = 0; i < m.rowCount(); ++i) {
         var idx = m.index(i, 0);
-        var av  = m.data(idx, avRole);
+        var av  = m.data(idx, AV);
         if (!av || av.length < 2) continue;
         return String(i) + "|" +
-               String(m.data(idx, sizeRole) || "") + "|" +
-               String(m.data(idx, dateRole) || "");
+               String(m.data(idx, SIZE) || "") + "|" +
+               String(m.data(idx, DATE) || "");
       }
       return "no-multi-version";
     })()`, "initial sample");
-  if (initial === "no-multi-version") return;   // fixture has no multi-version package
-  if (typeof initial !== "string" || initial.startsWith("no-") || initial === "missing-roles") {
+  if (initial === "no-multi-version") return;   // no multi-version row in this fixture
+  if (typeof initial !== "string" || initial.startsWith("no-")) {
     throw new Error(`could not sample initial state: ${initial}`);
   }
   const [rowStr, size0, date0] = initial.split("|");
@@ -768,16 +806,9 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
 
   const after = await evalOnStore(`(function() {
       var m = packagesModel;
-      var rn = m.roleNames();
-      var sizeRole = -1, dateRole = -1;
-      for (var k in rn) {
-        var s = String(rn[k]);
-        if      (s === "size")        sizeRole = parseInt(k);
-        else if (s === "dateUpdated") dateRole = parseInt(k);
-      }
       var idx = m.index(${rowIndex}, 0);
-      return String(m.data(idx, sizeRole) || "") + "|" +
-             String(m.data(idx, dateRole) || "");
+      return String(m.data(idx, ${sizeRole}) || "") + "|" +
+             String(m.data(idx, ${dateRole}) || "");
     })()`, "post-switch sample");
   const [size1, date1] = String(after).split("|");
 

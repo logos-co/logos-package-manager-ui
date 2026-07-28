@@ -85,6 +85,14 @@ class PackageManagerUi
     PROP(QString sortRole)
     PROP(int sortOrder)
 
+    // Role name → int role ID map for the `packages` model.
+    // QAbstractItemModel::roleNames() isn't Q_INVOKABLE, so JS-side callers
+    // (tests via the QML inspector, any declarative walker) can't reach it
+    // on the QAbstractItemModelReplica. Exposing the resolved map here lets
+    // callers do `packagesModel.data(m.index(row, 0), packageRoleIds.size)`.
+    // Populated once at backend construction.
+    PROP(QVariantMap packageRoleIds READONLY)
+
     // Refresh releases + catalog from package_downloader. Top-bar Reload button.
     SLOT(void refreshCatalog())
     // Bulk: run each selected row's resolved primary action. Installs
