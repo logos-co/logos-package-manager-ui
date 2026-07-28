@@ -98,8 +98,8 @@ GridLayout {
             Layout.preferredHeight: 40
             radius: Theme.spacing.radiusLarge
             text: qsTr("Reload")
-            icon.source:LogosIcons.refresh
-            icon.size: 18
+            leadingIcon.source: LogosIcons.refresh
+            leadingIcon.size: 18
             enabled: !root.isInstalling && !root.isLoading
             onClicked: root.reloadClicked()
         }

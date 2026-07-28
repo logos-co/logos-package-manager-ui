@@ -294,8 +294,6 @@ static QVariantMap buildPackageRow(const QVariantMap& obj,
     pkg["category"] = obj.value("category").toString().isEmpty()
                       ? manifest.value("category").toString()
                       : obj.value("category").toString();
-    pkg["size"] = selectedVersion.value("size");
-    pkg["dateUpdated"] = selectedVersion.value("releasedAt").toString();
 
     pkg["repositoryUrl"]         = obj.value("repositoryUrl").toString();
     pkg["repositoryName"]        = obj.value("repositoryName").toString();
@@ -310,6 +308,7 @@ static QVariantMap buildPackageRow(const QVariantMap& obj,
         entry["version"]      = vManifest.value("version").toString();
         entry["rootHash"]     = vm.value("rootHash").toString();
         entry["releasedAt"]   = vm.value("releasedAt").toString();
+        entry["size"]         = vm.value("size");
         entry["publisherRef"] = vm.value("publisherRef").toString();
         entry["url"]          = vm.value("url").toString();
         entry["signed"]       = vm.contains("signature");
@@ -344,6 +343,7 @@ static QVariantMap buildPackageRow(const QVariantMap& obj,
     pkg["installedVersion"] = installedVersion;
     pkg["installedHash"] = installedHash;
     pkg["installType"] = installType;
+    rowaction::applyPickedSizeAndDate(pkg, 0);
 
     // Resolve install status. Embedded vs user doesn't change the status itself —
     // the QML side gates the Uninstall button on installType separately.

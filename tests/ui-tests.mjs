@@ -576,7 +576,9 @@ test("row click after type filter: details.type matches the filtered type", asyn
 
 async function inspectPackagesModel(app, expression) {
   const store = await app.findByProperty("objectName", "pmui.BackendStore");
-  if (!store.matches || store.matches.length === 0) return null;
+  if (!store.matches || store.matches.length === 0) {
+    throw new Error("BackendStore not found");
+  }
   const storeId = store.matches[0].id;
 
   const res = await app.inspector.send("evaluate", {
@@ -587,8 +589,32 @@ async function inspectPackagesModel(app, expression) {
       ${expression}
     })()`,
   });
-  if (res.error) return null;
+  // Surface eval errors verbatim — swallowing them into `null` made
+  // every failure indistinguishable from "packagesModel is null".
+  if (res.error) {
+    throw new Error(`evaluate on packagesModel threw: ${res.error}`);
+  }
   return res.result;
+}
+
+// Reset the store's filter state so a test can rely on the full model
+// without inheriting whatever the previous test left behind (a type
+// pick, a category, a search string). Uses the store's own setters —
+// those go through push* over QtRO so the source-side proxy actually
+// resets, not just the replica.
+async function resetStoreFilters(app) {
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) return;
+  const storeId = store.matches[0].id;
+  await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `(function() {
+      selectType(0);
+      selectCategory(0);
+      setSearchText("");
+      setInstallStateFilter(0);
+    })()`,
+  });
 }
 
 test("local section: any empty-repositoryUrl row is labelled 'local'", async (app) => {
@@ -600,6 +626,10 @@ test("local section: any empty-repositoryUrl row is labelled 'local'", async (ap
     },
     { timeout: 20000, interval: 500, description: "catalog to finish loading" }
   );
+  // Previous tests may have narrowed the model with a type/category pick;
+  // walking the replica in that state can leave roles uncached and trip
+  // the eval. Reset filters first.
+  await resetStoreFilters(app);
 
   // Walk the whole packagesModel via QML JS — cheap even at fixture scale.
   // For every row where repositoryUrl is empty, the row MUST carry the
@@ -630,7 +660,7 @@ test("local section: any empty-repositoryUrl row is labelled 'local'", async (ap
     return offenders.length === 0 ? "ok" : "bad:" + offenders.join(",");
   `);
 
-  if (outcome === null) throw new Error("could not inspect packagesModel");
+  if (outcome === null) throw new Error("packagesModel is null on BackendStore");
   if (outcome === "missing-roles") {
     throw new Error("packagesModel is missing repositoryUrl / repositoryDisplayName roles");
   }
@@ -672,6 +702,96 @@ test("local section: 'No repositories configured' hides when local rows exist", 
         }
       }
     }
+  }
+});
+
+// ─── Picker-driven size/date change ────────────────────────────────
+// setRowVersion mirrors the picked version's catalog size/releasedAt
+// into pkg["size"]/pkg["dateUpdated"] via rowaction::applyPickedSizeAndDate.
+// Guard: moving the picker on a multi-version package must update at
+// least one of size/dateUpdated. Skips cleanly if no fixture package has
+// multiple versions (offscreen / empty catalog).
+test("picker: switching version updates size/dateUpdated", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  // See note on the local-section test — a filtered replica can leave
+  // roles uncached and make the eval throw.
+  await resetStoreFilters(app);
+
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) throw new Error("BackendStore not found");
+  const storeId = store.matches[0].id;
+
+  async function evalOnStore(expression, label) {
+    const res = await app.inspector.send("evaluate", { objectId: storeId, expression });
+    if (res.error) throw new Error(`${label}: evaluate threw: ${res.error}`);
+    return res.result;
+  }
+
+  // Find a row with ≥2 available versions, and read its (size, date) at
+  // picks 0 and 1. Returns a compact string so we don't hit the QJSValue
+  // opacity issue on nested objects.
+  const initial = await evalOnStore(`(function() {
+      var m = packagesModel;
+      if (!m) return "no-model";
+      var rn = m.roleNames();
+      var sizeRole = -1, dateRole = -1, avRole = -1;
+      for (var k in rn) {
+        var s = String(rn[k]);
+        if      (s === "size")              sizeRole = parseInt(k);
+        else if (s === "dateUpdated")       dateRole = parseInt(k);
+        else if (s === "availableVersions") avRole   = parseInt(k);
+      }
+      if (sizeRole < 0 || dateRole < 0 || avRole < 0) return "missing-roles";
+      for (var i = 0; i < m.rowCount(); ++i) {
+        var idx = m.index(i, 0);
+        var av  = m.data(idx, avRole);
+        if (!av || av.length < 2) continue;
+        return String(i) + "|" +
+               String(m.data(idx, sizeRole) || "") + "|" +
+               String(m.data(idx, dateRole) || "");
+      }
+      return "no-multi-version";
+    })()`, "initial sample");
+  if (initial === "no-multi-version") return;   // fixture has no multi-version package
+  if (typeof initial !== "string" || initial.startsWith("no-") || initial === "missing-roles") {
+    throw new Error(`could not sample initial state: ${initial}`);
+  }
+  const [rowStr, size0, date0] = initial.split("|");
+  const rowIndex = parseInt(rowStr, 10);
+
+  // Move the picker to index 1.
+  await evalOnStore(`setRowVersion(${rowIndex}, 1)`, "setRowVersion(1)");
+
+  const after = await evalOnStore(`(function() {
+      var m = packagesModel;
+      var rn = m.roleNames();
+      var sizeRole = -1, dateRole = -1;
+      for (var k in rn) {
+        var s = String(rn[k]);
+        if      (s === "size")        sizeRole = parseInt(k);
+        else if (s === "dateUpdated") dateRole = parseInt(k);
+      }
+      var idx = m.index(${rowIndex}, 0);
+      return String(m.data(idx, sizeRole) || "") + "|" +
+             String(m.data(idx, dateRole) || "");
+    })()`, "post-switch sample");
+  const [size1, date1] = String(after).split("|");
+
+  // Restore.
+  await evalOnStore(`setRowVersion(${rowIndex}, 0)`, "setRowVersion(0)");
+
+  // At least one must have changed. Publishers could theoretically set
+  // identical size AND releasedAt on two versions, but that's essentially
+  // never the case for a real catalog — a failure here almost certainly
+  // means the wiring is broken.
+  if (size0 === size1 && date0 === date1) {
+    throw new Error(
+      `size AND date unchanged after picker move — wiring broken? ` +
+      `size=${size0}, date=${date0}`);
   }
 });
 

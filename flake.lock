@@ -9363,11 +9363,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1784900108,
-        "narHash": "sha256-/zH0QJZWFP/w5qrSiMuIo7oWrUisDv7r4ZskQp9faFc=",
+        "lastModified": 1785226136,
+        "narHash": "sha256-jU7on18BFpAr9NrEDmjO1bD4kuoXQ8wZa21UHpTz+Yk=",
         "owner": "logos-co",
         "repo": "logos-design-system",
-        "rev": "32cc9b40195b1f42b8a8c1affb56ebd3dcfef7f4",
+        "rev": "8e67643446dbadfa2fd20c77d454e2ced83ccdc4",
         "type": "github"
       },
       "original": {
@@ -15219,11 +15219,11 @@
         "rust-overlay": "rust-overlay_5"
       },
       "locked": {
-        "lastModified": 1785067112,
-        "narHash": "sha256-hNSNXMaeI/gBM+U+AfYpdpXtO3SvEg3b4iZ5RG0kWBs=",
+        "lastModified": 1785226253,
+        "narHash": "sha256-+LYrdJzPEqVUpPM+T4C6Cp9dGiciPePcfYr4TnPpIfE=",
         "owner": "logos-co",
         "repo": "logos-module-builder",
-        "rev": "8e4ea1c1d0e523cea46850f8fd9466dd35af7cc1",
+        "rev": "3dd6b3a01ee2dc72c6043a85349d749bd6258f79",
         "type": "github"
       },
       "original": {

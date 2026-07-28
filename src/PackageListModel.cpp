@@ -378,6 +378,11 @@ void PackageListModel::setRowVersion(int index, int versionIndex)
         m_packages[index]["hash"]    = pick.value("rootHash");
     }
 
+    // Size / date are per-version catalog metadata — mirror the pick's
+    // fields onto the row so the columns reflect the newly-selected
+    // version, not the initial (index 0) values from row build.
+    rowaction::applyPickedSizeAndDate(m_packages[index], versionIndex);
+
     // The Action column reflects the SELECTED version, not the catalog
     // newest — recompute the resolved action against the new (version,
     // hash) so the pill flips between Upgrade / Downgrade / Reinstall /
@@ -391,6 +396,7 @@ void PackageListModel::setRowVersion(int index, int versionIndex)
     const QModelIndex mi = createIndex(index, 0);
     emit dataChanged(mi, mi,
         {SelectedVersionIndexRole, VersionRole, HashRole,
+         SizeRole, DateUpdatedRole,
          InstallStatusRole, RowActionRole});
 }
 
