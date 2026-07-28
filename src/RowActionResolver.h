@@ -14,6 +14,9 @@
 // the model.
 
 #include <QString>
+#include <QVariant>
+#include <QVariantList>
+#include <QVariantMap>
 
 #include <logos/semver.hpp>
 
@@ -117,6 +120,17 @@ inline bool hasUpdateAvailable(bool isInstalled,
     if (!isInstalled) return false;
     if (installedVersion.isEmpty() || newestCatalogVersion.isEmpty()) return false;
     return versionCmp(installedVersion, newestCatalogVersion) < 0;
+}
+
+// Mirror the picked version's catalog size / releasedAt to the row's
+// `size` / `dateUpdated`. PMUI is a release browser — these columns are
+// per-version catalog metadata, not disk-derived install state.
+inline void applyPickedSizeAndDate(QVariantMap& pkg, int pickedIndex) {
+    const QVariantList avail = pkg.value("availableVersions").toList();
+    if (pickedIndex < 0 || pickedIndex >= avail.size()) return;
+    const QVariantMap pick = avail.at(pickedIndex).toMap();
+    pkg["dateUpdated"] = pick.value("releasedAt");
+    pkg["size"]        = pick.value("size");
 }
 
 } // namespace rowaction

@@ -567,4 +567,276 @@ test("row click after type filter: details.type matches the filtered type", asyn
   );
 });
 
+// ─── "Local" synthetic-repo tests ──────────────────────────────────
+// PackageManagerBackend synthesises rows for installed packages the
+// catalog doesn't publish. They carry repositoryUrl="" and
+// repositoryDisplayName="Local", and sit in a section tier below all
+// real repos. These tests assert the invariant without requiring a
+// specific test fixture — they inspect the model in place.
+
+async function inspectPackagesModel(app, expression) {
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) {
+    throw new Error("BackendStore not found");
+  }
+  const storeId = store.matches[0].id;
+
+  const res = await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `(function() {
+      var m = packagesModel;
+      if (!m) return null;
+      ${expression}
+    })()`,
+  });
+  // Surface eval errors verbatim — swallowing them into `null` made
+  // every failure indistinguishable from "packagesModel is null".
+  if (res.error) {
+    throw new Error(`evaluate on packagesModel threw: ${res.error}`);
+  }
+  return res.result;
+}
+
+// Reset the store's filter state so a test can rely on the full model
+// without inheriting whatever the previous test left behind (a type
+// pick, a category, a search string). Uses the store's own setters —
+// those go through push* over QtRO so the source-side proxy actually
+// resets, not just the replica.
+async function resetStoreFilters(app) {
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) return;
+  const storeId = store.matches[0].id;
+  await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `(function() {
+      selectType(0);
+      selectCategory(0);
+      setSearchText("");
+      setInstallStateFilter(0);
+    })()`,
+  });
+}
+
+// Read the backend-exposed role name → int map for `packagesModel`. Must
+// go through `evaluate` + JSON — `getProperties` on a `property var` /
+// QVariantMap yields the string "<QJSValue>" instead of the map's
+// entries (QML's property system wraps var-typed values in QJSValue,
+// which the inspector can't unpack). Evaluate returns actual JS values,
+// and JSON.stringify guarantees a plain-string transport.
+async function fetchPackageRoleIds(app) {
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) {
+    throw new Error("BackendStore not found");
+  }
+  const storeId = store.matches[0].id;
+  const res = await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `(function() {
+      var src = backend ? backend.packageRoleIds : null;
+      if (!src) return "";
+      var out = {};
+      for (var k in src) out[k] = src[k];
+      return JSON.stringify(out);
+    })()`,
+  });
+  if (res.error) throw new Error(`packageRoleIds eval threw: ${res.error}`);
+  if (!res.result || typeof res.result !== "string") return null;
+  try { return JSON.parse(res.result); } catch (_) { return null; }
+}
+
+test("local section: any empty-repositoryUrl row is labelled 'local'", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  // roleNames() isn't Q_INVOKABLE on QAbstractItemModel, so we resolve
+  // role IDs via the backend PROP exposed on the store as packageRoleIds
+  // (populated once at backend construction from PackageListModel::roleNames).
+  const roleIds = await fetchPackageRoleIds(app);
+  if (!roleIds || typeof roleIds !== "object") {
+    throw new Error(`packageRoleIds unavailable on BackendStore: ${JSON.stringify(roleIds)}`);
+  }
+  const urlRole  = roleIds.repositoryUrl;
+  const dispRole = roleIds.repositoryDisplayName;
+  const nameRole = roleIds.moduleName;
+  if (typeof urlRole !== "number" || typeof dispRole !== "number") {
+    throw new Error(
+      "packageRoleIds is missing repositoryUrl / repositoryDisplayName: " +
+      JSON.stringify(roleIds));
+  }
+
+  // Walk the whole packagesModel via QML JS — cheap even at fixture scale.
+  // For every row where repositoryUrl is empty, the row MUST carry the
+  // canonical lowercase "local" repositoryDisplayName. If no such row
+  // exists the fixture has no local-only packages and the invariant is
+  // vacuously satisfied (test returns "ok").
+  const outcome = await inspectPackagesModel(app, `
+    var URL = ${urlRole}, DISP = ${dispRole}, NAME = ${typeof nameRole === "number" ? nameRole : -1};
+    var offenders = [];
+    for (var i = 0; i < m.rowCount(); ++i) {
+      var idx = m.index(i, 0);
+      var url = String(m.data(idx, URL) || "");
+      if (url.length > 0) continue;
+      var disp = String(m.data(idx, DISP) || "");
+      if (disp !== "local") {
+        var name = NAME >= 0 ? String(m.data(idx, NAME) || "") : "";
+        offenders.push(name + ": '" + disp + "'");
+      }
+    }
+    return offenders.length === 0 ? "ok" : "bad:" + offenders.join(",");
+  `);
+
+  if (outcome === null) throw new Error("packagesModel is null on BackendStore");
+  if (outcome !== "ok") {
+    throw new Error("empty-repo rows with wrong repositoryDisplayName: " + outcome);
+  }
+});
+
+test("local section: 'No repositories configured' hides when local rows exist", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+
+  const repoCount = await storeProperty(app, "repositoryCount");
+  const totalCount = await storeProperty(app, "totalCount");
+  // Empty-state CTA is visible iff repositoryCount === 0 AND totalCount === 0.
+  // Any other combination should not surface the CTA — verify by absence of
+  // its subtitle text.
+  if (repoCount > 0 || totalCount > 0) {
+    const res = await app.findByProperty(
+      "text", "Add a package repository to browse and install plugins and modules.");
+    if (res.matches && res.matches.length > 0) {
+      for (const m of res.matches) {
+        try {
+          const visible = await propertyOf(app, m.id, "visible");
+          if (visible) {
+            throw new Error(
+              `empty-state CTA visible with repositoryCount=${repoCount} ` +
+              `and totalCount=${totalCount} — expected hidden`);
+          }
+        } catch (e) {
+          if (String(e.message).startsWith("empty-state CTA")) throw e;
+          // property missing on that match — skip
+        }
+      }
+    }
+  }
+});
+
+// ─── Picker-driven size/date change ────────────────────────────────
+// setRowVersion mirrors the picked version's catalog size/releasedAt
+// into pkg["size"]/pkg["dateUpdated"] via rowaction::applyPickedSizeAndDate.
+// Guard: moving the picker on a multi-version package must update at
+// least one of size/dateUpdated. Skips cleanly if no fixture package has
+// multiple versions (offscreen / empty catalog).
+test("picker: switching version updates size/dateUpdated", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  // Empty fixture on offscreen CI → skip. Same reason as the local-section
+  // test above.
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  const roleIds = await fetchPackageRoleIds(app);
+  if (!roleIds || typeof roleIds !== "object") {
+    throw new Error(`packageRoleIds unavailable on BackendStore: ${JSON.stringify(roleIds)}`);
+  }
+  const sizeRole   = roleIds.size;
+  const dateRole   = roleIds.dateUpdated;
+  const avRole     = roleIds.availableVersions;
+  const selVerRole = roleIds.selectedVersionIndex;
+  if (typeof sizeRole !== "number" || typeof dateRole !== "number" ||
+      typeof avRole !== "number" || typeof selVerRole !== "number") {
+    throw new Error(
+      "packageRoleIds missing size/dateUpdated/availableVersions/selectedVersionIndex: " +
+      JSON.stringify(roleIds));
+  }
+
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) throw new Error("BackendStore not found");
+  const storeId = store.matches[0].id;
+
+  async function evalOnStore(expression, label) {
+    const res = await app.inspector.send("evaluate", { objectId: storeId, expression });
+    if (res.error) throw new Error(`${label}: evaluate threw: ${res.error}`);
+    return res.result;
+  }
+
+  // Pick a row where availableVersions[0] and [1] DIFFER in size or date.
+  // Skipping fixture-degenerate rows here — where two versions coincidentally
+  // share both fields — is what makes this test non-flaky: the assertion at
+  // the bottom can only prove the wiring works if the picked row's versions
+  // produce observably different values.
+  const initial = await evalOnStore(`(function() {
+      var m = packagesModel;
+      if (!m) return "no-model";
+      var AV = ${avRole}, SIZE = ${sizeRole}, DATE = ${dateRole};
+      for (var i = 0; i < m.rowCount(); ++i) {
+        var idx = m.index(i, 0);
+        var av  = m.data(idx, AV);
+        if (!av || av.length < 2) continue;
+        var v0 = av[0] || {}, v1 = av[1] || {};
+        if (String(v0.size) === String(v1.size) &&
+            String(v0.releasedAt) === String(v1.releasedAt)) continue;
+        return String(i) + "|" +
+               String(m.data(idx, SIZE) || "") + "|" +
+               String(m.data(idx, DATE) || "");
+      }
+      return "no-usable-row";
+    })()`, "initial sample");
+  if (initial === "no-usable-row") return;   // no distinguishable multi-version row
+  if (typeof initial !== "string" || initial.startsWith("no-")) {
+    throw new Error(`could not sample initial state: ${initial}`);
+  }
+  const [rowStr, size0, date0] = initial.split("|");
+  const rowIndex = parseInt(rowStr, 10);
+
+  // Move the picker to index 1.
+  await evalOnStore(`setRowVersion(${rowIndex}, 1)`, "setRowVersion(1)");
+
+  await app.waitFor(async () => {
+    const idx = await evalOnStore(
+      `packagesModel.data(packagesModel.index(${rowIndex}, 0), ${selVerRole})`,
+      "selectedVersionIndex poll");
+    if (Number(idx) !== 1) throw new Error(`selectedVersionIndex=${idx}, expected 1`);
+  }, { timeout: 5000, interval: 100, description: "setRowVersion to propagate to replica" });
+
+  const after = await evalOnStore(`(function() {
+      var m = packagesModel;
+      var idx = m.index(${rowIndex}, 0);
+      return String(m.data(idx, ${sizeRole}) || "") + "|" +
+             String(m.data(idx, ${dateRole}) || "");
+    })()`, "post-switch sample");
+  const [size1, date1] = String(after).split("|");
+
+  // Restore (fire-and-forget — no other test observes this row's picker).
+  await evalOnStore(`setRowVersion(${rowIndex}, 0)`, "setRowVersion(0)");
+
+  // The write landed (gate above proved it). If size/date still match v0
+  // the row-build → applyPickedSizeAndDate wiring is broken.
+  if (size0 === size1 && date0 === date1) {
+    throw new Error(
+      `setRowVersion landed (selectedVersionIndex=1) but size/date didn't ` +
+      `update: v0 size=${size0} date=${date0} · v1 read-back size=${size1} date=${date1}. ` +
+      `applyPickedSizeAndDate in PackageListModel::setRowVersion is broken.`);
+  }
+});
+
 run();

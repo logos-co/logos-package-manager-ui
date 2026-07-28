@@ -14,6 +14,12 @@ QtObject {
     // prefetch=true: the replica caches all roles for the page before it
     // reports populated, so rows never render empty
     property var packagesModel: logos.model(moduleName, "packages", true)
+    readonly property var packageRoleIds: {
+        var out = ({})
+        var src = backend ? backend.packageRoleIds : null
+        if (src) for (var k in src) out[k] = src[k]
+        return out
+    }
 
     // ─── Properties: reactive state (bind from views) ───
     readonly property bool isInstalling: backend ? backend.isInstalling : false
@@ -50,6 +56,7 @@ QtObject {
         id: d
 
         property var selectedPackageDetails: ({})
+        property int selectedPackageIndex: -1
 
         property Connections conn: Connections {
             target: store.backend
@@ -70,8 +77,15 @@ QtObject {
     function selectCategory(i) { if (backend) backend.pushSelectedCategoryIndex(i) }
     function selectType(i) { if (backend) backend.pushSelectedTypeIndex(i) }
     function toggleSelection(i, checked) { if (backend) backend.togglePackage(i, checked) }
-    function requestDetails(i) { if (backend) backend.requestPackageDetails(i) }
-    function clearSelectedDetails() { d.selectedPackageDetails = ({}) }
+    function requestDetails(i) {
+        if (!backend) return
+        d.selectedPackageIndex = i
+        backend.requestPackageDetails(i)
+    }
+    function clearSelectedDetails() {
+        d.selectedPackageDetails = ({})
+        d.selectedPackageIndex = -1
+    }
 
     function installPackage(i) { if (backend) backend.installPackage(i) }
     function reloadPackage(i) { if (backend) backend.reloadPackage(i) }
@@ -118,8 +132,15 @@ QtObject {
     function setSortRole(role)           { if (backend) backend.pushSortRole(role) }
     function setSortOrder(order)         { if (backend) backend.pushSortOrder(order) }
 
-    // Per-row version change.
-    function setRowVersion(i, vi)            { if (backend) backend.setRowVersion(i, vi) }
+    // Per-row version change. Also refetches details when the change is
+    // on the row currently shown in the details panel
+    function setRowVersion(i, vi) {
+        if (!backend) return
+        backend.setRowVersion(i, vi)
+        if (i === d.selectedPackageIndex && d.selectedPackageDetails && d.selectedPackageDetails.name) {
+            backend.requestPackageDetails(i)
+        }
+    }
 
     // Request basecamp to navigate to Settings → Repositories.
     function navigateToRepositories()        { if (backend) backend.navigateToRepositories() }
