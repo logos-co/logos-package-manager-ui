@@ -50,9 +50,26 @@ test("smoke: subtitle renders", async (app) => {
 
 test("smoke: top-bar action labels render", async (app) => {
   await waitForPmuiLoaded(app);
-  // Install is now a per-row action (ActionPill), not a top-bar button; the
-  // always-present top-bar buttons are Reload and Manage Repositories.
-  await app.expectTexts(["Reload", "Manage Repositories"]);
+  // Installing from the CATALOG is a per-row action (ActionPill), not a
+  // top-bar button. The always-present top-bar buttons are Install Local
+  // Package (file picker), Reload and Manage Repositories.
+  await app.expectTexts(["Install Local Package", "Reload", "Manage Repositories"]);
+});
+
+test("structure: install-local button is present and enabled", async (app) => {
+  await waitForPmuiLoaded(app);
+
+  const res = await app.findByProperty("objectName", "pmui.installLocalButton");
+  if (res.error || !res.matches || res.matches.length === 0) {
+    throw new Error('No object found with objectName "pmui.installLocalButton"');
+  }
+  const enabled = await propertyOf(app, res.matches[0].id, "enabled");
+  if (enabled !== true) {
+    throw new Error(`install-local button should be enabled when idle, got ${enabled}`);
+  }
+  // Deliberately NOT clicking: the click opens a native file dialog, and the
+  // install behind it routes through the package_manager gate, which needs a
+  // host (basecamp) to acknowledge it. Neither is available here.
 });
 
 test("structure: table headers render", async (app) => {

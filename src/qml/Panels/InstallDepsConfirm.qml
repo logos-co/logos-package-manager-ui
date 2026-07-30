@@ -171,13 +171,12 @@ Popup {
             visible: (root.depChanges || []).length > 0
             implicitHeight: depList.implicitHeight + 2 * Theme.spacing.small
 
-            ListView {
+            LogosListView {
                 id: depList
                 anchors.fill: parent
                 anchors.margins: Theme.spacing.small
                 model: root.depChanges
                 spacing: 2
-                clip: true
                 interactive: contentHeight > height
                 implicitHeight: Math.min(180,
                     Math.max(contentHeight, 0))

@@ -35,6 +35,9 @@ GridLayout {
     readonly property alias stateTabs: tabs
 
     signal reloadClicked()
+    // Click on "Install Local Package". The parent QML owns the file picker —
+    // this signal only says the user asked for one.
+    signal installLocalClicked()
     // Click on the new bulk button. The parent QML is responsible for
     // opening the confirm-summary popup (driven by `actionSummary`) and
     // calling `BackendStore.runSelectedActions()` on confirm; this
@@ -87,6 +90,22 @@ GridLayout {
         spacing: Theme.spacing.medium
 
         Item { Layout.fillWidth: root.columns === 2 }
+
+        LogosButton {
+            id: installLocalBtn
+            objectName: "pmui.installLocalButton"
+            Layout.fillWidth: true
+            Layout.minimumWidth: 120
+            Layout.preferredWidth: 180
+            Layout.maximumWidth: 180
+            Layout.preferredHeight: 40
+            radius: Theme.spacing.radiusLarge
+            text: qsTr("Install Local Package")
+            leadingIcon.source: LogosIcons.install
+            leadingIcon.size: 18
+            enabled: !root.isInstalling && !root.isLoading
+            onClicked: root.installLocalClicked()
+        }
 
         LogosButton {
             id: reloadBtn

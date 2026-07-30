@@ -70,6 +70,7 @@ QtObject {
 
     // ─── Methods: intents called by views ───
     function refreshCatalog() { if (backend) backend.refreshCatalog() }
+    function installLocalPackage(url) { if (backend) backend.installLocalPackage(url) }
     // New bulk path — used by the "Run Actions (N)" header button.
     // Backend builds the per-row action plan and dispatches installs
     // through the batched downloader + version changes per-row.

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 import Logos.Theme
@@ -64,12 +65,15 @@ Rectangle {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: Theme.spacing.medium
+                    anchors.topMargin: Theme.spacing.medium
+                    anchors.bottomMargin: Theme.spacing.medium
                     spacing: Theme.spacing.medium
 
                     TableHeader {
                         id: tableHeader
                         Layout.fillWidth: true
+                        Layout.leftMargin: Theme.spacing.medium
+                        Layout.rightMargin: Theme.spacing.medium
                         Layout.minimumWidth: 0
 
                         isInstalling: store.isInstalling
@@ -86,6 +90,7 @@ Rectangle {
                         actionSummary: ({})
                         stateIndex: store.installStateFilter
                         onReloadClicked: store.refreshCatalog()
+                        onInstallLocalClicked: installLocalDialog.open()
                         onStateRequested: function(state) { store.setInstallStateFilter(state) }
                         onRepositoriesClicked: store.navigateToRepositories()
                     }
@@ -221,6 +226,16 @@ Rectangle {
     //     id: runActionsConfirm
     //     onConfirmed: store.runSelectedActions()
     // }
+
+    // ── Local .lgx picker ─────────────────────────────────────────
+    FileDialog {
+        id: installLocalDialog
+        objectName: "pmui.installLocalDialog"
+        title: qsTr("Select LGX Package to Install")
+        modality: Qt.NonModal
+        nameFilters: [qsTr("LGX Package (*.lgx)"), qsTr("All Files (*)")]
+        onAccepted: store.installLocalPackage(selectedFile)
+    }
 
     // ── Per-row dep-confirm popup ─────────────────────────────────
     //

@@ -23,7 +23,8 @@ public:
         NoPackagesSelected = 3,
         PackageManagerNotConnected = 4,
         UninstallFailed = 5,
-        PackageNotUninstallable = 6
+        PackageNotUninstallable = 6,
+        LocalPackageInvalid = 7
     };
     Q_ENUM(ErrorType)
 
