@@ -32,6 +32,8 @@ public slots:
     // Overrides of the pure-virtual slots generated from the .rep.
     // See package_manager_ui.rep for per-slot documentation.
     void refreshCatalog() override;
+    // Install a .lgx the user picked off disk.
+    void installLocalPackage(QUrl fileUrl) override;
     // Bulk: run each selected row's resolved primary action (the new
     // "Run Actions" header button). Subsumes the old installSelected
     // path AND adds upgrade / downgrade / reinstall to the bulk surface.
@@ -301,6 +303,12 @@ private:
         bool    includeDeps = true;
     };
     QHash<QString, PendingUpgradeMeta> m_pendingUpgradeByModule;
+
+    // Local .lgx files awaiting gate approval, keyed by the package name
+    // inspectPackage reported (the same name we hand to requestInstall /
+    // requestUpgrade, so it's what the module echoes back in
+    // installApproved / upgradeUninstallDone).
+    QHash<QString, QString> m_pendingLocalInstalls;
 
     // Pending dep-confirm requests, keyed by an opaque requestKey
     // (repositoryUrl + '\n' + name — see depConfirmKey()). Populated by

@@ -1,5 +1,6 @@
 #include <QVariantMap>
 #include <QStringList>
+#include <QUrl>
 
 class PackageManagerUi
 {
@@ -19,7 +20,8 @@ class PackageManagerUi
         NoPackagesSelected            = 3,
         PackageManagerNotConnected    = 4,
         UninstallFailed               = 5,
-        PackageNotUninstallable       = 6
+        PackageNotUninstallable       = 6,
+        LocalPackageInvalid           = 7
     }
 
     ENUM ProgressType {
@@ -95,6 +97,10 @@ class PackageManagerUi
 
     // Refresh releases + catalog from package_downloader. Top-bar Reload button.
     SLOT(void refreshCatalog())
+    // Install a .lgx sitting on the user's disk — the local-file sibling of
+    // the catalog install path. `fileUrl` is a file:// URL straight from the
+    // QML FileDialog
+    SLOT(void installLocalPackage(QUrl fileUrl))
     // Bulk: run each selected row's resolved primary action. Installs
     // (and Retries) batch through the dependency-resolving downloader;
     // Upgrade/Downgrade/Reinstall dispatch per-row to package_manager.

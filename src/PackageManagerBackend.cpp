@@ -1,6 +1,7 @@
 #include "PackageManagerBackend.h"
 #include <algorithm>
 #include <QDebug>
+#include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -604,6 +605,98 @@ void PackageManagerBackend::refreshCatalog()
             qWarning() << "package_downloader.refreshCatalog reported:" << err;
         self->refreshPackages();
     });
+}
+
+void PackageManagerBackend::installLocalPackage(QUrl fileUrl)
+{
+    if (!fileUrl.isValid() || !fileUrl.isLocalFile()) {
+        qWarning() << "installLocalPackage: not a local file URL:" << fileUrl;
+        emit errorOccurred(static_cast<int>(PackageTypes::LocalPackageInvalid));
+        return;
+    }
+
+    const QString filePath = fileUrl.toLocalFile();
+    const QFileInfo fi(filePath);
+    if (!fi.isFile()
+        || fi.suffix().compare(QStringLiteral("lgx"), Qt::CaseInsensitive) != 0) {
+        qWarning() << "installLocalPackage: not an .lgx file:" << filePath;
+        emit errorOccurred(static_cast<int>(PackageTypes::LocalPackageInvalid));
+        return;
+    }
+
+    if (!packageManagerReady()) {
+        emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
+        return;
+    }
+
+    // Inspect first. The gate is keyed on the package NAME, and a local file's
+    // name/version only exist inside its manifest — this round-trip is also
+    // what tells a fresh install apart from an install over an existing copy,
+    // which decides WHICH gate to open below.
+    const QString fileLabel = fi.fileName();
+    LogosModules logos(m_logosAPI);
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_manager.inspectPackageAsync(filePath,
+        [self, filePath, fileLabel](QVariantMap info) {
+            if (!self) return;
+
+            const QString err  = info.value(QStringLiteral("error")).toString();
+            const QString name = info.value(QStringLiteral("name")).toString();
+            if (!err.isEmpty() || name.isEmpty()) {
+                const QString msg = !err.isEmpty()
+                    ? err
+                    : QStringLiteral("Could not read a package name from %1").arg(fileLabel);
+                qWarning() << "installLocalPackage: inspect failed for" << filePath << ":" << msg;
+                emit self->installationProgressUpdated(
+                    static_cast<int>(PackageTypes::ProgressFailed),
+                    fileLabel, 0, 0, false, msg);
+                return;
+            }
+
+            const QString version = info.value(QStringLiteral("version")).toString();
+            const bool alreadyInstalled =
+                info.value(QStringLiteral("isAlreadyInstalled")).toBool();
+
+            self->m_pendingLocalInstalls.insert(name, filePath);
+            const QString noDepChanges = QStringLiteral("[]");
+
+            LogosModules logos(self->m_logosAPI);
+            if (!alreadyInstalled) {
+                logos.package_manager.requestInstallAsync(name, version, QString(), noDepChanges,
+                    [self, name](QVariantMap result) {
+                        if (!self) return;
+                        if (!result.value(QStringLiteral("success"), false).toBool()) {
+                            self->m_pendingLocalInstalls.remove(name);
+                            emit self->errorOccurred(
+                                static_cast<int>(PackageTypes::InstallationAlreadyInProgress));
+                        }
+                    });
+                return;
+            }
+
+            // mode mirrors the per-row dispatch: 0 upgrade / 1 downgrade /
+            // 2 sidegrade (same version — i.e. a reinstall from disk).
+            const QString installedVersion =
+                info.value(QStringLiteral("installedVersion")).toString();
+            const int cmp  = rowaction::versionCmp(version, installedVersion);
+            const int mode = (cmp > 0) ? 0 : (cmp < 0) ? 1 : 2;
+
+            PendingUpgradeMeta meta;
+            meta.repositoryUrl = QString();   // local file — no repo to pin
+            meta.includeDeps   = true;
+            self->m_pendingUpgradeByModule.insert(name, meta);
+
+            logos.package_manager.requestUpgradeAsync(name, version, mode, noDepChanges,
+                [self, name](QVariantMap result) {
+                    if (!self) return;
+                    if (!result.value(QStringLiteral("success"), false).toBool()) {
+                        self->m_pendingLocalInstalls.remove(name);
+                        self->m_pendingUpgradeByModule.remove(name);
+                        emit self->errorOccurred(
+                            static_cast<int>(PackageTypes::UninstallFailed));
+                    }
+                });
+        });
 }
 
 void PackageManagerBackend::refreshPackages()
@@ -1617,15 +1710,20 @@ void PackageManagerBackend::subscribePackageManagerCancellationEvents()
 
     // Subscribe a cancellation event with a per-event toast formatter.
     auto subscribe = [&](const char* eventName,
-                         std::function<QString(const QJsonObject&, const QString&)> format) {
+                         std::function<QString(const QJsonObject&, const QString&)> format,
+                         bool dropsPendingLocalInstall = false) {
         logos.package_manager.on(eventName,
-            [self, format](const QVariantList& data) {
+            [self, format, dropsPendingLocalInstall](const QVariantList& data) {
                 if (!self) return;
                 const QJsonObject obj = parseEventPayload(data);
                 if (obj.isEmpty()) return;
+                const QString name = obj.value("name").toString();
+                if (dropsPendingLocalInstall
+                    && self->m_pendingLocalInstalls.remove(name) > 0) {
+                    self->m_pendingUpgradeByModule.remove(name);
+                }
                 const QString reason = obj.value("reason").toString();
                 if (reason == kReasonUserCancelled) return;
-                const QString name = obj.value("name").toString();
                 emit self->cancellationOccurred(name, format(obj, reason));
             });
     };
@@ -1642,7 +1740,7 @@ void PackageManagerBackend::subscribePackageManagerCancellationEvents()
                        .arg(obj.value("name").toString(),
                             obj.value("releaseTag").toString(),
                             reason);
-        });
+        }, /*dropsPendingLocalInstall=*/true);
 
     // Fresh-install gate cancellation (host declined, or the ack timed out with
     // no host listening). "user cancelled" is filtered by the helper — no toast
@@ -1651,7 +1749,7 @@ void PackageManagerBackend::subscribePackageManagerCancellationEvents()
         [](const QJsonObject& obj, const QString& reason) {
             return QStringLiteral("Install of '%1' cancelled: %2")
                        .arg(obj.value("name").toString(), reason);
-        });
+        }, /*dropsPendingLocalInstall=*/true);
 }
 
 void PackageManagerBackend::subscribePackageManagerRefreshEvents()
@@ -1733,6 +1831,19 @@ void PackageManagerBackend::onInstallApproved(const QString& name,
                                               const QString& releaseTag,
                                               const QString& repositoryUrl)
 {
+    // Local .lgx: the file is already on disk, so there's nothing to download.
+    // Hand a synthetic download-result entry (the shape installOnePackage
+    // reads) straight to the sequential installer.
+    if (m_pendingLocalInstalls.contains(name)) {
+        const QVariantMap entry{
+            {QStringLiteral("name"), name},
+            {QStringLiteral("path"), m_pendingLocalInstalls.take(name)},
+        };
+        markEntriesInstalling({entry});
+        installResultsSequential({entry}, name, 0);
+        return;
+    }
+
     // Host approved the gated install — run the real download+install. The
     // gate's whole job was the confirmation; deps are always included (the
     // host dialog is confirm-or-cancel, no "just the package" split).
@@ -1767,6 +1878,20 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
         static_cast<int>(PackageTypes::InProgress),
         displayName, 0, 1, true,
         QStringLiteral("%1 %2\u2026").arg(label, displayName));
+
+    // Local .lgx: the host has now unloaded + uninstalled the old copy, which
+    // was the whole point of routing through the upgrade gate. The replacement
+    // is already on disk \u2014 install it directly, no download round-trip.
+    if (m_pendingLocalInstalls.contains(moduleName)) {
+        m_pendingUpgradeByModule.remove(moduleName);
+        const QVariantMap entry{
+            {QStringLiteral("name"), moduleName},
+            {QStringLiteral("path"), m_pendingLocalInstalls.take(moduleName)},
+        };
+        markEntriesInstalling({entry});
+        installResultsSequential({entry}, displayName, 0);
+        return;
+    }
 
     // Download the new version via the dependency-resolving channel.
     // The resolver keys on the catalog name (displayName), not the
