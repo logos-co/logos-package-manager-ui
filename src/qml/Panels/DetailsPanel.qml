@@ -22,11 +22,6 @@ Rectangle {
     QtObject {
         id: d
 
-        function shortHash(h) {
-            if (!h) return ""
-            if (h.length <= 16) return h
-            return h.substring(0, 8) + "…" + h.substring(h.length - 8)
-        }
 
         function formatDetails(detail) {
             if (!detail || !detail.name) return ""
@@ -54,7 +49,7 @@ Rectangle {
             if (status === PackageManagerUi.Installed) {
                 out += qsTr("Status: Installed") + "\n"
                 if (installedVersion) out += qsTr("Installed version: %1").arg(installedVersion) + "\n"
-                if (installedHash)    out += qsTr("Installed hash: %1").arg(d.shortHash(installedHash)) + "\n"
+                if (installedHash)    out += qsTr("Installed hash: %1").arg(installedHash) + "\n"
             } else if (status === PackageManagerUi.Installing) {
                 out += qsTr("Status: Installing…") + "\n"
             } else if (status === PackageManagerUi.Failed) {
@@ -70,13 +65,13 @@ Rectangle {
                 else
                     out += qsTr("Status: Different Hash") + "\n"
                 out += qsTr("Installed: %1 (%2)")
-                    .arg(installedVersion).arg(d.shortHash(installedHash)) + "\n"
+                    .arg(installedVersion).arg(installedHash) + "\n"
                 out += qsTr("Release:   %1 (%2)")
-                    .arg(releaseVersion).arg(d.shortHash(releaseHash)) + "\n"
+                    .arg(releaseVersion).arg(releaseHash) + "\n"
             } else {
                 out += qsTr("Status: Not Installed") + "\n"
                 if (releaseVersion) out += qsTr("Release version: %1").arg(releaseVersion) + "\n"
-                if (releaseHash)    out += qsTr("Release hash: %1").arg(d.shortHash(releaseHash)) + "\n"
+                if (releaseHash)    out += qsTr("Release hash: %1").arg(releaseHash) + "\n"
             }
 
             var deps = detail.dependencies
@@ -124,13 +119,13 @@ Rectangle {
             contentWidth: availableWidth
             clip: true
 
-            LogosText {
+            LogosSelectableText {
                 width: parent.width
                 text: d.formatDetails(root.details)
                 font.pixelSize: Theme.typography.primaryText
                 color: Theme.palette.textSecondary
-                wrapMode: Text.WordWrap
-                textFormat: Text.PlainText
+                // Wrap (not WordWrap) so a long unbroken hash still wraps.
+                wrapMode: TextEdit.Wrap
             }
         }
     }
