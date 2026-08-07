@@ -13,7 +13,7 @@
   "nix": {
     "packages": {
       "build": [],
-      "runtime": ["qt6.qtdeclarative", "zstd", "abseil-cpp"]
+      "runtime": ["qt6.qtdeclarative", "zstd"]
     },
     "external_libraries": [{ "name": "lgx" }],
     "cmake": { "find_packages": [], "extra_sources": [] }
