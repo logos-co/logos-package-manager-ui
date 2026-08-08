@@ -811,7 +811,17 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     logos.package_manager.installPluginAsync(filePath, false,
         [self, packageName, onDone](QVariantMap installResult) {
             if (!self) return;
-            bool success = !installResult.value("path").toString().isEmpty()
+            // Success is the ABSENCE of an "error" key, not the presence of a
+            // non-empty "path". package_manager reports a QML-only ui_qml
+            // package's install location as the installed module directory,
+            // but an older package_manager left "path" empty for those (they
+            // ship no backend library) — which this read as failure and drew a
+            // red RETRY on a package that had installed perfectly.
+            // `contains("path")` is still required so that an empty response
+            // (module unreachable, malformed reply) does not read as success:
+            // every real installPlugin reply carries the key, even when its
+            // value is empty.
+            bool success = installResult.contains("path")
                         && !installResult.contains("error");
             QString err = installResult.value("error").toString();
             if (onDone) onDone(success, success
