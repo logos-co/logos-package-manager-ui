@@ -970,10 +970,50 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     qDebug() << "Download complete for" << packageName << "at" << filePath << "— installing...";
     LogosModules logos(m_logosAPI);
     QPointer<PackageManagerBackend> self(this);
-    logos.package_manager.installPluginAsync(filePath, false,
-        [self, packageName, onDone](QVariantMap installResult) {
+    // Installing was left on the default 20 s IPC deadline while DOWNLOADING
+    // gets five minutes -- backwards. Downloading is network-bound and can be
+    // retried; installing is disk-bound over a payload package_manager reads,
+    // gunzips and tar-parses three times and Merkle-hashes twice, then extracts
+    // and copies. Blowing the deadline does not cancel any of that: the files
+    // still install and only the reply is abandoned, so the user is told the
+    // install failed when it did not.
+    constexpr int kInstallIpcDeadlineMs = 5 * 60 * 1000;
+    // `installPluginAsyncResult`, not `installPluginAsync`: the plain async
+    // wrapper hands the callback a bare QVariantMap, so a transport failure is
+    // indistinguishable from a provider that legitimately returned an empty
+    // one. AsyncResult<T> carries the value and the error together.
+    logos.package_manager.installPluginAsyncResult(filePath, false,
+        [self, packageName, onDone](logos::AsyncResult<QVariantMap> r) {
             if (!self) return;
-            bool success = !installResult.value("path").toString().isEmpty()
+            // Transport-level failure FIRST. On a timeout `value` is
+            // default-constructed, so reading it as an install verdict is the
+            // exact mistake this channel removes -- and the honest thing to
+            // tell the user is that the deadline expired, not that the install
+            // failed: blowing it cancels nothing that was already underway.
+            if (!r.ok()) {
+                qWarning() << "installPlugin failed for" << packageName << ":"
+                           << QString::fromStdString(r.error.code)
+                           << QString::fromStdString(r.error.message);
+                const QString detail = QString::fromStdString(r.error.message);
+                if (onDone) onDone(false,
+                    QStringLiteral("%1 — the package may in fact be installed; check before retrying")
+                        .arg(detail.isEmpty()
+                                 ? QStringLiteral("package_manager did not reply")
+                                 : detail));
+                return;
+            }
+            const QVariantMap installResult = r.value;
+            // Success is the ABSENCE of an "error" key, not the presence of a
+            // non-empty "path". package_manager reports a QML-only ui_qml
+            // package's install location as the installed module directory,
+            // but an older package_manager left "path" empty for those (they
+            // ship no backend library) — which this read as failure and drew a
+            // red RETRY on a package that had installed perfectly.
+            // `contains("path")` is still required so that a malformed reply
+            // does not read as success: every real installPlugin reply carries
+            // the key, even when its value is empty. (A DROPPED reply no longer
+            // reaches here at all — r.ok() catches it above.)
+            bool success = installResult.contains("path")
                         && !installResult.contains("error");
             QString err = installResult.value("error").toString();
             if (onDone) onDone(success, success
@@ -981,7 +1021,8 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
                                            : (err.isEmpty()
                                                   ? QStringLiteral("Installation failed")
                                                   : err));
-        });
+        },
+        Timeout(kInstallIpcDeadlineMs));
 }
 
 void PackageManagerBackend::installNextPackage(const QVariantList& results, int index, int completed, int totalPackages)

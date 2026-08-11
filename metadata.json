@@ -17,9 +17,7 @@
       "build": [],
       "runtime": [
         "qt6.qtdeclarative",
-        "zstd",
-        "krb5",
-        "abseil-cpp"
+        "zstd"
       ]
     },
     "external_libraries": [
