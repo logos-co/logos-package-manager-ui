@@ -6,16 +6,30 @@
   "category": "ui",
   "description": "Package Manager UI plugin for managing plugins and packages",
   "main": "package_manager_ui_plugin",
-  "icon": "src/qml/icons/modules.svg",
+  "icon": "src/icons/modules.png",
   "view": "qml/PackageManager.qml",
-  "dependencies": ["package_manager", "package_downloader"],
-
+  "dependencies": [
+    "package_manager",
+    "package_downloader"
+  ],
   "nix": {
     "packages": {
       "build": [],
-      "runtime": ["qt6.qtdeclarative", "zstd", "krb5", "abseil-cpp"]
+      "runtime": [
+        "qt6.qtdeclarative",
+        "zstd",
+        "krb5",
+        "abseil-cpp"
+      ]
     },
-    "external_libraries": [{ "name": "lgx" }],
-    "cmake": { "find_packages": [], "extra_sources": [] }
+    "external_libraries": [
+      {
+        "name": "lgx"
+      }
+    ],
+    "cmake": {
+      "find_packages": [],
+      "extra_sources": []
+    }
   }
 }
