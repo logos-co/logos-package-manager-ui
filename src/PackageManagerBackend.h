@@ -8,6 +8,7 @@
 #include <QStringList>
 #include "logos_api.h"
 #include "logos_api_client.h"
+#include "logos_ui_plugin_context.h"
 #include "PackageListModel.h"
 #include "PackagesFilterProxy.h"
 #include "PackagesPagingProxy.h"
@@ -18,15 +19,29 @@
 // The `packages` Q_PROPERTY exposes a model proxy stack (raw → filter →
 // paging) that ui-host remotes separately because QAbstractItemModel*
 // can't flow through a .rep; QML reaches it via logos.model(...).
-class PackageManagerBackend : public PackageManagerUiSimpleSource {
+//
+// LogosUiPluginContext supplies `modules()` — the Qt-typed wrappers for the
+// two declared dependencies (package_manager, package_downloader) — plus the
+// onContextReady() hook. The generated view-plugin glue
+// (generated_code/package_manager_ui_ui_glue.cpp) owns the LogosAPI and wires
+// it in; this class never receives one directly.
+class PackageManagerBackend : public PackageManagerUiSimpleSource,
+                              public LogosUiPluginContext {
     Q_OBJECT
     Q_PROPERTY(QAbstractItemModel* packages READ packages CONSTANT)
 
 public:
-    explicit PackageManagerBackend(LogosAPI* logosAPI = nullptr, QObject* parent = nullptr);
+    explicit PackageManagerBackend(QObject* parent = nullptr);
     ~PackageManagerBackend() = default;
 
     QAbstractItemModel* packages() const;
+
+    // Fires once the generated glue has wired modules(); the typed
+    // package_manager / package_downloader surfaces are live, so the initial
+    // catalog load and the event subscriptions start from here. Doing it in
+    // the constructor would run before the framework hands the dependencies
+    // over.
+    void onContextReady() override;
 
 public slots:
     // Overrides of the pure-virtual slots generated from the .rep.
@@ -244,7 +259,7 @@ private:
     void installOnePackage(const QVariantMap& dl,
                            std::function<void(bool success, const QString& error)> onDone);
 
-    // Connection-readiness predicates — wrap the m_logosAPI null-check + the
+    // Connection-readiness predicates — wrap the context-ready check + the
     // per-client isConnected() check that nine call sites in the .cpp need to
     // gate IPC against.
     bool clientReady(const char* moduleName) const;
@@ -278,7 +293,6 @@ private:
     PackageListModel*    m_packageModel;
     PackagesFilterProxy* m_packagesFilterProxy;
     PackagesPagingProxy* m_packagesPagingProxy;
-    LogosAPI*            m_logosAPI;
     int m_reloadGeneration = 0;
 
     // Unfiltered catalog. Category / type filters run on the proxy without a
