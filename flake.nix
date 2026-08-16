@@ -2,7 +2,11 @@
   description = "Package Manager UI plugin for managing plugins and packages";
 
   inputs = {
-    logos-module-builder.url = "github:logos-co/logos-module-builder";
+    # Rev-pinned deliberately: the generated view-plugin glue this module now
+    # relies on is emitted by logos-qt-generator --backend ui, which lives on
+    # logos-module-builder's feat/sdk-codegen-b4-qt-host-repoint branch, not on
+    # its master — a bare url would relock to master and drop the generator.
+    logos-module-builder.url = "github:logos-co/logos-module-builder/c60d4a9cf32cb5281909e53159c9c4cfeb993847";
 
     package_manager.url = "github:logos-co/logos-package-manager-module";
     package_downloader.url = "github:logos-co/logos-package-downloader-module";
