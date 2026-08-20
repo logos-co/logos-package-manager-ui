@@ -40,12 +40,11 @@ QString PackageManagerBackend::buildDepsJson(const QList<PackageInstallSpec>& sp
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 }
 
-PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent)
+PackageManagerBackend::PackageManagerBackend(QObject* parent)
     : PackageManagerUiSimpleSource(parent)
     , m_packageModel(new PackageListModel(this))
     , m_packagesFilterProxy(new PackagesFilterProxy(this))
     , m_packagesPagingProxy(new PackagesPagingProxy(this))
-    , m_logosAPI(logosAPI)
 {
     // Initialise base-class properties to sane defaults.
     setSelectedCategoryIndex(0);
@@ -135,10 +134,6 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
                 m_filterApplyTimer->start();
             });
 
-    if (!m_logosAPI) {
-        m_logosAPI = new LogosAPI("core", this);
-    }
-
     // Auto-refresh the catalog on package_manager file mutations. Covers both
     // PMU- and Basecamp-initiated flows since the module is the common point.
     // Targets refreshPackages() (not refreshCatalog) because file mutations
@@ -166,7 +161,14 @@ PackageManagerBackend::PackageManagerBackend(LogosAPI* logosAPI, QObject* parent
         if (catPending)  applyCategoryFilter();
         if (typePending) applyTypeFilter();
     });
+}
 
+void PackageManagerBackend::onContextReady()
+{
+    // modules() is live from here on. The dependency clients still need a
+    // moment to connect, so the setup below keeps its existing retry loop —
+    // this hook only replaces the constructor's singleShot kick-off, which
+    // could otherwise fire before the framework wired the typed deps.
     QTimer::singleShot(0, this, [this]() { finishInitialSetup(0); });
 }
 
@@ -497,8 +499,11 @@ static QVariantMap buildLocalPackageRow(const QVariantMap& installed)
 
 bool PackageManagerBackend::clientReady(const char* moduleName) const
 {
-    if (!m_logosAPI) return false;
-    LogosAPIClient* c = m_logosAPI->getClient(moduleName);
+    // Guard on the context: modules() is only valid once the generated glue
+    // has wired it (isContextReady()), and `api` is the LogosAPI the glue
+    // built the typed wrappers from — the same one their clients live on.
+    if (!isContextReady()) return false;
+    LogosAPIClient* c = modules().api->getClient(moduleName);
     return c && c->isConnected();
 }
 
@@ -596,7 +601,7 @@ void PackageManagerBackend::refreshCatalog()
     // reported result. (The debounced file-event path deliberately
     // still calls refreshPackages() directly — a local file mutation
     // doesn't warrant a network round-trip.)
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.refreshCatalogAsync([self](QVariantMap r) {
         if (!self) return;
@@ -634,7 +639,7 @@ void PackageManagerBackend::installLocalPackage(QUrl fileUrl)
     // what tells a fresh install apart from an install over an existing copy,
     // which decides WHICH gate to open below.
     const QString fileLabel = fi.fileName();
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_manager.inspectPackageAsync(filePath,
         [self, filePath, fileLabel](QVariantMap info) {
@@ -660,7 +665,7 @@ void PackageManagerBackend::installLocalPackage(QUrl fileUrl)
             self->m_pendingLocalInstalls.insert(name, filePath);
             const QString noDepChanges = QStringLiteral("[]");
 
-            LogosModules logos(self->m_logosAPI);
+            LogosModules& logos = self->modules();
             if (!alreadyInstalled) {
                 logos.package_manager.requestInstallAsync(name, version, QString(), noDepChanges,
                     [self, name](QVariantMap result) {
@@ -715,7 +720,7 @@ void PackageManagerBackend::refreshPackages()
     // repository); category list is derived from it client-side so
     // subsequent category clicks only update the proxy filter — no
     // network round-trip and no model rebuild.
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.getCatalogAsync([self, currentGeneration](QVariantList packagesArray) {
         if (!self || self->m_reloadGeneration != currentGeneration) return;
@@ -735,11 +740,11 @@ void PackageManagerBackend::refreshPackages()
         categoryList.append(seen);
         self->setCategories(categoryList);
 
-        LogosModules logos2(self->m_logosAPI);
+        LogosModules& logos2 = self->modules();
         logos2.package_manager.getInstalledPackagesAsync([self, currentGeneration, packagesArray](QVariantList installedPackages) {
             if (!self || self->m_reloadGeneration != currentGeneration) return;
 
-            LogosModules logos3(self->m_logosAPI);
+            LogosModules& logos3 = self->modules();
             logos3.package_manager.getValidVariantsAsync([self, currentGeneration, packagesArray, installedPackages](QVariant result) {
                 if (!self || self->m_reloadGeneration != currentGeneration) return;
                 QStringList validVariants = result.toStringList();
@@ -752,7 +757,7 @@ void PackageManagerBackend::refreshPackages()
                 self->recomputeAvailableTypes();
                 self->applyCategoryFilter();
 
-                LogosModules logos4(self->m_logosAPI);
+                LogosModules& logos4 = self->modules();
                 logos4.package_downloader.listRepositoriesAsync(
                     [self, currentGeneration](QVariantList repos) {
                         if (!self || self->m_reloadGeneration != currentGeneration) return;
@@ -968,7 +973,7 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     }
 
     qDebug() << "Download complete for" << packageName << "at" << filePath << "— installing...";
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     // Installing was left on the default 20 s IPC deadline while DOWNLOADING
     // gets five minutes -- backwards. Downloading is network-bound and can be
@@ -1186,7 +1191,7 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     PackageInstallSpec spec; spec.name = packageName;
     spec.repositoryUrl = repoUrl; spec.version = version;
     const QString depsJson = buildDepsJson({spec});
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
         [self, packageName, includeDeps](QVariantList results) {
@@ -1353,7 +1358,7 @@ void PackageManagerBackend::installSpecs(const QList<PackageInstallSpec>& specs,
     // packages I selected" semantics.
     const QString depsJson = buildDepsJson(specs);
 
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
         [self, includeDeps](QVariantList results) {
@@ -1486,7 +1491,7 @@ void PackageManagerBackend::runDepPreviewForAction(const QString& packageName,
         const QString ver = m.value("version").toString();
         if (!n.isEmpty() && !ver.isEmpty()) installedByName.insert(n, ver);
     }
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.resolveDependenciesAsync(depsJson, installedJson,
         [self, packageName, moduleName, repoUrl, version, actionKind,
@@ -1528,7 +1533,7 @@ void PackageManagerBackend::dispatchPendingAction(const QString& packageName,
     // download+install (onInstallApproved / onUpgradeUninstallDone). Deps are
     // always included now — the host dialog is confirm-or-cancel, with no
     // "just the package" split — so PendingUpgradeMeta.includeDeps stays true.
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     switch (static_cast<PendingDepConfirm::Action>(actionKind)) {
     case PendingDepConfirm::Install:
@@ -1633,7 +1638,7 @@ void PackageManagerBackend::uninstallSelected()
         return;
     }
 
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_manager.requestMultiUninstallAsync(moduleNames,
         [self, moduleNames](QVariantMap result) {
@@ -1666,7 +1671,7 @@ void PackageManagerBackend::uninstall(int index)
         return;
     }
 
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_manager.requestUninstallAsync(name,
         [self](QVariantMap result) {
@@ -1746,7 +1751,7 @@ void PackageManagerBackend::subscribePackageManagerCancellationEvents()
 
     static const QString kReasonUserCancelled = QStringLiteral("user cancelled");
 
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
 
     // Subscribe a cancellation event with a per-event toast formatter.
@@ -1797,7 +1802,7 @@ void PackageManagerBackend::subscribePackageManagerRefreshEvents()
 {
     if (!packageManagerReady()) return;
 
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
 
     QPointer<PackageManagerBackend> self(this);
     auto arm = [self](const QVariantList&) {
@@ -1825,7 +1830,7 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
 {
     if (!clientReady("package_downloader")) return;
 
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.on("catalogChanged", [self](const QVariantList&) {
         if (!self) return;
@@ -1837,7 +1842,7 @@ void PackageManagerBackend::subscribePackageManagerUpgradeEvents()
 {
     if (!packageManagerReady()) return;
 
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
 
     // upgradeUninstallDone fires after confirmUpgrade removes the old version.
@@ -1967,7 +1972,7 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     spec.version       = releaseTag;          // empty = newest matching
     const QString depsJson = buildDepsJson({spec});
 
-    LogosModules logos(m_logosAPI);
+    LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
         [self, displayName, mode, includeDeps = meta.includeDeps]

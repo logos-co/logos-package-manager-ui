@@ -3,6 +3,7 @@
   "display_name": "Package Manager",
   "version": "1.0.0",
   "type": "ui_qml",
+  "interface": "universal",
   "category": "ui",
   "description": "Package Manager UI plugin for managing plugins and packages",
   "main": "package_manager_ui_plugin",
@@ -12,6 +13,11 @@
     "package_manager",
     "package_downloader"
   ],
+  "codegen": {
+    "rep": "src/package_manager_ui.rep",
+    "backend_class": "PackageManagerBackend",
+    "backend_header": "PackageManagerBackend.h"
+  },
   "nix": {
     "packages": {
       "build": [],

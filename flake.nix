@@ -2,6 +2,19 @@
   description = "Package Manager UI plugin for managing plugins and packages";
 
   inputs = {
+    # Unpinned again. This carried c60d4a9 (tip of
+    # feat/sdk-codegen-b4-qt-host-repoint) because the generated view-plugin
+    # glue this module now relies on is emitted by
+    # `logos-qt-generator --backend ui`, and neither that generator backend nor
+    # the builder's `uiCodegen` hand-off had reached the builder's master.
+    # logos-module-builder#203 ("take the view templates from
+    # logos-view-module") merged the whole B4 stack: master (8cd62c7) has
+    # lib/modulePreConfigure.nix's `uiCodegen` — byte-identical to the pinned
+    # rev's — and carries ZERO rev pins of its own, so it locks logos-cpp-sdk,
+    # logos-qt-sdk, logos-plugin-qt and logos-protocol at their (also merged)
+    # masters. NOTE: #203 was SQUASH-merged, so
+    # `git merge-base --is-ancestor c60d4a9 master` is correctly false —
+    # ancestry is the wrong test here, the files are the test.
     logos-module-builder.url = "github:logos-co/logos-module-builder";
 
     package_manager.url = "github:logos-co/logos-package-manager-module";
