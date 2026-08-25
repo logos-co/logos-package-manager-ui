@@ -83,6 +83,22 @@ QtObject {
         d.selectedPackageIndex = i
         backend.requestPackageDetails(i)
     }
+    // Find a package's row by name and open its details panel..
+    function showDetailsForName(name) {
+        if (!packagesModel || !name) return false
+        var nameRole = packageRoleIds ? packageRoleIds.name : undefined
+        if (nameRole === undefined) return false
+
+        for (var i = 0; i < packagesModel.rowCount(); ++i) {
+            var idx = packagesModel.index(i, 0)
+            if (packagesModel.data(idx, nameRole) === name) {
+                requestDetails(i)
+                return true
+            }
+        }
+        return false
+    }
+
     function clearSelectedDetails() {
         d.selectedPackageDetails = ({})
         d.selectedPackageIndex = -1
@@ -143,6 +159,16 @@ QtObject {
         }
     }
 
-    // Request basecamp to navigate to Settings → Repositories.
-    function navigateToRepositories()        { if (backend) backend.navigateToRepositories() }
+    // Ask the shell to show Settings → Repositories.
+    function navigateToRepositories() {
+        if (typeof logos === "undefined" || typeof logos.request !== "function") {
+            console.warn("PMUI: no logos.request on this host — cannot open Repositories")
+            return
+        }
+        logos.request("logos.repositories.manage", {}, function (result) {
+            if (!result || !result.ok)
+                console.warn("PMUI: repositories intent failed:",
+                             result ? result.error : "no result")
+        })
+    }
 }

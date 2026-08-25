@@ -86,9 +86,6 @@ public slots:
     // QAbstractItemModel interface that gets remoted.
     QString displayNameForModule(QString moduleName) override;
 
-    // Emits navigateToRepositoriesRequested() across the QtRO boundary so
-    // basecamp's ContentViews.qml can route to Settings → Repositories.
-    void navigateToRepositories() override;
 
 private:
     // Mirrors package_manager's UpgradeMode; passed to requestUpgrade as int
