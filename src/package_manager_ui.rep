@@ -158,16 +158,6 @@ class PackageManagerUi
     // row matches (e.g. a dependent outside the active category filter).
     SLOT(QString displayNameForModule(QString moduleName))
 
-    // Called by QML when the user clicks "Manage Repositories". The
-    // implementation emits navigateToRepositoriesRequested() which crosses
-    // the QtRO process boundary so basecamp can route to its settings screen.
-    SLOT(void navigateToRepositories())
-
-    // Emitted by navigateToRepositories(). Crosses the QtRO process boundary;
-    // UIPluginManager in basecamp catches it on the replica and forwards it
-    // to MainUIBackend::navigateToRepositoriesRequested for QML to handle.
-    SIGNAL(navigateToRepositoriesRequested())
-
     // User-actionable error; errorType maps to the ErrorType enum.
     SIGNAL(errorOccurred(int errorType))
     // Per-package install progress updates.

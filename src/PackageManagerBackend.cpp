@@ -2010,12 +2010,6 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 
-void PackageManagerBackend::navigateToRepositories()
-{
-    qDebug() << "PackageManagerBackend: navigate to repositories settings requested";
-    emit navigateToRepositoriesRequested();
-}
-
 QString PackageManagerBackend::displayNameForModule(QString moduleName)
 {
     // Thin delegate to the local model. Needs to live here (not on the model

@@ -13,6 +13,17 @@
     "package_manager",
     "package_downloader"
   ],
+  "uses": [
+    {
+      "intent": "logos.repositories.manage",
+      "cardinality": "single"
+    }
+  ],
+  "provides": [
+    {
+      "intent": "packages.show"
+    }
+  ],
   "codegen": {
     "rep": "src/package_manager_ui.rep",
     "backend_class": "PackageManagerBackend",

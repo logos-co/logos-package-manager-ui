@@ -260,6 +260,19 @@ Rectangle {
     // Backend signal → dialog payload. Mirrors the .rep signature
     // (requestKey first), packed into the QVariantMap openWith() wants.
     Connections {
+        target: logos
+        ignoreUnknownSignals: true
+        function onIntentRequested(requestId, intent, params, requesterName) {
+            if (intent !== "packages.show") {
+                logos.respond(requestId, false, ({}), "failed")
+                return
+            }
+            var shown = store.showDetailsForName(params.name)
+            logos.respond(requestId, shown, ({}), shown ? "" : "failed")
+        }
+    }
+
+    Connections {
         target: store.backend
         ignoreUnknownSignals: true
         function onInstallDepsConfirmationRequested(requestKey, packageName,
