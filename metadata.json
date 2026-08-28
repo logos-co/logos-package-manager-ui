@@ -14,10 +14,10 @@
     "package_downloader"
   ],
   "uses": [
-    {
-      "intent": "logos.repositories.manage",
-      "cardinality": "single"
-    }
+    {"intent": "logos.repositories.manage", "cardinality": "single"},
+    {"intent": "logos.packages.confirm_install", "cardinality": "single"},
+    {"intent": "logos.packages.confirm_uninstall", "cardinality": "single"},
+    {"intent": "logos.packages.confirm_upgrade", "cardinality": "single"}
   ],
   "provides": [
     {

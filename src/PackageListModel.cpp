@@ -434,10 +434,6 @@ QStringList PackageListModel::getInstallableSelectedPackageNames() const
     return collectSelectedField(m_packages, isInstallableRow, "name");
 }
 
-QStringList PackageListModel::getUninstallableSelectedModuleNames() const
-{
-    return collectSelectedField(m_packages, isUninstallableRow, "moduleName");
-}
 
 QVariantMap PackageListModel::packageAt(int index) const
 {

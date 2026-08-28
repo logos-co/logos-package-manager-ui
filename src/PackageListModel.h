@@ -29,7 +29,7 @@ struct PackageInstallSpec {
 // buildActionPlanForSelected(); consumed by
 // PackageManagerBackend::runSelectedActions() — installs (+ retries)
 // batch through downloadResolvedDependencies, version changes dispatch
-// per-row to package_manager.requestUpgrade.
+// per-row through the host's confirm_upgrade intent.
 //
 // Per-action counts are tracked explicitly (rather than derived) so the
 // confirm-summary popup can label retries separately from fresh
@@ -177,7 +177,6 @@ public:
     int getInstallableSelectedCount() const;
     int getUninstallableSelectedCount() const;
     QStringList getInstallableSelectedPackageNames() const;
-    QStringList getUninstallableSelectedModuleNames() const;
     void clearSelectionsByPackageNames(const QStringList& names);
     void clearSelectionsByModuleNames(const QStringList& moduleNames);
 

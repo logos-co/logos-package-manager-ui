@@ -68,8 +68,81 @@ test("structure: install-local button is present and enabled", async (app) => {
     throw new Error(`install-local button should be enabled when idle, got ${enabled}`);
   }
   // Deliberately NOT clicking: the click opens a native file dialog, and the
-  // install behind it routes through the package_manager gate, which needs a
-  // host (basecamp) to acknowledge it. Neither is available here.
+  // install behind it needs a host to service the `logos.packages.confirm_*`
+  // intent. Neither is available here.
+});
+
+test("failure notice: a message surfaces and can be dismissed", async (app) => {
+  await waitForPmuiLoaded(app);
+
+  // Every confirmation failure — refused, unreachable, cancelled, unanswered —
+  // reaches the user through store.lastMessage and nothing else. Before this
+  // existed those outcomes were completely silent, so pin both directions.
+  //
+  // The message is injected rather than provoked: provoking one means raising
+  // a real confirm intent, and there is no host here to service it.
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) {
+    throw new Error('No object found with objectName "pmui.BackendStore"');
+  }
+  const storeId = store.matches[0].id;
+
+  await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: 'd.lastMessage = "test: could not reach the host"',
+  });
+
+  const notice = await app.findByProperty("objectName", "pmui.messageNotice");
+  if (!notice.matches || notice.matches.length === 0) {
+    throw new Error('No object found with objectName "pmui.messageNotice"');
+  }
+  const noticeId = notice.matches[0].id;
+
+  await app.waitFor(
+    async () => {
+      const shown = await propertyOf(app, noticeId, "shown");
+      if (shown !== true) throw new Error(`notice not shown, got ${shown}`);
+    },
+    { timeout: 5000, interval: 250, description: "failure notice to appear" }
+  );
+
+  const message = await propertyOf(app, noticeId, "message");
+  if (message !== "test: could not reach the host") {
+    throw new Error(`notice shows the wrong text: ${JSON.stringify(message)}`);
+  }
+
+  // Dismiss the way the USER does — LogosNotice.hide() is what its close button
+  // calls. Going through dismissMessage() instead would miss the bug this
+  // guards: hide() ASSIGNS shown, so binding it destroys the binding and the
+  // notice never returns.
+  await app.inspector.send("evaluate", {
+    objectId: noticeId,
+    expression: "hide()",
+  });
+  await app.waitFor(
+    async () => {
+      const msg = await storeProperty(app, "lastMessage");
+      if (msg !== "") throw new Error(`lastMessage not cleared, got ${JSON.stringify(msg)}`);
+      const shown = await propertyOf(app, noticeId, "shown");
+      if (shown !== false) throw new Error("notice still shown after dismiss");
+    },
+    { timeout: 5000, interval: 250, description: "failure notice to clear" }
+  );
+
+  // The one that matters: a SECOND failure after a dismiss must still surface.
+  await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: 'd.lastMessage = "test: a second failure"',
+  });
+  await app.waitFor(
+    async () => {
+      const shown = await propertyOf(app, noticeId, "shown");
+      if (shown !== true) throw new Error("notice did not re-show after a dismiss");
+    },
+    { timeout: 5000, interval: 250, description: "failure notice to re-appear" }
+  );
+
+  await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
 });
 
 test("structure: table headers render", async (app) => {

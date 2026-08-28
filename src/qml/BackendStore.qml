@@ -52,11 +52,102 @@ QtObject {
 
     readonly property alias selectedPackageDetails: d.selectedPackageDetails
 
+    // Last user-facing failure, "" when there is nothing to show. Every backend
+    // failure channel lands here — without this the confirm flow fails silently,
+    // since a refused or unanswered intent has no other visible outcome.
+    readonly property alias lastMessage: d.lastMessage
+    function dismissMessage() { d.lastMessage = "" }
+
     property QtObject d: QtObject {
         id: d
 
         property var selectedPackageDetails: ({})
         property int selectedPackageIndex: -1
+        property string lastMessage: ""
+
+        function canRequest() {
+            return typeof logos !== "undefined" && typeof logos.request === "function"
+        }
+
+        // Ask the host, then run `onApproved` if it said yes. Every other
+        // outcome — including the user's own cancel — goes to
+        // reportActionFailed, which owns both the cleanup and the decision to
+        // stay quiet.
+        function confirm(intent, names, params, onApproved) {
+            if (!canRequest()) {
+                console.warn("PMUI: no logos.request on this host — cannot confirm", intent)
+                if (store.backend) store.backend.reportActionFailed(names, "unavailable")
+                return
+            }
+            logos.request(intent, params, function (result) {
+                if (!store.backend) return
+                if (result && result.ok) { onApproved(); return }
+                store.backend.reportActionFailed(
+                    names, result ? (result.error || "failed") : "failed")
+            })
+        }
+
+        // Read the fields the confirm payloads need out of the paging proxy.
+        // Returns null when the row is gone — a refresh can land between render
+        // and click.
+        function row(i) {
+            if (!store.packagesModel || !store.packageRoleIds) return null
+            var idx = store.packagesModel.index(i, 0)
+            if (!idx.valid) return null
+            var roles = store.packageRoleIds
+            return {
+                name:          store.packagesModel.data(idx, roles.name) || "",
+                moduleName:    store.packagesModel.data(idx, roles.moduleName) || "",
+                version:       store.packagesModel.data(idx, roles.version) || "",
+                repositoryUrl: store.packagesModel.data(idx, roles.repositoryUrl) || ""
+            }
+        }
+
+        function confirmInstall(r) {
+            if (!r.name) return
+            confirm("logos.packages.confirm_install", [r.name],
+                { name: r.name, version: r.version, repositoryUrl: r.repositoryUrl },
+                function () {
+                    store.backend.performInstall(r.name, r.version, r.repositoryUrl)
+                })
+        }
+
+        function confirmUpgrade(r, mode) {
+            if (!r.moduleName) return
+            confirm("logos.packages.confirm_upgrade", [r.moduleName],
+                { name: r.moduleName, version: r.version, mode: mode,
+                  repositoryUrl: r.repositoryUrl },
+                function () {
+                    store.backend.performUpgrade(r.moduleName, r.version, mode,
+                                                 r.repositoryUrl)
+                })
+        }
+
+        function confirmUninstall(r) {
+            if (!r.moduleName) return
+            confirm("logos.packages.confirm_uninstall", [r.moduleName],
+                { names: [r.moduleName] },
+                function () { store.backend.performUninstall([r.moduleName]) })
+        }
+
+        function errorText(code) {
+            switch (code) {
+            case PackageManagerUi.InstallationAlreadyInProgress:
+                return qsTr("An installation is already in progress.")
+            case PackageManagerUi.NoPackagesSelected:
+                return qsTr("No packages selected.")
+            case PackageManagerUi.PackageManagerNotConnected:
+                return qsTr("The package manager is not connected.")
+            case PackageManagerUi.UninstallFailed:
+                return qsTr("Uninstall failed.")
+            case PackageManagerUi.PackageNotUninstallable:
+                return qsTr("That package cannot be uninstalled.")
+            case PackageManagerUi.LocalPackageInvalid:
+                return qsTr("That file is not a valid .lgx package.")
+            default:
+                return ""
+            }
+        }
 
         property Connections conn: Connections {
             target: store.backend
@@ -65,15 +156,31 @@ QtObject {
             function onPackageDetailsLoaded(details) {
                 d.selectedPackageDetails = details || ({})
             }
+
+            function onCancellationOccurred(name, message) { d.lastMessage = message }
+            function onErrorOccurred(code) {
+                var text = d.errorText(code)
+                if (text.length > 0) d.lastMessage = text
+            }
+
+            // A local .lgx, once the backend has read its manifest — the one
+            // action whose identity QML cannot determine for itself. No repo
+            // url: the file is already on disk.
+            function onLocalPackageInspected(name, version, mode, isUpgrade) {
+                // Reuse the row-shaped payload the confirm helpers expect; a
+                // local file has no repository to pin against.
+                var r = { name: name, moduleName: name, version: version,
+                          repositoryUrl: "" }
+                if (isUpgrade) d.confirmUpgrade(r, mode)
+                else           d.confirmInstall(r)
+            }
         }
     }
 
     // ─── Methods: intents called by views ───
     function refreshCatalog() { if (backend) backend.refreshCatalog() }
     function installLocalPackage(url) { if (backend) backend.installLocalPackage(url) }
-    // New bulk path — used by the "Run Actions (N)" header button.
-    // Backend builds the per-row action plan and dispatches installs
-    // through the batched downloader + version changes per-row.
+    // Unwired — the bulk surface is off, and the backend slot is a stub.
     function runSelectedActions() { if (backend) backend.runSelectedActions() }
     function selectCategory(i) { if (backend) backend.pushSelectedCategoryIndex(i) }
     function selectType(i) { if (backend) backend.pushSelectedTypeIndex(i) }
@@ -104,22 +211,19 @@ QtObject {
         d.selectedPackageIndex = -1
     }
 
-    function installPackage(i) { if (backend) backend.installPackage(i) }
     function reloadPackage(i) { if (backend) backend.reloadPackage(i) }
-    function upgradePackage(i) { if (backend) backend.upgradePackage(i) }
-    function downgradePackage(i) { if (backend) backend.downgradePackage(i) }
-    function reinstallPackage(i) { if (backend) backend.sidegradePackage(i) }
-    function uninstallPackage(i) { if (backend) backend.uninstall(i) }
 
-    // Dep-confirm dialog responses. Routed from
-    // InstallDepsConfirm.qml's three signals back through the .rep
-    // slots — keyed on the catalog packageName so a refresh between
-    // click and confirm doesn't drop the dispatch. Backend's pending
-    // entry is drained in the with-/without-deps slots, or by
-    // cancelInstallConfirm.
-    function confirmInstallWithDeps(name)    { if (backend) backend.confirmInstallWithDeps(name) }
-    function confirmInstallWithoutDeps(name) { if (backend) backend.confirmInstallWithoutDeps(name) }
-    function cancelInstallConfirm(name)      { if (backend) backend.cancelInstallConfirm(name) }
+    // ─── Per-row actions ───
+    //
+    // Each raises its confirm intent DIRECTLY from the click. Nothing goes to
+    // the backend first: every field the payload needs is already in the model,
+    // and the host resolves the dependency changes itself rather than trusting
+    // ours. The backend is only called once the host has approved.
+    function installPackage(i)   { var r = d.row(i); if (r) d.confirmInstall(r) }
+    function upgradePackage(i)   { var r = d.row(i); if (r) d.confirmUpgrade(r, 0) }
+    function downgradePackage(i) { var r = d.row(i); if (r) d.confirmUpgrade(r, 1) }
+    function reinstallPackage(i) { var r = d.row(i); if (r) d.confirmUpgrade(r, 2) }
+    function uninstallPackage(i) { var r = d.row(i); if (r) d.confirmUninstall(r) }
 
     // Dispatch the per-row primary action emitted by ActionPill. Keeps
     // the QML side from having to switch on the enum: it just forwards
@@ -128,11 +232,11 @@ QtObject {
     function runRowAction(i, action) {
         if (!backend) return
         switch (action) {
-        case PackageManagerUi.Install:   backend.installPackage(i);   break
-        case PackageManagerUi.Retry:     backend.installPackage(i);   break
-        case PackageManagerUi.Upgrade:   backend.upgradePackage(i);   break
-        case PackageManagerUi.Downgrade: backend.downgradePackage(i); break
-        case PackageManagerUi.Reinstall: backend.sidegradePackage(i); break
+        case PackageManagerUi.Install:   installPackage(i);   break
+        case PackageManagerUi.Retry:     installPackage(i);   break
+        case PackageManagerUi.Upgrade:   upgradePackage(i);   break
+        case PackageManagerUi.Downgrade: downgradePackage(i); break
+        case PackageManagerUi.Reinstall: reinstallPackage(i); break
         // NoOp / NotAvailable — pill is non-clickable for these; this
         // is the safety net for stale events.
         default: break
