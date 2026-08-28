@@ -56,23 +56,16 @@ public slots:
     void installSelected() override;   // kept for back-compat, unwired from UI
     void uninstallSelected() override; // kept for back-compat, unwired from UI
     void togglePackage(int index, bool checked) override;
-    void installPackage(int index) override;
     void reloadPackage(int index) override;
-    void uninstall(int index) override;
-    void upgradePackage(int index) override;
-    void downgradePackage(int index) override;
-    void sidegradePackage(int index) override;
     void requestPackageDetails(int index) override;
 
-    // Resolver-confirm responses. See `installDepsConfirmationRequested`
-    // in the .rep for the flow. The argument is the opaque requestKey
-    // from that signal (repo-scoped + name) — unique per pending
-    // request, so a second preview for the same package name (possible
-    // across repos) can't clobber the first, and a refresh between click
-    // and confirm doesn't drop the dispatch.
-    void confirmInstallWithDeps(QString requestKey) override;
-    void confirmInstallWithoutDeps(QString requestKey) override;
-    void cancelInstallConfirm(QString requestKey) override;
+    // Run an action the host approved. QML calls these from the intent
+    // callback; the backend itself knows nothing about intents.
+    void performInstall(QString name, QString version, QString repositoryUrl) override;
+    void performUpgrade(QString moduleName, QString version, int mode,
+                        QString repositoryUrl) override;
+    void performUninstall(QStringList names) override;
+    void reportActionFailed(QStringList names, QString error) override;
 
     // Forward to PackageListModel::setRowVersion. Pure proxy — the model
     // owns the clamping, mirror-into-version/hash fields, and dataChanged
@@ -88,9 +81,6 @@ public slots:
 
 
 private:
-    // Mirrors package_manager's UpgradeMode; passed to requestUpgrade as int
-    // (avoids carrying an enum across the wire). Keep in sync with module side.
-    enum class UpgradeMode { Upgrade = 0, Downgrade = 1, Sidegrade = 2 };
 
     void refreshPackages();
 
@@ -145,47 +135,9 @@ private:
     // got to need to flip back so the row badge isn't stuck.
     void revertPendingEntries(const QVariantList& entries, int fromIndex);
 
-    // Resolve transitive deps for a (name, repoUrl, version) WITHOUT
-    // downloading, then either:
-    //   * No transitive changes needed → invoke dispatchPendingAction
-    //     immediately with includeDeps=true (single-click experience
-    //     for the common case).
-    //   * Transitive changes needed → stash a PendingDepConfirm keyed
-    //     by `packageName` and emit installDepsConfirmationRequested.
-    //     The confirm slots later pick up the pending entry and run the
-    //     matching path.
-    // `actionKind` is the per-row dispatch (Install / Upgrade / ... —
-    // see PendingDepConfirm::Action).
-    void runDepPreviewForAction(const QString& packageName,
-                                const QString& moduleName,
-                                const QString& repoUrl,
-                                const QString& version,
-                                int actionKind);
 
-    // Route the install / upgrade / downgrade / sidegrade the user picked
-    // through the package_manager gate (requestInstall / requestUpgrade) so
-    // the host (basecamp) owns the confirmation dialog. `depChangesJson` is the
-    // resolved transitive change list, forwarded verbatim into the gate so the
-    // host dialog can list it. Called from runDepPreviewForAction once the
-    // resolver returns. The module's installApproved / upgradeUninstallDone
-    // event then drives the actual download+install (onInstallApproved /
-    // onUpgradeUninstallDone).
-    void dispatchPendingAction(const QString& packageName,
-                               const QString& moduleName,
-                               const QString& repoUrl,
-                               const QString& version,
-                               int actionKind,
-                               const QString& depChangesJson);
 
-    // Compute the user-facing change list. Walks `resolved` (output of
-    // package_downloader.resolveDependencies) for transitive (topLevel
-    // != true) entries, looks each up in `installedByName`, and emits
-    // a per-row description: {name, action, fromVersion, toVersion,
-    // repository}. action is "install" if not installed, otherwise
-    // "upgrade" / "downgrade" based on versionCmp.
-    QVariantList computeDepChanges(const QVariantList& resolved,
-                                   const QHash<QString, QString>& installedByName,
-                                   const QHash<QString, QString>& repoUrlToName) const;
+
 
     // Serialise m_installedPackagesCache to the
     // [{name, version, rootHash}] shape package_downloader.resolveDependencies
@@ -219,38 +171,20 @@ private:
     // published the two has*Selection booleans.
     void refreshActionSummary();
 
-    // Shared body for upgrade / downgrade / sidegrade — resolves the row,
-    // pins the per-row target version, forwards to package_manager.requestUpgrade.
-    void requestVersionChange(int index, UpgradeMode mode);
-
-    // Cancellation events: filters out "user cancelled" (user initiated it,
-    // no toast needed); other reasons surface via cancellationOccurred.
-    void subscribePackageManagerCancellationEvents();
 
     // File-install / file-uninstall events → debounced refreshPackages().
     // Covers both PMU-initiated and Basecamp-Modules-initiated mutations
     // since the module is the common point both flow through.
     void subscribePackageManagerRefreshEvents();
 
-    // upgradeUninstallDone fires after confirmUpgrade removes the old version;
-    // PMU then drives the download+install of the new one.
-    void subscribePackageManagerUpgradeEvents();
-
     // Auto-refresh the catalog whenever the package_downloader emits catalogChanged.
     void subscribePackageDownloaderEvents();
 
-    // Handler for upgradeUninstallDone. Payload keys by moduleName; the
-    // catalog `name` (used by the downloader) is resolved via PackageListModel.
+    // Second half of an approved upgrade: old version gone, download+install
+    // the new one. Catalog `name` resolved from moduleName via PackageListModel.
     void onUpgradeUninstallDone(const QString& moduleName,
                                 const QString& releaseTag,
                                 int mode);
-
-    // Handler for installApproved — the fresh-install sibling of
-    // onUpgradeUninstallDone. The host confirmed the gated catalog install;
-    // PMU runs the download+install for (name, version=releaseTag, repo).
-    void onInstallApproved(const QString& name,
-                           const QString& releaseTag,
-                           const QString& repositoryUrl);
 
     // onDone invoked with (success, errorMsg) regardless of outcome.
     void installOnePackage(const QVariantMap& dl,
@@ -302,43 +236,16 @@ private:
     //   repositoryUrl: scopes the post-uninstall download to the row's
     //     source repo, so a same-named package in another repo doesn't
     //     win the resolver's date-tiebreak.
-    //   includeDeps: set false when the user picked "install just the
-    //     package" from the dep-confirm dialog; tells onUpgradeUninstallDone
-    //     to install only the top-level entry from the resolver and drop
-    //     any transitive picks.
-    // Drained on use in onUpgradeUninstallDone, keyed by moduleName
-    // because that's the identifier package_manager echoes back in the
-    // upgradeUninstallDone event.
+    // Drained on use in onUpgradeUninstallDone, keyed by moduleName.
     struct PendingUpgradeMeta {
         QString repositoryUrl;
-        bool    includeDeps = true;
     };
     QHash<QString, PendingUpgradeMeta> m_pendingUpgradeByModule;
 
-    // Local .lgx files awaiting gate approval, keyed by the package name
-    // inspectPackage reported (the same name we hand to requestInstall /
-    // requestUpgrade, so it's what the module echoes back in
-    // installApproved / upgradeUninstallDone).
+    // Local .lgx files awaiting host approval, keyed by the package name
+    // inspectPackage reported (the same name carried in the confirm_install /
+    // confirm_upgrade payload, so it's what comes back on approval).
     QHash<QString, QString> m_pendingLocalInstalls;
-
-    // Pending dep-confirm requests, keyed by an opaque requestKey
-    // (repositoryUrl + '\n' + name — see depConfirmKey()). Populated by
-    // runDepPreviewForAction when the resolver returns transitive
-    // changes; drained by confirmInstallWith{,out}Deps /
-    // cancelInstallConfirm. The key is repo-scoped so two rows that
-    // share a package name across repos get distinct pending entries
-    // (keying by name alone let a second preview clobber the first),
-    // and it's value-derived (not a row index) so it survives a model
-    // refresh between click and confirm.
-    struct PendingDepConfirm {
-        enum Action { Install = 0, Upgrade = 1, Downgrade = 2, Sidegrade = 3 };
-        QString name;            // catalog name (for display + dispatch)
-        QString moduleName;      // runtime identity (for upgrade dispatch)
-        QString repositoryUrl;
-        QString version;         // dropdown-selected target version
-        int     action = Install;
-    };
-    QHash<QString, PendingDepConfirm> m_pendingDepConfirms;
 
     // Coalesces N rapid file-install / file-uninstall events into one
     // refreshPackages() — does NOT touch releases or selected-release state.

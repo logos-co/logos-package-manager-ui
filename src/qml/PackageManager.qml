@@ -33,6 +33,27 @@ Rectangle {
             onSearchEdited: function(text) { store.setSearchText(text) }
         }
 
+        // ─── Failure notice ── the only place a refused or unanswered
+        // confirmation becomes visible; without it those outcomes look exactly
+        // like nothing having happened.
+        LogosNotice {
+            id: messageNotice
+            objectName: "pmui.messageNotice"
+            Layout.fillWidth: true
+            severity: LogosNotice.Error
+            message: store.lastMessage
+            closable: true
+            shown: false
+            onDismissed: store.dismissMessage()
+        }
+
+        Connections {
+            target: store
+            function onLastMessageChanged() {
+                messageNotice.shown = store.lastMessage.length > 0
+            }
+        }
+
         // ─── Body: Categories sidebar (left) | Right container (right) ───
         RowLayout {
             Layout.fillWidth: true
@@ -237,28 +258,7 @@ Rectangle {
         onAccepted: store.installLocalPackage(selectedFile)
     }
 
-    // ── Per-row dep-confirm popup ─────────────────────────────────
-    //
-    // Fires when the backend's resolver preview surfaces transitive
-    // changes for a per-row Install / Reinstall / Upgrade / Downgrade.
-    // No-changes case proceeds silently (no popup). The three button
-    // outcomes — with deps / just package / cancel — route through
-    // BackendStore so the backend's PendingDepConfirm entry is drained
-    // exactly once. See PackageManagerBackend::runDepPreviewForAction
-    // and the .rep `installDepsConfirmationRequested` signal for the
-    // wire format.
-    InstallDepsConfirm {
-        id: installDepsConfirm
-        // The dialog echoes back the opaque requestKey (not the package
-        // name) so the backend drains the exact pending entry — package
-        // name isn't unique across repos.
-        onConfirmedWithDeps:    function(key) { store.confirmInstallWithDeps(key) }
-        onConfirmedWithoutDeps: function(key) { store.confirmInstallWithoutDeps(key) }
-        onCancelled:            function(key) { store.cancelInstallConfirm(key) }
-    }
-
-    // Backend signal → dialog payload. Mirrors the .rep signature
-    // (requestKey first), packed into the QVariantMap openWith() wants.
+    // Provider side of `packages.show` — the shell asking us to reveal a row.
     Connections {
         target: logos
         ignoreUnknownSignals: true
@@ -271,24 +271,4 @@ Rectangle {
             logos.respond(requestId, shown, ({}), shown ? "" : "failed")
         }
     }
-
-    Connections {
-        target: store.backend
-        ignoreUnknownSignals: true
-        function onInstallDepsConfirmationRequested(requestKey, packageName,
-                                                    displayName, actionLabel,
-                                                    fromVersion, toVersion,
-                                                    depChanges) {
-            installDepsConfirm.openWith({
-                requestKey:  requestKey,
-                packageName: packageName,
-                displayName: displayName,
-                actionLabel: actionLabel,
-                fromVersion: fromVersion,
-                toVersion:   toVersion,
-                depChanges:  depChanges
-            })
-        }
-    }
-
 }
