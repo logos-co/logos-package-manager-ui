@@ -21,7 +21,8 @@
   ],
   "provides": [
     {
-      "intent": "packages.show"
+      "intent": "packages.show",
+      "handoff": true
     }
   ],
   "codegen": {
