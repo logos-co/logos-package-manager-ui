@@ -33,14 +33,26 @@
       configFile = ./metadata.json;
       flakeInputs = inputs;
 
-      # `headers`, NOT `lib` — deliberately.
+      # `headers`, NOT `lib` — because nothing here links lgx.
       #
-      # The module builder copies every *.so/*.dylib an external library ships
-      # into the plugin's output lib/, and ui-host then scans that directory and
-      # tries to load each file as a Qt plugin. Pointing at logos-package's
-      # `lib` output put liblgx.dylib there, ui-host failed to load it as a
-      # plugin, and the whole UI never rendered. The `headers` output ships no
-      # library at all, so there is nothing to copy.
+      # This plugin's only use of logos-package is the header-only
+      # `logos/semver.hpp` (RowActionResolver.h); CMakeLists declares no
+      # EXTERNAL_LIBS and the built plugin's load commands name lgx zero times.
+      # The `lib` output ships liblgx.dylib, which the module builder then
+      # stages beside the plugin and into its .lgx — 0.6 MB of library nothing
+      # loads. `headers` ships no library, so there is nothing to copy.
+      #
+      # This choice used to be load-bearing for a second, sharper reason, and
+      # the note it carried was wrong about the mechanism. ui-host does NOT scan
+      # a directory: it takes `--path <plugin>` and loads exactly that file.
+      # What actually broke was logos-standalone-app picking the backend by
+      # globbing the install dir and taking the alphabetically first library, so
+      # liblgx.dylib ("l" < "p") was handed to ui-host in place of the plugin.
+      # Fixed in logos-standalone-app#44, which resolves manifest.json's `main`.
+      # Re-checked against that fix with `lib` and liblgx.dylib present:
+      # ui-host is spawned with package_manager_ui_plugin.dylib. So `lib` is now
+      # merely wasteful rather than fatal — hence still `headers`, on the
+      # first reason alone.
       externalLibInputs = {
         lgx = {
           input = inputs.logos-package;
