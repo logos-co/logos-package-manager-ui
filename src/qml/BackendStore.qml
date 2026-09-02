@@ -158,6 +158,13 @@ QtObject {
             }
 
             function onCancellationOccurred(name, message) { d.lastMessage = message }
+            function onInstallationProgressUpdated(progressType, packageName,
+                                                   completed, total, success, error) {
+                if (success || !error) return
+                d.lastMessage = packageName.length > 0
+                                ? qsTr("%1: %2").arg(packageName).arg(error)
+                                : error
+            }
             function onErrorOccurred(code) {
                 var text = d.errorText(code)
                 if (text.length > 0) d.lastMessage = text

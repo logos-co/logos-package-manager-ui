@@ -2,6 +2,8 @@
 
 #include <QAbstractItemModel>
 
+#include "RowActionResolver.h"      // rowaction::versionCmp (shared semver)
+
 PackagesFilterProxy::PackagesFilterProxy(QObject* parent)
     : QSortFilterProxyModel(parent)
 {
@@ -53,6 +55,7 @@ void PackagesFilterProxy::recomputeRoleCaches()
     m_repositoryDisplayNameRole = -1;
     m_repositoryUrlRole         = -1;
     m_nameRole                  = -1;
+    m_versionRoles.clear();
     m_searchRoles.clear();
     if (!sourceModel()) return;
 
@@ -77,6 +80,12 @@ void PackagesFilterProxy::recomputeRoleCaches()
                                     QByteArrayLiteral("description") }) {
         const int r = m_roleByName.value(name, -1);
         if (r >= 0) m_searchRoles.append(r);
+    }
+
+    for (const QByteArray& name : { QByteArrayLiteral("version"),
+                                    QByteArrayLiteral("installedVersion") }) {
+        const int r = m_roleByName.value(name, -1);
+        if (r >= 0) m_versionRoles.append(r);
     }
 
     // Re-resolve the active sort role against the new source. Falls back to
@@ -221,6 +230,20 @@ bool PackagesFilterProxy::lessThan(const QModelIndex& left,
     const QVariant la = sourceModel()->data(left,  role);
     const QVariant ra2 = sourceModel()->data(right, role);
 
+    // Version-valued roles (the Installed column sorts by
+    // `installedVersion`) get semver ordering — the string compare below
+    // would put 0.10.0 ahead of 0.2.0, and every prerelease level with its
+    // own release. Rows with no installed version compare as lowest, so
+    // ascending groups the "—" cells together at the top.
+    if (m_versionRoles.contains(role)) {
+        const QString va = la.toString();
+        const QString vb = ra2.toString();
+        if (va.isEmpty() != vb.isEmpty()) return va.isEmpty();
+        if (!va.isEmpty()) {
+            const int c = rowaction::versionCmp(va, vb);
+            if (c != 0) return c < 0;
+        }
+    }
     // Strings are by far the dominant case (package name, type,
     // description). Fall back to QVariant's operator< for numerics.
     if (la.userType() == QMetaType::QString && ra2.userType() == QMetaType::QString) {

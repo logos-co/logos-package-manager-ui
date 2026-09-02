@@ -190,6 +190,12 @@ private:
     void installOnePackage(const QVariantMap& dl,
                            std::function<void(bool success, const QString& error)> onDone);
 
+    // Post-install check against the DISK, not against the installer's word.
+    void verifyInstalledArtifact(const QString& packageName,
+                                 const QString& expectedVersion,
+                                 const QString& expectedHash,
+                                 std::function<void(bool success, const QString& error)> onDone);
+
     // Connection-readiness predicates — wrap the context-ready check + the
     // per-client isConnected() check that nine call sites in the .cpp need to
     // gate IPC against.

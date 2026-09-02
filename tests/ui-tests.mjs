@@ -147,8 +147,11 @@ test("failure notice: a message surfaces and can be dismissed", async (app) => {
 
 test("structure: table headers render", async (app) => {
   await waitForPmuiLoaded(app);
-  // The old single "Status" column was split into per-row "Version" + "Action".
-  await app.expectTexts(["Package", "Type", "Version", "Action", "Description"]);
+  // The old single "Status" column was split into per-row version + "Action".
+  // "Installed" is what is on disk; "Available" is the picker for what would
+  // be installed — the pair is what stops the target reading as state. Size
+  // and "Released" describe the Available pick, so they follow it.
+  await app.expectTexts(["Package", "Type", "Installed", "Available", "Size", "Released", "Action", "Description"]);
 });
 
 test("store: exposes the documented properties with sane defaults", async (app) => {
@@ -415,7 +418,7 @@ test("empty state: keyed on repositoryCount, not filtered totalCount", async (ap
     throw new Error("repositoryCount must stay > 0 when only the package filter is empty");
   }
   // Package list chrome stays mounted (empty state would hide it).
-  await app.expectTexts(["Package", "Type", "Version", "Action", "Description"]);
+  await app.expectTexts(["Package", "Type", "Installed", "Available", "Size", "Released", "Action", "Description"]);
 
   // Restore so later tests start from a clean state.
   await app.inspector.send("setProperty", { objectId: searchId, property: "text", value: "" });
@@ -451,7 +454,7 @@ test("empty state: install-state filter switches do not drop repositoryCount", a
       `repositoryCount changed during install-state filter switches: before=${repoBefore} after=${repoAfter}`
     );
   }
-  await app.expectTexts(["Package", "Type", "Version", "Action", "Description"]);
+  await app.expectTexts(["Package", "Type", "Installed", "Available", "Size", "Released", "Action", "Description"]);
 }, { skip: ["offscreen"] });
 
 test("reload: clicking the reload button triggers a refresh cycle", async (app) => {
@@ -926,6 +929,194 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
       `setRowVersion landed (selectedVersionIndex=1) but size/date didn't ` +
       `update: v0 size=${size0} date=${date0} · v1 read-back size=${size1} date=${date1}. ` +
       `applyPickedSizeAndDate in PackageListModel::setRowVersion is broken.`);
+  }
+});
+
+// ─── Installed-version column ────────────────────────────────────────────
+//
+// The version on disk used to be reachable only by opening Details or by
+// hovering the small update marker — the Version cell next to it is a
+// ComboBox for the INSTALL TARGET, which reads as state and isn't. These
+// pin the dedicated column: the role reaches QML, and each cell renders the
+// row's own installedVersion (or an em dash when nothing is installed).
+
+test("installed column: model exposes the installedVersion role", async (app) => {
+  await waitForPmuiLoaded(app);
+  const roleIds = await fetchPackageRoleIds(app);
+  if (typeof roleIds?.installedVersion !== "number") {
+    throw new Error(
+      "PackageListModel must expose an installedVersion role (the Installed " +
+      "column binds to it); got: " + JSON.stringify(roleIds));
+  }
+});
+
+test("installed column: each cell shows its row's installed version", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+
+  const cells = await app.findByProperty("objectName", "pmui.installedVersionCell");
+  const cellCount = (cells.matches || []).length;
+  // Distinguish "empty fixture" from "the column stopped rendering". The
+  // offscreen fixture carries rows, so zero cells against a non-zero
+  // totalCount is a regression, not a skip.
+  if (cellCount === 0) {
+    const total = await storeProperty(app, "totalCount");
+    if (total > 0) throw new Error(`${total} packages but no Installed cells rendered`);
+    return;
+  }
+
+  for (const m of cells.matches.slice(0, 10)) {
+    // `installed` is the cell's own property (mirrors rowItem.installedVersion),
+    // so this reads both sides of the binding without needing row scope.
+    const res = await app.inspector.send("evaluate", {
+      objectId: m.id,
+      expression: "text + '|' + installed",
+    });
+    if (res.error) throw new Error(`evaluate threw: ${res.error}`);
+    const [shown, installed] = String(res.result).split("|");
+    const expected = installed.length > 0 ? installed : "—";
+    if (shown !== expected) {
+      throw new Error(
+        `Installed cell renders "${shown}" but the row's installedVersion is ` +
+        `"${installed}" (expected "${expected}")`);
+    }
+  }
+});
+
+test("action pill: the tooltip names the version it would install", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+
+  const pills = await app.findByProperty("objectName", "pmui.ActionPill");
+  if (!pills.matches || pills.matches.length === 0) {
+    const total = await storeProperty(app, "totalCount");
+    if (total > 0) throw new Error(`${total} packages but no ActionPills rendered`);
+    return;
+  }
+
+  for (const m of pills.matches.slice(0, 10)) {
+    // The pill label is the bare verb, so the tooltip is the ONLY place the
+    // target version appears on the action itself. If tooltipText stops
+    // naming it, "Upgrade" is back to not saying what it would install.
+    const res = await app.inspector.send("evaluate", {
+      objectId: m.id,
+      expression: `(function() {
+        var runnable = [PackageManagerUi.Install, PackageManagerUi.Upgrade,
+                        PackageManagerUi.Downgrade, PackageManagerUi.Reinstall];
+        if (installing || runnable.indexOf(action) < 0) return "skip";
+        var to = modelData && modelData.version ? String(modelData.version) : "";
+        if (to === "") return "skip";
+        var tip = d.tooltipText(modelData, action);
+        return tip.indexOf(to) >= 0 ? "ok" : ("missing|" + tip + "|" + to);
+      })()`,
+    });
+    if (res.error) throw new Error(`evaluate threw: ${res.error}`);
+    const result = String(res.result);
+    if (result.startsWith("missing")) {
+      const [, tip, version] = result.split("|");
+      throw new Error(
+        `runnable pill's tooltip reads "${tip}" but it would install ` +
+        `"${version}" — the tooltip is the only surface naming the target`);
+    }
+  }
+});
+
+// ─── Download progress on the install pill ───────────────────────────────
+//
+// The full byte-progress path needs a real download (package_downloader
+// emitting downloadProgress over IPC), which the offscreen fixture has no
+// network for. What IS assertable here is the contract the rendering hangs
+// off: the two model roles exist and reach QML, and the pill derives its
+// non-downloading state from them correctly. A role rename or a missing
+// roleNames() entry — the realistic regression — fails these.
+
+test("progress: model exposes downloadReceived/downloadTotal roles", async (app) => {
+  await waitForPmuiLoaded(app);
+  const roleIds = await fetchPackageRoleIds(app);
+  if (!roleIds || typeof roleIds !== "object") {
+    throw new Error(`packageRoleIds unavailable: ${JSON.stringify(roleIds)}`);
+  }
+  if (typeof roleIds.downloadReceived !== "number" ||
+      typeof roleIds.downloadTotal !== "number") {
+    throw new Error(
+      "PackageListModel must expose downloadReceived/downloadTotal roles " +
+      "(ActionPill binds to them for the install progress bar); got: " +
+      JSON.stringify(roleIds));
+  }
+});
+
+test("progress: idle rows report zero bytes on both roles", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;   // empty offscreen fixture
+
+  const roleIds = await fetchPackageRoleIds(app);
+  const recvRole = roleIds.downloadReceived;
+  const totalRole = roleIds.downloadTotal;
+
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) throw new Error("BackendStore not found");
+  const res = await app.inspector.send("evaluate", {
+    objectId: store.matches[0].id,
+    expression: `(function() {
+      var m = packagesModel;
+      if (!m) return "no-model";
+      for (var i = 0; i < m.rowCount(); ++i) {
+        var idx = m.index(i, 0);
+        var r = m.data(idx, ${recvRole}), t = m.data(idx, ${totalRole});
+        if (r === undefined || t === undefined) return "undefined-at-row-" + i;
+        if (Number(r) !== 0 || Number(t) !== 0) return "nonzero-at-row-" + i;
+      }
+      return "ok";
+    })()`,
+  });
+  if (res.error) throw new Error(`evaluate threw: ${res.error}`);
+  if (res.result !== "ok") {
+    throw new Error(
+      "nothing is installing, so every row must report 0/0 download bytes; got: " +
+      res.result);
+  }
+});
+
+test("progress: pill shows no progress bar when nothing is downloading", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  const pills = await app.findByProperty("objectName", "pmui.ActionPill");
+  if (!pills.matches || pills.matches.length === 0) return;   // offscreen: no delegates
+
+  // showProgress gates both the byte label and the fill. With no
+  // install in flight it must be false on every pill, otherwise idle rows
+  // would render a stuck bar.
+  for (const m of pills.matches.slice(0, 10)) {
+    const res = await app.inspector.send("evaluate", {
+      objectId: m.id,
+      expression: "String(showProgress) + '|' + String(downloadTotal)",
+    });
+    if (res.error) throw new Error(`evaluate threw: ${res.error}`);
+    const [showing, total] = String(res.result).split("|");
+    if (showing !== "false") {
+      throw new Error(`idle ActionPill reports showProgress=${showing} (total=${total})`);
+    }
   }
 });
 

@@ -148,7 +148,9 @@ public:
         // `availableVersions`, regardless of the user's dropdown pick.
         // Drives the small marker on the Version cell. Computed once
         // per buildPackageRow (no dropdown coupling).
-        UpdateAvailableRole
+        UpdateAvailableRole,
+        DownloadReceivedRole,
+        DownloadTotalRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);
@@ -162,6 +164,13 @@ public:
     void updatePackageSelection(int index, bool isSelected);
     void updatePackageInstallation(const QString& packageName, int status,
                                    const QString& errorMessage = QString());
+
+    // Record live download bytes for every row matching `packageName`
+    // (same name/moduleName matching as updatePackageInstallation).
+    // `total` of 0 means "size unknown" and leaves any already-seeded
+    // catalog size in place rather than blanking the denominator.
+    void updateDownloadProgress(const QString& packageName,
+                                quint64 received, quint64 total);
 
     // Pick a different version on a single row. Clamps `versionIndex`
     // to the row's `availableVersions` length; out-of-range or negative
@@ -196,6 +205,7 @@ public:
     int findPackageRow(const QString& name, const QString& repositoryUrl) const;
 
     QString displayNameForModule(const QString& moduleName) const;
+    QString moduleNameForPackage(const QString& packageName) const;
     void clearAllSelections();
     void clearFailedRows();
 
