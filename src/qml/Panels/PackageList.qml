@@ -134,14 +134,6 @@ LogosTable {
             return date.toLocaleDateString(Qt.locale(), Locale.ShortFormat)
         }
 
-        function newestVersionString(r) {
-            if (!r) return ""
-            const av = r.availableVersions || []
-            if (av.length === 0) return ""
-            const first = av[0]
-            return (first && first.version) ? String(first.version) : ""
-        }
-
         // Gate the kebab's Uninstall item. Mirrors PackageListModel's
         // isUninstallableRow predicate: must be user-installed AND in a
         // state where uninstall is meaningful.
@@ -179,6 +171,31 @@ LogosTable {
             sortable: true
         },
         LogosTableColumn {
+            title: qsTr("Installed")
+            role: "installedVersion"
+            minWidth: 80
+            preferredWidth: 90
+            sortable: true
+            cellDelegate: installedVersionCellComponent
+        },
+        LogosTableColumn {
+            // Per-row Version dropdown. Populated from
+            // rowItem.availableVersions (date-sorted, newest first); the
+            // currently selected entry mirrors into VersionRole on
+            // PackageListModel so status/details bindings reflect the pick.
+            title: qsTr("Available")
+            role: "version"
+            // Holds a combo wide enough for "1.0.10" plus the chevron.
+            minWidth: 120
+            preferredWidth: 130
+            cellDelegate: versionCellComponent
+        },
+        // Size and Released describe the version SELECTED in Available —
+        // setRowVersion mirrors the pick's `size` and `releasedAt` onto the
+        // row, so both change when the dropdown moves. They sit to the right
+        // of Available for that reason: to the left of Installed they read as
+        // facts about what's on disk, which they are not.
+        LogosTableColumn {
             title: qsTr("Size")
             role: "size"
             minWidth: 80
@@ -187,31 +204,14 @@ LogosTable {
             cellDelegate: sizeCellComponent
         },
         LogosTableColumn {
-            title: qsTr("Date Updated")
+            // "Released", not "Date Updated": it's the catalog release date
+            // of the selected version, not when this install was last touched.
+            title: qsTr("Released")
             role: "dateUpdated"
-            minWidth: 110
-            preferredWidth: 120
+            minWidth: 100
+            preferredWidth: 110
             sortable: true
             cellDelegate: dateCellComponent
-        },
-        LogosTableColumn {
-            // Per-row Version dropdown. Populated from
-            // rowItem.availableVersions (date-sorted, newest first); the
-            // currently selected entry mirrors into VersionRole on
-            // PackageListModel so status/details bindings reflect the pick.
-            // A small ▲ marker is overlaid when rowItem.updateAvailable
-            // is true (installed < newest catalog) — independent of the
-            // dropdown pick, so a Reinstall of the installed version
-            // still surfaces "a newer one exists".
-            title: qsTr("Version")
-            role: "version"
-            // Sized for a fixed-width combo (~90px, fits "1.0.10") + the
-            // marker slot to its right, so cells line up vertically and
-            // the marker presence never shrinks the combo. See
-            // versionCellComponent's inline width constants.
-            minWidth: 120
-            preferredWidth: 130
-            cellDelegate: versionCellComponent
         },
         LogosTableColumn {
             // Per-row primary action — resolved against the user's
@@ -249,7 +249,8 @@ LogosTable {
         id: actionPillComponent
         Item {
             ActionPill {
-                anchors.centerIn: parent
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
                 modelData: rowItem
                 onActionRequested: function(action) {
                     root.actionRequested(rowIndex, action)
@@ -268,6 +269,21 @@ LogosTable {
             horizontalAlignment: (columnDef.alignment & Qt.AlignHCenter) ? Text.AlignHCenter
                                : (columnDef.alignment & Qt.AlignRight)   ? Text.AlignRight
                                : Text.AlignLeft
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+    }
+
+    Component {
+        id: installedVersionCellComponent
+        LogosText {
+            objectName: "pmui.installedVersionCell"
+            anchors.fill: parent
+            readonly property string installed: rowItem && rowItem.installedVersion
+                                                ? String(rowItem.installedVersion) : ""
+            text: installed.length > 0 ? installed : "—"
+            color: installed.length > 0 ? Theme.palette.text : Theme.palette.textMuted
+            font.pixelSize: Theme.typography.primaryText
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
@@ -338,18 +354,11 @@ LogosTable {
     }
 
     Component {
-        // Per-row Version dropdown + update marker.
-        //
-        // The dropdown drives the row's `selectedVersionIndex`, which
-        // PackageListModel::setRowVersion uses to recompute `rowAction`
-        // — so the ActionPill in the neighbouring cell flips between
-        // Upgrade / Downgrade / Reinstall / NoOp as the user moves it.
-        //
-        // The update marker (▲) is bound to `rowItem.updateAvailable`,
-        // computed once at row-build time against the catalog newest.
-        // It stays put regardless of the dropdown pick, so a user
-        // choosing "Reinstall" on the installed version still sees that
-        // a newer one exists.
+        // Per-row Version dropdown. Drives the row's
+        // `selectedVersionIndex`, which PackageListModel::setRowVersion
+        // uses to recompute `rowAction` — so the ActionPill two cells over
+        // flips between Upgrade / Downgrade / Reinstall / NoOp as the user
+        // moves it, and Size / Released follow the pick too.
         id: versionCellComponent
         Item {
             id: versionCell
@@ -381,21 +390,19 @@ LogosTable {
                 }
                 return false
             }
-            property bool updateAvailable: rowItem && rowItem.updateAvailable === true
-
             LogosComboBox {
                 id: versionCombo
-                // Fixed width so marker presence/absence doesn't reflow
-                // the combo, and so all rows render the same dropdown
-                // size regardless of cell width. 92px holds "1.0.10"
-                // comfortably after subtracting the chevron padding —
-                // longer prerelease strings (e.g. "1.0.0-rc.1") will
-                // elide, which the displayText fallback below already
-                // collapses to just the version number anyway.
+                // Spans the cell. It used to be pinned to 92px to leave a
+                // fixed slot for the update marker on its right, so the
+                // combo wouldn't reflow as the marker came and went; with
+                // the marker gone there is nothing to reserve room for.
+                // Long prerelease strings elide, which the displayText
+                // override below already collapses to the bare version.
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 6
-                width: 92
+                anchors.rightMargin: 6
                 height: Math.min(parent.height - 8, 32)
                 visible: versionCell.usableVersions.length > 0
                 model: versionCell.usableVersions.map(function(v) {
@@ -422,62 +429,6 @@ LogosTable {
                 onActivated: function(idx) {
                     if (idx !== versionCell.selectedIdx)
                         root.versionChanged(rowIndex, idx)
-                }
-            }
-
-            // Update-available marker. Renders as a small filled ▲
-            // anchored to the right of the fixed-width combo so the
-            // combo's size stays the same whether or not the marker is
-            // visible (the user complained about the combo shrinking on
-            // rows that had the marker — that's why this is anchored to
-            // versionCombo.right rather than to the cell's right edge).
-            // Independent of the dropdown pick — present whenever the
-            // catalog's newest version is strictly newer than installed.
-            Item {
-                id: updateMarker
-                anchors.left: versionCombo.right
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: 6
-                width: 16
-                height: 16
-                visible: versionCell.updateAvailable
-                         && versionCell.usableVersions.length > 0
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: width / 2
-                    color: Theme.colors.getColor(Theme.palette.info, 0.18)
-                    border.color: Theme.palette.info
-                    border.width: 1
-                }
-
-                LogosText {
-                    anchors.centerIn: parent
-                    text: "▲"
-                    color: Theme.palette.info
-                    font.pixelSize: 9
-                    font.weight: Theme.typography.weightBold
-                }
-
-                MouseArea {
-                    id: markerHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.ArrowCursor
-                }
-
-                LogosToolTip {
-                    visible: markerHover.containsMouse
-                    placement: LogosToolTip.Top
-                    text: {
-                        if (!rowItem) return ""
-                        const installed = rowItem.installedVersion
-                                          ? String(rowItem.installedVersion) : ""
-                        const newest = d.newestVersionString(rowItem)
-                        if (installed && newest)
-                            return qsTr("v%1 installed · v%2 available").arg(installed).arg(newest)
-                        return qsTr("Update available")
-                    }
                 }
             }
 

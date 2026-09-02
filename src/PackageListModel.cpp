@@ -531,6 +531,17 @@ QString PackageListModel::displayNameForModule(const QString& moduleName) const
     return QString();
 }
 
+QString PackageListModel::moduleNameForPackage(const QString& packageName) const
+{
+    for (const QVariantMap& pkg : m_packages) {
+        const QString name = pkg.value("name").toString();
+        const QString moduleName = pkg.value("moduleName").toString();
+        if (name == packageName || moduleName == packageName)
+            return moduleName.isEmpty() ? packageName : moduleName;
+    }
+    return packageName;
+}
+
 // ──────────────────────────── selection clears ────────────────────────────
 
 void PackageListModel::clearSelectionsByPackageNames(const QStringList& names)

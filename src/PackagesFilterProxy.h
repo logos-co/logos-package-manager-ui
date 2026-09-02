@@ -78,5 +78,6 @@ private:
     int m_repositoryDisplayNameRole = -1;
     int m_repositoryUrlRole         = -1;
     int m_nameRole                  = -1;
+    QList<int> m_versionRoles;
     QList<int> m_searchRoles;          // resolved name + description
 };

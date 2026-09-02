@@ -921,6 +921,8 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     QString packageName = dl.value("name").toString();
     QString filePath = dl.value("path").toString();
     QString downloadError = dl.value("error").toString();
+    const QString expectedVersion = dl.value("version").toString();
+    const QString expectedHash = dl.value("rootHash").toString();
 
     if (filePath.isEmpty()) {
         qWarning() << "Download failed for" << packageName << ":" << downloadError;
@@ -946,7 +948,7 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     // indistinguishable from a provider that legitimately returned an empty
     // one. AsyncResult<T> carries the value and the error together.
     logos.package_manager.installPluginAsyncResult(filePath, false,
-        [self, packageName, onDone](logos::AsyncResult<QVariantMap> r) {
+        [self, packageName, expectedVersion, expectedHash, onDone](logos::AsyncResult<QVariantMap> r) {
             if (!self) return;
             // Transport-level failure FIRST. On a timeout `value` is
             // default-constructed, so reading it as an install verdict is the
@@ -979,13 +981,92 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
             bool success = installResult.contains("path")
                         && !installResult.contains("error");
             QString err = installResult.value("error").toString();
-            if (onDone) onDone(success, success
-                                           ? QString()
-                                           : (err.isEmpty()
-                                                  ? QStringLiteral("Installation failed")
-                                                  : err));
+            if (!success) {
+                if (onDone) onDone(false, err.isEmpty()
+                                              ? QStringLiteral("Installation failed")
+                                              : err);
+                return;
+            }
+            // Reported success. That is the installer's word for it — check
+            // the disk before the row is allowed to claim the new version.
+            self->verifyInstalledArtifact(packageName, expectedVersion,
+                                          expectedHash, onDone);
         },
         Timeout(kInstallIpcDeadlineMs));
+}
+
+void PackageManagerBackend::verifyInstalledArtifact(
+        const QString& packageName,
+        const QString& expectedVersion,
+        const QString& expectedHash,
+        std::function<void(bool success, const QString& error)> onDone)
+{
+    if (expectedVersion.isEmpty() || !packageManagerReady()) {
+        if (onDone) onDone(true, QString());
+        return;
+    }
+
+    constexpr int kVerifyIpcDeadlineMs = 60 * 1000;
+
+    const QString diskKey = m_packageModel
+        ? m_packageModel->moduleNameForPackage(packageName)
+        : packageName;
+
+    LogosModules& logos = modules();
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_manager.getInstalledPackagesAsyncResult(
+        [self, packageName, diskKey, expectedVersion, expectedHash, onDone]
+        (logos::AsyncResult<QVariantList> r) {
+            if (!self) return;
+            if (!r.ok()) {
+                // Couldn't read the disk. Say so in the log and pass the
+                // install through — see the fail-open note on the decl.
+                qWarning() << "post-install verification skipped for" << packageName
+                           << "— could not read the installed set:"
+                           << QString::fromStdString(r.error.message);
+                if (onDone) onDone(true, QString());
+                return;
+            }
+
+            QVariantMap found;
+            for (const QVariant& v : r.value) {
+                const QVariantMap inst = v.toMap();
+                const QString name = inst.value("name").toString();
+                if (name == diskKey || name == packageName) {
+                    found = inst;
+                    break;
+                }
+            }
+
+            if (found.isEmpty()) {
+                if (onDone) onDone(false,
+                    QStringLiteral("The installer reported success, but %1 is not "
+                                   "installed on disk").arg(packageName));
+                return;
+            }
+
+            const QString onDisk = found.value("version").toString();
+            if (!onDisk.isEmpty()
+                && rowaction::versionCmp(onDisk, expectedVersion) != 0) {
+                if (onDone) onDone(false,
+                    QStringLiteral("The installer reported success, but v%1 is still "
+                                   "on disk — v%2 was not written. Uninstall %3 and "
+                                   "install it again.")
+                        .arg(onDisk, expectedVersion, packageName));
+                return;
+            }
+
+            const QString onDiskHash =
+                found.value("hashes").toMap().value("root").toString();
+            if (!expectedHash.isEmpty() && !onDiskHash.isEmpty()
+                && onDiskHash != expectedHash) {
+                qWarning() << "post-install hash mismatch for" << packageName
+                           << "at v" << onDisk << "— on disk" << onDiskHash
+                           << "expected" << expectedHash;
+            }
+
+            if (onDone) onDone(true, QString());
+        }, Timeout(kVerifyIpcDeadlineMs));
 }
 
 void PackageManagerBackend::installNextPackage(const QVariantList& results, int index, int completed, int totalPackages)

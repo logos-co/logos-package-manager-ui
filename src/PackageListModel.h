@@ -205,6 +205,7 @@ public:
     int findPackageRow(const QString& name, const QString& repositoryUrl) const;
 
     QString displayNameForModule(const QString& moduleName) const;
+    QString moduleNameForPackage(const QString& packageName) const;
     void clearAllSelections();
     void clearFailedRows();
 
