@@ -929,4 +929,95 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
   }
 });
 
+// ─── Download progress on the install pill ───────────────────────────────
+//
+// The full byte-progress path needs a real download (package_downloader
+// emitting downloadProgress over IPC), which the offscreen fixture has no
+// network for. What IS assertable here is the contract the rendering hangs
+// off: the two model roles exist and reach QML, and the pill derives its
+// non-downloading state from them correctly. A role rename or a missing
+// roleNames() entry — the realistic regression — fails these.
+
+test("progress: model exposes downloadReceived/downloadTotal roles", async (app) => {
+  await waitForPmuiLoaded(app);
+  const roleIds = await fetchPackageRoleIds(app);
+  if (!roleIds || typeof roleIds !== "object") {
+    throw new Error(`packageRoleIds unavailable: ${JSON.stringify(roleIds)}`);
+  }
+  if (typeof roleIds.downloadReceived !== "number" ||
+      typeof roleIds.downloadTotal !== "number") {
+    throw new Error(
+      "PackageListModel must expose downloadReceived/downloadTotal roles " +
+      "(ActionPill binds to them for the install progress bar); got: " +
+      JSON.stringify(roleIds));
+  }
+});
+
+test("progress: idle rows report zero bytes on both roles", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;   // empty offscreen fixture
+
+  const roleIds = await fetchPackageRoleIds(app);
+  const recvRole = roleIds.downloadReceived;
+  const totalRole = roleIds.downloadTotal;
+
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) throw new Error("BackendStore not found");
+  const res = await app.inspector.send("evaluate", {
+    objectId: store.matches[0].id,
+    expression: `(function() {
+      var m = packagesModel;
+      if (!m) return "no-model";
+      for (var i = 0; i < m.rowCount(); ++i) {
+        var idx = m.index(i, 0);
+        var r = m.data(idx, ${recvRole}), t = m.data(idx, ${totalRole});
+        if (r === undefined || t === undefined) return "undefined-at-row-" + i;
+        if (Number(r) !== 0 || Number(t) !== 0) return "nonzero-at-row-" + i;
+      }
+      return "ok";
+    })()`,
+  });
+  if (res.error) throw new Error(`evaluate threw: ${res.error}`);
+  if (res.result !== "ok") {
+    throw new Error(
+      "nothing is installing, so every row must report 0/0 download bytes; got: " +
+      res.result);
+  }
+});
+
+test("progress: pill shows no progress bar when nothing is downloading", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  const pills = await app.findByProperty("objectName", "pmui.ActionPill");
+  if (!pills.matches || pills.matches.length === 0) return;   // offscreen: no delegates
+
+  // showProgress gates both the byte label and the fill. With no
+  // install in flight it must be false on every pill, otherwise idle rows
+  // would render a stuck bar.
+  for (const m of pills.matches.slice(0, 10)) {
+    const res = await app.inspector.send("evaluate", {
+      objectId: m.id,
+      expression: "String(showProgress) + '|' + String(downloadTotal)",
+    });
+    if (res.error) throw new Error(`evaluate threw: ${res.error}`);
+    const [showing, total] = String(res.result).split("|");
+    if (showing !== "false") {
+      throw new Error(`idle ActionPill reports showProgress=${showing} (total=${total})`);
+    }
+  }
+});
+
 run();

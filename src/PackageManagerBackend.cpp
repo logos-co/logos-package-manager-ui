@@ -1525,6 +1525,23 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
         if (!self) return;
         if (self->m_refreshDebounceTimer) self->m_refreshDebounceTimer->start();
     });
+
+    // Live byte progress for whatever is currently downloading. Payload is
+    // [packageName, received, total] — see package_downloader's
+    // `logos_events: downloadProgress`. Fires a few times a second per
+    // download and lands straight on the model row, which is why
+    // updateDownloadProgress emits only the two progress roles.
+    logos.package_downloader.on("downloadProgress", [self](const QVariantList& data) {
+        if (!self || !self->m_packageModel) return;
+        if (data.size() < 3) {
+            qWarning() << "package_downloader.downloadProgress: expected "
+                          "[name, received, total], got" << data.size() << "args";
+            return;
+        }
+        self->m_packageModel->updateDownloadProgress(data.at(0).toString(),
+                                                     data.at(1).toULongLong(),
+                                                     data.at(2).toULongLong());
+    });
 }
 
 void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,

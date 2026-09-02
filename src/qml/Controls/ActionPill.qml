@@ -27,22 +27,47 @@ import Logos.PackageManagerUi 1.0
 Control {
     id: root
 
+    objectName: "pmui.ActionPill"
+
     required property var modelData
 
     signal actionRequested(int rowAction)
 
-    readonly property int _action: modelData ? (modelData.rowAction | 0)
+    readonly property int action: modelData ? (modelData.rowAction | 0)
                                              : PackageManagerUi.NoOp
-    readonly property int _installStatus: modelData ? (modelData.installStatus | 0) : 0
-    readonly property bool _installing: _installStatus === PackageManagerUi.Installing
-    readonly property bool _runnable: !_installing
-                                      && _action !== PackageManagerUi.NoOp
-                                      && _action !== PackageManagerUi.NotAvailable
+    readonly property int installStatus: modelData ? (modelData.installStatus | 0) : 0
+    readonly property bool installing: installStatus === PackageManagerUi.Installing
+    readonly property bool runnable: !installing
+                                      && action !== PackageManagerUi.NoOp
+                                      && action !== PackageManagerUi.NotAvailable
+    readonly property real downloadReceived: modelData ? (modelData.downloadReceived || 0) : 0
+    readonly property real downloadTotal: modelData ? (modelData.downloadTotal || 0) : 0
+    readonly property bool showProgress: installing && downloadTotal > 0
+                                          && downloadReceived < downloadTotal
+    readonly property bool indeterminateProgress: installing && downloadTotal <= 0
 
     QtObject {
         id: d
 
+        // Mirrors PackageList's size column formatting so the pill and the
+        // Size cell describe the same bytes the same way.
+        function formatBytes(n) {
+            if (!isFinite(n) || n <= 0) return "0 B"
+            if (n < 1024) return Math.round(n) + " B"
+            if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB"
+            if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB"
+            return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB"
+        }
+
         function actionText(a, installing) {
+            // Counting bytes only while they're actually moving. Once the
+            // transfer completes the remaining work (verify, install) has no
+            // byte count, so the label goes back to the plain state rather
+            // than parking on "45.2 / 45.2 MB".
+            if (root.showProgress) {
+                return qsTr("%1 / %2").arg(d.formatBytes(root.downloadReceived))
+                                      .arg(d.formatBytes(root.downloadTotal))
+            }
             if (installing) return qsTr("Installing…")
             switch (a) {
             case PackageManagerUi.Install:      return qsTr("Install")
@@ -93,28 +118,30 @@ Control {
         }
     }
 
-    enabled: _runnable
-    hoverEnabled: _runnable
+    enabled: runnable
+    hoverEnabled: runnable
 
     // Click → emit the resolved action; caller routes to the matching
     // backend slot via BackendStore.runRowAction().
     Action {
         id: clickAction
-        enabled: root._runnable
-        onTriggered: root.actionRequested(root._action)
+        enabled: root.runnable
+        onTriggered: root.actionRequested(root.action)
     }
+
+    implicitWidth: root.showProgress ? 116 : badge.implicitWidth
 
     contentItem: LogosBadge {
         id: badge
-        text: d.actionText(root._action, root._installing)
-        color: root._runnable
-               ? d.baseColor(root._action, root._installing)
+        text: d.actionText(root.action, root.installing)
+        color: root.runnable
+               ? d.baseColor(root.action, root.installing)
                : Theme.palette.textTertiary
-        backgroundColor: root._runnable
-                         ? Theme.colors.getColor(d.baseColor(root._action, root._installing), 0.18)
+        backgroundColor: root.runnable
+                         ? Theme.colors.getColor(d.baseColor(root.action, root.installing), 0.18)
                          : Theme.palette.backgroundButton
-        borderColor: root._runnable
-                     ? d.baseColor(root._action, root._installing)
+        borderColor: root.runnable
+                     ? d.baseColor(root.action, root.installing)
                      : Theme.palette.backgroundButton
         radius: Theme.spacing.radiusLarge
 
@@ -124,19 +151,40 @@ Control {
         labelItem.lineHeight: 12
         labelItem.lineHeightMode: Text.FixedHeight
 
+        LogosProgressBar {
+            parent: badge.backgroundItem
+            visible: root.showProgress || root.indeterminateProgress
+            anchors.fill: parent ? parent : undefined
+            anchors.margins: badge.borderWidth
+
+            from: 0
+            to: root.downloadTotal > 0 ? root.downloadTotal : 1
+            value: root.downloadReceived
+            indeterminate: root.indeterminateProgress
+
+            trackColor: "transparent"
+            fillColor: Theme.colors.getColor(Theme.palette.warning, 0.45)
+            fillRadius: Math.max(0, badge.radius - badge.borderWidth)
+
+            // Smooth the ~200 ms gap between samples so the bar glides.
+            Behavior on value {
+                NumberAnimation { duration: 180; easing.type: Easing.OutQuad }
+            }
+        }
+
         // The badge is the visible click target — wire its MouseArea
         // through the Action rather than letting the Control's default
         // pointer handling fire so we get keyboard/Enter support too.
         MouseArea {
             anchors.fill: parent
-            enabled: root._runnable
+            enabled: root.runnable
             cursorShape: Qt.PointingHandCursor
             onClicked: clickAction.trigger()
         }
     }
 
     LogosToolTip {
-        text: d.tooltipText(root.modelData, root._action)
+        text: d.tooltipText(root.modelData, root.action)
         placement: LogosToolTip.Top
         visible: root.hovered && text !== ""
     }

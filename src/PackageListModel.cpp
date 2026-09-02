@@ -53,6 +53,10 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
         case RowActionRole:              return package.value("rowAction",
                                                   static_cast<int>(PackageTypes::NoOp));
         case UpdateAvailableRole:        return package.value("updateAvailable", false);
+        case DownloadReceivedRole:       return package.value("downloadReceived",
+                                                              QVariant::fromValue(quint64(0)));
+        case DownloadTotalRole:          return package.value("downloadTotal",
+                                                              QVariant::fromValue(quint64(0)));
 
         default:                     return QVariant();
     }
@@ -88,6 +92,8 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
         {IsFirstOfSourceRole,         "isFirstOfSource"},
         {RowActionRole,               "rowAction"},
         {UpdateAvailableRole,         "updateAvailable"},
+        {DownloadReceivedRole,        "downloadReceived"},
+        {DownloadTotalRole,           "downloadTotal"},
     };
 }
 
@@ -107,6 +113,21 @@ static QString rowKey(const QVariantMap& pkg)
 {
     return rowKey(pkg.value("repositoryUrl").toString(),
                   pkg.value("name").toString());
+}
+
+// The `.lgx` size in bytes the catalog advertises for the version this row
+// currently has selected, or 0 when the row has no versions (a local-only
+// install) or the index entry predates the `size` field.
+//
+// This is why a total can be shown before the download starts: the size
+// travels in index.json and is already mirrored into `availableVersions`
+// by PackageManagerBackend::buildPackageRow.
+static quint64 selectedVersionSize(const QVariantMap& pkg)
+{
+    const QVariantList avail = pkg.value("availableVersions").toList();
+    const int idx = pkg.value("selectedVersionIndex", 0).toInt();
+    if (idx < 0 || idx >= avail.size()) return 0;
+    return avail.at(idx).toMap().value("size").toULongLong();
 }
 
 // Re-resolve `rowAction` from the row's current installed/selected/
@@ -325,8 +346,20 @@ void PackageListModel::updatePackageInstallation(const QString& packageName, int
         const QString rowModuleName = row.value("moduleName").toString();
         if (rowName != packageName && rowModuleName != packageName) continue;
 
+        const int prevStatus = row.value("installStatus", 0).toInt();
         row["installStatus"] = status;
         row["errorMessage"] = errorMessage;
+
+        // Download counters live only for the duration of an install.
+        if (status == static_cast<int>(PackageTypes::Installing)) {
+            if (prevStatus != static_cast<int>(PackageTypes::Installing)) {
+                row["downloadReceived"] = QVariant::fromValue(quint64(0));
+                row["downloadTotal"]    = QVariant::fromValue(selectedVersionSize(row));
+            }
+        } else {
+            row["downloadReceived"] = QVariant::fromValue(quint64(0));
+            row["downloadTotal"]    = QVariant::fromValue(quint64(0));
+        }
 
         // Maintain m_failedByKey in lockstep with the row's status.
         // Indexed under both the composite (repo, name) key AND the bare
@@ -352,8 +385,42 @@ void PackageListModel::updatePackageInstallation(const QString& packageName, int
     if (firstChanged < 0) return;
     emit dataChanged(createIndex(firstChanged, 0),
                      createIndex(lastChanged, 0),
-                     {InstallStatusRole, ErrorMessageRole, RowActionRole});
+                     {InstallStatusRole, ErrorMessageRole, RowActionRole,
+                      DownloadReceivedRole, DownloadTotalRole});
     emit hasSelectionChanged();
+}
+
+void PackageListModel::updateDownloadProgress(const QString& packageName,
+                                              quint64 received, quint64 total)
+{
+    int firstChanged = -1, lastChanged = -1;
+    for (int i = 0; i < m_packages.size(); ++i) {
+        QVariantMap& row = m_packages[i];
+        const QString rowName = row.value("name").toString();
+        const QString rowModuleName = row.value("moduleName").toString();
+        if (rowName != packageName && rowModuleName != packageName) continue;
+
+        // Only rows actually installing take progress. Without this a
+        // second row for the same package name in another repo — or a row
+        // whose install already failed — would pick up bytes it has no
+        // business showing.
+        if (row.value("installStatus", 0).toInt()
+            != static_cast<int>(PackageTypes::Installing)) continue;
+
+        row["downloadReceived"] = QVariant::fromValue(received);
+        // total == 0 means the transport didn't say. Keep whatever the
+        // catalog seeded rather than blanking a working denominator.
+        if (total > 0) row["downloadTotal"] = QVariant::fromValue(total);
+
+        if (firstChanged < 0) firstChanged = i;
+        lastChanged = i;
+    }
+    if (firstChanged < 0) return;
+    // Deliberately narrow: progress fires several times a second, and a
+    // wider role set would re-evaluate every binding on the row.
+    emit dataChanged(createIndex(firstChanged, 0),
+                     createIndex(lastChanged, 0),
+                     {DownloadReceivedRole, DownloadTotalRole});
 }
 
 void PackageListModel::setRowVersion(int index, int versionIndex)
