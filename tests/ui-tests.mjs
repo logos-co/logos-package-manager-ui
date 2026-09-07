@@ -68,7 +68,7 @@ test("structure: install-local button is present and enabled", async (app) => {
     throw new Error(`install-local button should be enabled when idle, got ${enabled}`);
   }
   // Deliberately NOT clicking: the click opens a native file dialog, and the
-  // install behind it needs a host to service the `logos.packages.confirm_*`
+  // install behind it needs a host to service the `basecamp.packages.confirm_*`
   // intent. Neither is available here.
 });
 

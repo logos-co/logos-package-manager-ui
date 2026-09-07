@@ -120,7 +120,7 @@ QtObject {
 
         function confirmInstall(r) {
             if (!r.name) return
-            confirm("logos.packages.confirm_install", [r.name],
+            confirm("basecamp.packages.confirm_install", [r.name],
                 { name: r.name, version: r.version, repositoryUrl: r.repositoryUrl },
                 function () {
                     store.backend.performInstall(r.name, r.version, r.repositoryUrl)
@@ -129,7 +129,7 @@ QtObject {
 
         function confirmUpgrade(r, mode) {
             if (!r.moduleName) return
-            confirm("logos.packages.confirm_upgrade", [r.moduleName],
+            confirm("basecamp.packages.confirm_upgrade", [r.moduleName],
                 { name: r.moduleName, version: r.version, mode: mode,
                   repositoryUrl: r.repositoryUrl },
                 function () {
@@ -140,7 +140,7 @@ QtObject {
 
         function confirmUninstall(r) {
             if (!r.moduleName) return
-            confirm("logos.packages.confirm_uninstall", [r.moduleName],
+            confirm("basecamp.packages.confirm_uninstall", [r.moduleName],
                 { names: [r.moduleName] },
                 function () { store.backend.performUninstall([r.moduleName]) })
         }
@@ -298,7 +298,7 @@ QtObject {
             console.warn("PMUI: no logos.request on this host — cannot open Repositories")
             return
         }
-        logos.request("logos.repositories.manage", {}, function (result) {
+        logos.request("basecamp.repositories.manage", {}, function (result) {
             if (!result || !result.ok)
                 console.warn("PMUI: repositories intent failed:",
                              result ? result.error : "no result")
