@@ -27,6 +27,7 @@ Rectangle {
 
         // ─── Page header: Title + Subtitle + Search ───
         HeaderBar {
+            id: headerBar
             Layout.fillWidth: true
 
             searchText: store.searchText
@@ -258,17 +259,23 @@ Rectangle {
         onAccepted: store.installLocalPackage(selectedFile)
     }
 
-    // Provider side of `packages.show` — the shell asking us to reveal a row.
+    // Provider side of `packages.show` / `packages.install`. The waiter lives
+    // in Panels — this is just the doorway.
+    PackageRevealRequest {
+        id: revealRequest
+        store: store
+        header: headerBar
+    }
+
     Connections {
         target: logos
         ignoreUnknownSignals: true
         function onIntentRequested(requestId, intent, params, requesterName) {
-            if (intent !== "packages.show") {
+            if (intent !== "packages.show" && intent !== "packages.install") {
                 logos.respond(requestId, false, ({}), "failed")
                 return
             }
-            var shown = store.showDetailsForName(params.name)
-            logos.respond(requestId, shown, ({}), shown ? "" : "failed")
+            revealRequest.begin(requestId, params.name, intent)
         }
     }
 }

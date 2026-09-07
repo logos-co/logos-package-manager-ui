@@ -103,6 +103,21 @@ QtObject {
             }
         }
 
+        // Row index for `name` on the current page, or -1. Private: a row
+        // index is a paging-proxy detail, and views that traffic in them end
+        // up reimplementing this scan against a model that moves under them.
+        function rowIndexForName(name) {
+            if (!store.packagesModel || !name) return -1
+            var nameRole = store.packageRoleIds ? store.packageRoleIds.name : undefined
+            if (nameRole === undefined) return -1
+
+            for (var i = 0; i < store.packagesModel.rowCount(); ++i) {
+                var idx = store.packagesModel.index(i, 0)
+                if (store.packagesModel.data(idx, nameRole) === name) return i
+            }
+            return -1
+        }
+
         function confirmInstall(r) {
             if (!r.name) return
             confirm("logos.packages.confirm_install", [r.name],
@@ -197,20 +212,27 @@ QtObject {
         d.selectedPackageIndex = i
         backend.requestPackageDetails(i)
     }
-    // Find a package's row by name and open its details panel..
-    function showDetailsForName(name) {
-        if (!packagesModel || !name) return false
-        var nameRole = packageRoleIds ? packageRoleIds.name : undefined
-        if (nameRole === undefined) return false
 
-        for (var i = 0; i < packagesModel.rowCount(); ++i) {
-            var idx = packagesModel.index(i, 0)
-            if (packagesModel.data(idx, nameRole) === name) {
-                requestDetails(i)
-                return true
-            }
-        }
-        return false
+    function clearFilters() {
+        if (!backend) return
+        if (selectedCategoryIndex !== 0) selectCategory(0)   // 0 = "All"
+        if (selectedTypeIndex !== 0)     selectType(0)
+        if (installStateFilter !== 0)    setInstallStateFilter(0)
+    }
+
+
+    function showDetailsForName(name) {
+        var i = d.rowIndexForName(name)
+        if (i < 0) return false
+        requestDetails(i)
+        return true
+    }
+
+    function installPackageByName(name) {
+        var i = d.rowIndexForName(name)
+        if (i < 0) return false
+        installPackage(i)
+        return true
     }
 
     function clearSelectedDetails() {

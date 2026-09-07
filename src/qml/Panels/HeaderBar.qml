@@ -12,6 +12,8 @@ RowLayout {
 
     signal searchEdited(string text)
 
+    function setSearchText(text) { searchBar.text = text }
+
     spacing: Theme.spacing.large
 
     ColumnLayout {
