@@ -14,10 +14,10 @@
     "package_downloader"
   ],
   "uses": [
-    {"intent": "logos.repositories.manage", "cardinality": "single"},
-    {"intent": "logos.packages.confirm_install", "cardinality": "single"},
-    {"intent": "logos.packages.confirm_uninstall", "cardinality": "single"},
-    {"intent": "logos.packages.confirm_upgrade", "cardinality": "single"}
+    {"intent": "basecamp.repositories.manage", "cardinality": "single"},
+    {"intent": "basecamp.packages.confirm_install", "cardinality": "single"},
+    {"intent": "basecamp.packages.confirm_uninstall", "cardinality": "single"},
+    {"intent": "basecamp.packages.confirm_upgrade", "cardinality": "single"}
   ],
   "provides": [
     {
