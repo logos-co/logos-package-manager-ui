@@ -44,6 +44,7 @@ QtObject {
     readonly property int currentPage: backend ? backend.currentPage : 1
     readonly property int totalCount: backend ? backend.totalCount : 0
     readonly property int repositoryCount: backend ? backend.repositoryCount : 0
+    readonly property var repositoryLabels: backend ? backend.repositoryLabels : ({})
     readonly property string sortRole: backend ? backend.sortRole : ""
     readonly property int sortOrder: backend ? backend.sortOrder : Qt.AscendingOrder
 

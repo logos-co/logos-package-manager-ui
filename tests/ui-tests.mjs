@@ -556,6 +556,20 @@ test("row click: single click populates selectedPackageDetails", async (app) => 
 });
 
 // ─── Categories sidebar scroll test ────────────────────────────────
+// Bring the sidebar's Types section into view. It lives under Categories
+// in a clipped Flickable; when the two together overflow, Types is not
+// hittable until the Flickable is scrolled. No-op when there is no overflow.
+async function scrollSidebarToBottom(app) {
+  const scroll = await app.findByProperty("objectName", "pmui.CategorySidebar.scrollArea");
+  if (!scroll.matches || scroll.matches.length === 0) return;
+  const scrollId = scroll.matches[0].id;
+  const res = await app.inspector.send("evaluate", {
+    objectId: scrollId,
+    expression: "contentY = Math.max(0, contentHeight - height); String(contentY)",
+  });
+  if (res.error) throw new Error(`sidebar scroll failed: ${res.error}`);
+}
+
 test("categories sidebar: scrollable when contents overflow", async (app) => {
   await waitForPmuiLoaded(app);
 
@@ -629,6 +643,11 @@ test("row click after type filter: details.type matches the filtered type", asyn
   const chosenType = types[1];
 
   // The sidebar's Types entries are labelled by the type string itself.
+  // Types sits BELOW Categories inside a clipped Flickable, so with a
+  // fixture that has several categories it starts out scrolled off the
+  // bottom. The item is in the object tree either way, so a click resolves
+  // and silently lands nowhere — scroll it into view first.
+  await scrollSidebarToBottom(app);
   await app.click(chosenType, { exact: true });
   await app.waitFor(
     async () => {
@@ -658,6 +677,11 @@ test("row click after type filter: details.type matches the filtered type", asyn
     { timeout: 5000, interval: 250,
       description: "details to match the filtered type" }
   );
+
+  // Hand the filter back. This test is the only one that deliberately
+  // leaves a non-default type selected, and every later test that reads
+  // the model would otherwise inherit it.
+  await resetStoreFilters(app);
 });
 
 // ─── "Local" synthetic-repo tests ──────────────────────────────────
@@ -708,6 +732,44 @@ async function resetStoreFilters(app) {
       setInstallStateFilter(0);
     })()`,
   });
+
+  // Those are push* calls over QtRO — issuing them is not the same as
+  // them landing. Without this wait a caller can read a model that is
+  // still filtered by whatever the previous test left behind, pick a row
+  // index from it, and then act on a different row once the reset
+  // arrives. Poll the replica until the state it asked for is real.
+  await app.waitFor(
+    async () => {
+      const type   = await storeProperty(app, "selectedTypeIndex");
+      const cat    = await storeProperty(app, "selectedCategoryIndex");
+      const search = await storeProperty(app, "searchText");
+      const state  = await storeProperty(app, "installStateFilter");
+      if (type !== 0 || cat !== 0 || search !== "" || state !== 0) {
+        throw new Error(
+          `filters not reset yet (type=${type} cat=${cat} ` +
+          `search="${search}" state=${state})`);
+      }
+    },
+    { timeout: 5000, interval: 100, description: "store filters to reset" }
+  );
+
+  // The properties flip immediately, but the proxies re-filter on a 30ms
+  // debounce (m_filterApplyTimer), so for a moment the model still has the
+  // PREVIOUS shape while the filter state already reads clean. A caller
+  // that scans the model in that window picks a row index that then moves
+  // under it — and acting on a stale index silently hits a different row.
+  // Wait for the row count to hold steady across a gap wider than the
+  // debounce before handing the model back.
+  let lastCount = null;
+  await app.waitFor(
+    async () => {
+      const now = await storeProperty(app, "totalCount");
+      const settled = lastCount !== null && now === lastCount;
+      lastCount = now;
+      if (!settled) throw new Error(`totalCount still settling (${now})`);
+    },
+    { timeout: 5000, interval: 200, description: "model to settle after reset" }
+  );
 }
 
 // Read the backend-exposed role name → int map for `packagesModel`. Must
@@ -1117,6 +1179,180 @@ test("progress: pill shows no progress bar when nothing is downloading", async (
     if (showing !== "false") {
       throw new Error(`idle ActionPill reports showProgress=${showing} (total=${total})`);
     }
+  }
+});
+
+// ─── Repository section identity ─────────────────────────────────────────
+//
+// Rows group into section headers by `sourceKey`, which is the
+// repo's logos-repo.json URL (or "local" for the synthetic bucket) — NOT
+// its displayName or its manifest `name`. Both of those come out of a
+// remote manifest and carry no uniqueness guarantee: a repo that copies
+// another's logos-repo.json verbatim shares them, and grouping on either
+// silently merges the two repos into one section, hiding the fact that a
+// second repo is even configured.
+//
+// The fixture has a single repository, so these can't observe the merge
+// itself. What they pin is the property that makes the merge impossible:
+// the section key tracks the URL, and nothing else.
+
+test("sections: model exposes the sourceKey role", async (app) => {
+  await waitForPmuiLoaded(app);
+  const roleIds = await fetchPackageRoleIds(app);
+  if (!roleIds || typeof roleIds !== "object") {
+    throw new Error(`packageRoleIds unavailable: ${JSON.stringify(roleIds)}`);
+  }
+  if (typeof roleIds.sourceKey !== "number") {
+    throw new Error(
+      "PackageListModel must expose a sourceKey role (PackageList " +
+      "binds ListView.section.property to it); got: " + JSON.stringify(roleIds));
+  }
+});
+
+test("sections: section key is the repo URL, never its display name", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  const roleIds = await fetchPackageRoleIds(app);
+  const urlRole  = roleIds?.repositoryUrl;
+  const keyRole  = roleIds?.sourceKey;
+  const dispRole = roleIds?.repositoryDisplayName;
+  const nameRole = roleIds?.moduleName;
+  if (typeof urlRole !== "number" || typeof keyRole !== "number" ||
+      typeof dispRole !== "number") {
+    throw new Error(
+      "packageRoleIds missing repositoryUrl / sourceKey / " +
+      "repositoryDisplayName: " + JSON.stringify(roleIds));
+  }
+
+  // Per row: a catalog row's key MUST equal its repositoryUrl, and a
+  // local row's (no URL) MUST be the literal "local". A key that instead
+  // tracked displayName would fail the first clause on every catalog row.
+  const outcome = await inspectPackagesModel(app, `
+    var URL = ${urlRole}, KEY = ${keyRole}, DISP = ${dispRole};
+    var NAME = ${typeof nameRole === "number" ? nameRole : -1};
+    var offenders = [];
+    for (var i = 0; i < m.rowCount(); ++i) {
+      var idx = m.index(i, 0);
+      var url = String(m.data(idx, URL) || "");
+      var key = String(m.data(idx, KEY) || "");
+      var expected = url.length > 0 ? url : "local";
+      if (key !== expected) {
+        var name = NAME >= 0 ? String(m.data(idx, NAME) || "") : String(i);
+        offenders.push(name + ": key='" + key + "' expected='" + expected +
+                       "' disp='" + String(m.data(idx, DISP) || "") + "'");
+      }
+    }
+    return offenders.length === 0 ? "ok" : "bad:" + offenders.join(" | ");
+  `);
+
+  if (outcome === null) throw new Error("packagesModel is null on BackendStore");
+  if (outcome !== "ok") {
+    throw new Error(
+      "sourceKey must mirror repositoryUrl (or be 'local'). " +
+      "Grouping on a remote-supplied display name lets two repos collapse " +
+      "into one section. Offenders — " + outcome);
+  }
+});
+
+test("sections: two repos never share a section key", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  const roleIds = await fetchPackageRoleIds(app);
+  const urlRole = roleIds?.repositoryUrl;
+  const keyRole = roleIds?.sourceKey;
+  if (typeof urlRole !== "number" || typeof keyRole !== "number") {
+    throw new Error("packageRoleIds missing repositoryUrl / sourceKey");
+  }
+
+  // The mapping URL → section key must be injective. Two distinct repo
+  // URLs sharing a key IS the bug: their rows would render under one
+  // header and the second repo would look like it was never added.
+  const outcome = await inspectPackagesModel(app, `
+    var URL = ${urlRole}, KEY = ${keyRole};
+    var urlByKey = {};
+    var collisions = [];
+    for (var i = 0; i < m.rowCount(); ++i) {
+      var idx = m.index(i, 0);
+      var url = String(m.data(idx, URL) || "");
+      if (url.length === 0) continue;
+      var key = String(m.data(idx, KEY) || "");
+      if (urlByKey[key] === undefined) urlByKey[key] = url;
+      else if (urlByKey[key] !== url)
+        collisions.push(key + " <- " + urlByKey[key] + " AND " + url);
+    }
+    return collisions.length === 0 ? "ok" : "bad:" + collisions.join(" | ");
+  `);
+
+  if (outcome === null) throw new Error("packagesModel is null on BackendStore");
+  if (outcome !== "ok") {
+    throw new Error("distinct repositories collapsed onto one section key: " + outcome);
+  }
+});
+
+test("sections: every section key has a header label", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => { if (await storeProperty(app, "isLoading")) throw new Error("loading"); },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  const roleIds = await fetchPackageRoleIds(app);
+  const keyRole = roleIds?.sourceKey;
+  if (typeof keyRole !== "number") {
+    throw new Error("packageRoleIds missing sourceKey");
+  }
+
+  // repositoryLabels is a QVariantMap; read over the inspector as a
+  // property it arrives as an opaque "<QJSValue>", so index it inside QML
+  // and return a plain string. inspectPackagesModel evaluates against the
+  // store, which is where repositoryLabels lives, so both are in scope.
+  //
+  // Section keys are URLs, so the header depends on this map to render
+  // anything human. A key with no entry falls back to "(unresolved
+  // repository)" — correct for a repo that failed to fetch, a bug for one
+  // that loaded packages fine.
+  const outcome = await inspectPackagesModel(app, `
+    var KEY = ${keyRole};
+    var labels = repositoryLabels;
+    if (!labels) return "no-labels";
+    var seen = {};
+    var unlabelled = [];
+    for (var i = 0; i < m.rowCount(); ++i) {
+      var key = String(m.data(m.index(i, 0), KEY) || "");
+      if (key.length === 0 || seen[key]) continue;
+      seen[key] = true;
+      if (!labels[key]) unlabelled.push(key);
+    }
+    return unlabelled.length === 0 ? "ok" : "bad:" + unlabelled.join(" | ");
+  `);
+
+  if (outcome === null) throw new Error("packagesModel is null on BackendStore");
+  if (outcome === "no-labels") {
+    throw new Error(
+      "BackendStore.repositoryLabels is unset — the section header has no " +
+      "way to turn a repo URL back into its display name");
+  }
+  if (outcome !== "ok") {
+    throw new Error(
+      "section keys with no repositoryLabels entry (headers would read " +
+      "'(unresolved repository)'): " + outcome.replace(/^bad:/, ""));
   }
 });
 

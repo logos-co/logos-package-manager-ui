@@ -169,6 +169,7 @@ Rectangle {
                                  || store.isLoading
 
                         packagesModel: store.packagesModel
+                        repositoryLabels: store.repositoryLabels
                         sortRole: store.sortRole
                         sortOrder: store.sortOrder
                         onDetailsRequested: function(i) { store.requestDetails(i) }
@@ -193,6 +194,8 @@ Rectangle {
                     LogosPaginator {
                         id: paginator
                         Layout.fillWidth: true
+                        Layout.leftMargin: Theme.spacing.medium
+                        Layout.rightMargin: Theme.spacing.medium
                         visible: store.totalCount > 0
                         pageInfoText: qsTr("Select a package to view details.")
                         totalCount: store.totalCount

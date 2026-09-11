@@ -14,6 +14,11 @@ LogosTable {
 
     property var packagesModel
 
+    // sourceKey → display label, from the backend PROP of the same name.
+    // Sections group on the repo URL, which is unique but unreadable;
+    // this maps it back to something human for the header.
+    property var repositoryLabels: ({})
+
     signal detailsRequested(int index)
     signal selectionToggled(int index, bool checked)
     // Per-row Uninstall — fired from the trash icon in the trailing
@@ -304,16 +309,14 @@ LogosTable {
         }
     }
 
-    // Group rows by source via ListView's section feature. The backend
-    // pre-sorts packages by (sourcePriority, sourceName, packageName)
-    // — Logos Official first, then user repos alpha — so iterating in
-    // model order yields contiguous source runs. Section property is
-    // `repositoryDisplayName`; the delegate below renders a header
-    // strip above each group with the source label on the left and a
-    // count chip on the right.
+    // Group rows by source. The backend pre-sorts into contiguous source
+    // runs, so ListView's section feature just needs the key. That key is
+    // `sourceKey` (the repo URL) and NOT its display name — display names
+    // come from the remote manifest, and two repos claiming the same one
+    // would merge into a single section.
     Component.onCompleted: {
         if (view) {
-            view.section.property = "repositoryDisplayName"
+            view.section.property = "sourceKey"
             view.section.criteria = ViewSection.FullString
             view.section.delegate = sectionHeaderDelegate
         }
@@ -322,9 +325,12 @@ LogosTable {
     Component {
         id: sectionHeaderDelegate
         Rectangle {
-            // `section` is the QML-injected property carrying the
-            // group's value (the repositoryDisplayName string).
+            id: sectionHeader
+
             required property string section
+            readonly property string label:
+                root.repositoryLabels[section] || qsTr("(unresolved repository)")
+
             width: ListView.view ? ListView.view.width : 0
             height: 32
             color: Theme.palette.surface
@@ -340,12 +346,11 @@ LogosTable {
             LogosText {
                 anchors.left: parent.left
                 anchors.leftMargin: 16
+                anchors.right: parent.right
+                anchors.rightMargin: 16
                 anchors.verticalCenter: parent.verticalCenter
-                // Empty string falls back to "(unresolved)" so a
-                // freshly-added repo whose logos-repo.json hasn't
-                // resolved yet still gets a visible header instead of
-                // a mystery blank bar.
-                text: parent.section.length > 0 ? parent.section : qsTr("(unresolved repository)")
+                text: sectionHeader.label
+                elide: Text.ElideRight
                 color: Theme.palette.textSecondary
                 font.pixelSize: Theme.typography.secondaryText
                 font.weight: Theme.typography.weightBold

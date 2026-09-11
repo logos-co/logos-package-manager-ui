@@ -674,6 +674,21 @@ void PackageManagerBackend::refreshPackages()
     const int currentGeneration = m_reloadGeneration;
     setIsLoading(true);
 
+    // Repository list first: grouping needs each repo's identity before it
+    // can lay out the catalog rows, and it feeds repositoryCount, which
+    // gates the empty state.
+    LogosModules& logos = modules();
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_downloader.listRepositoriesAsync(
+        [self, currentGeneration](QVariantList repos) {
+            if (!self || self->m_reloadGeneration != currentGeneration) return;
+            self->applyRepositoryList(repos);
+            self->loadCatalog(currentGeneration);
+        });
+}
+
+void PackageManagerBackend::loadCatalog(int currentGeneration)
+{
     // One round-trip for the catalog (union across every enabled
     // repository); category list is derived from it client-side so
     // subsequent category clicks only update the proxy filter — no
@@ -714,17 +729,79 @@ void PackageManagerBackend::refreshPackages()
                                                  self->m_validVariantsCache);
                 self->recomputeAvailableTypes();
                 self->applyCategoryFilter();
-
-                LogosModules& logos4 = self->modules();
-                logos4.package_downloader.listRepositoriesAsync(
-                    [self, currentGeneration](QVariantList repos) {
-                        if (!self || self->m_reloadGeneration != currentGeneration) return;
-                        self->setRepositoryCount(repos.size());
-                        self->setIsLoading(false);
-                    });
+                self->setIsLoading(false);
             });
         });
     });
+}
+
+static QString repositoryLabelFor(const QVariantMap& r,
+                                  int sharingName, int sharingOwner)
+{
+    QString label = r.value("displayName").toString();
+    if (label.isEmpty()) label = r.value("name").toString();
+
+    const QString owner = r.value("sourceOwner").toString();
+    const QString repo  = r.value("sourceRepo").toString();
+    const QString host  = r.value("sourceHost").toString();
+    // Off GitHub there is no owner segment, so the host identifies it.
+    // Both are absent entirely against a downloader older than the
+    // source* fields — fall back to the URL, which every entry has.
+    // Qualifying with an empty string renders "Logos Official ()", which
+    // is worse than not qualifying: it looks broken AND still fails to
+    // tell the two repos apart.
+    QString shortSource = owner.isEmpty() ? host : owner;
+    QString longSource  = (owner.isEmpty() || repo.isEmpty())
+                              ? shortSource
+                              : owner + QLatin1Char('/') + repo;
+    if (shortSource.isEmpty()) shortSource = r.value("url").toString();
+    if (longSource.isEmpty())  longSource  = shortSource;
+
+    if (label.isEmpty()) return longSource;   // nothing to qualify
+    if (sharingName <= 1) return label;
+    if (shortSource.isEmpty()) return label;  // nothing to qualify WITH
+    return QStringLiteral("%1 (%2)").arg(label,
+                                         sharingOwner > 1 ? longSource : shortSource);
+}
+
+// Repository identity for the grouping pass, keyed by URL — the registry's
+// own key and the only field a remote can't choose. `repositoryLabels`
+// carries URL → header label over to QML, whose ListView sections group on
+// the key alone and so can't reach any other field.
+void PackageManagerBackend::applyRepositoryList(const QVariantList& repos)
+{
+    m_defaultRepositoryUrl.clear();
+
+    // Two passes: a label depends on how many OTHER repos contest the name,
+    // so the counts must all exist before any label is built.
+    auto nameOf  = [](const QVariantMap& r) {
+        return r.value("displayName").toString().toLower();
+    };
+    auto pairOf = [&](const QVariantMap& r) {
+        return nameOf(r) + QChar(0x01) + r.value("sourceOwner").toString();
+    };
+    QHash<QString, int> byName, byNameAndOwner;
+    for (const QVariant& v : repos) {
+        const QVariantMap r = v.toMap();
+        byName[nameOf(r)]++;
+        byNameAndOwner[pairOf(r)]++;
+    }
+
+    QVariantMap labels;
+    for (const QVariant& v : repos) {
+        const QVariantMap r = v.toMap();
+        const QString url = r.value("url").toString();
+        if (url.isEmpty()) continue;
+        if (r.value("isDefault").toBool()) m_defaultRepositoryUrl = url;
+        labels.insert(url, repositoryLabelFor(r, byName.value(nameOf(r)),
+                                              byNameAndOwner.value(pairOf(r))));
+    }
+    // Lowercase deliberately: basecamp's app manager renders the same
+    // synthetic bucket, and its tests pin that spelling. Keeping the two
+    // surfaces identical is the point of this whole labelling path.
+    labels.insert(QStringLiteral("local"), tr("local"));
+    setRepositoryLabels(labels);
+    setRepositoryCount(repos.size());
 }
 
 void PackageManagerBackend::applyCategoryFilter()
@@ -842,60 +919,54 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
         packages.append(buildLocalPackageRow(inst));
     }
 
-    // Group rows by source: the hardcoded default repository always
-    // comes first (priority 0), then any user-added repos sorted by
-    // their canonical name (priority 1), and the synthetic "local"
-    // bucket last (priority 2). Within each source rows sort by
-    // package name. The QML uses `isFirstOfSource` (tagged below) to
-    // draw a section header above the first row of each group instead
-    // of a per-row Source column.
-    //
-    // Default-repo identification is by `repositoryName` matching the
-    // canonical "logos-modules-official" string baked into logos-repo.json
-    // — avoids pulling in package_downloader_lib.h just for the URL
-    // constant. If the canonical name ever moves, the constant in the
-    // lib AND this match string need to update together.
-    auto sourcePriority = [](const QVariantMap& row) -> int {
+    // Group rows by source. The key is the repo's logos-repo.json URL —
+    // unique, unlike the manifest's name/displayName, which a repo that
+    // copies another's manifest shares (and one in the wild does).
+    // Order: built-in repo (isDefault, from the registry — never a name
+    // match, which any repo could spoof), then user repos by display
+    // name, then the synthetic "local" bucket.
+    const QString localKey = QStringLiteral("local");
+    auto sourceKey = [&](const QVariantMap& row) -> QString {
+        const QString url = row.value("repositoryUrl").toString();
+        if (!url.isEmpty()) return url;
+        // No URL: a local row, or a repo whose manifest never resolved —
+        // key those by name so they still get separate sections.
         const QString n = row.value("repositoryName").toString();
-        if (n == QLatin1String("logos-modules-official")) return 0;
-        if (n == QLatin1String("local")) return 2;
-        return 1;
+        return n.isEmpty() ? localKey : n;
     };
-    auto sourceKey = [](const QVariantMap& row) -> QString {
-        // Use displayName when present (human label like "Logos Official"),
-        // canonical name otherwise, falling back to URL so two unresolved
-        // repos still sort stably.
-        const QString dn = row.value("repositoryDisplayName").toString();
-        if (!dn.isEmpty()) return dn;
-        const QString n = row.value("repositoryName").toString();
-        if (!n.isEmpty()) return n;
-        return row.value("repositoryUrl").toString();
+    auto sourcePriority = [&](const QVariantMap& row) -> int {
+        const QString key = sourceKey(row);
+        if (key == localKey) return 2;
+        return (!m_defaultRepositoryUrl.isEmpty() && key == m_defaultRepositoryUrl)
+                   ? 0 : 1;
     };
     std::stable_sort(packages.begin(), packages.end(),
         [&](const QVariantMap& a, const QVariantMap& b) {
             const int pa = sourcePriority(a);
             const int pb = sourcePriority(b);
             if (pa != pb) return pa < pb;
-            const QString ka = sourceKey(a);
-            const QString kb = sourceKey(b);
-            const int c = ka.compare(kb, Qt::CaseInsensitive);
+            const int c = a.value("repositoryDisplayName").toString().compare(
+                b.value("repositoryDisplayName").toString(), Qt::CaseInsensitive);
             if (c != 0) return c < 0;
+            // Same display name, different repo: keep each one's rows in
+            // a contiguous run instead of interleaving them by package
+            // name under a single header.
+            const int ck = sourceKey(a).compare(sourceKey(b), Qt::CaseInsensitive);
+            if (ck != 0) return ck < 0;
             return a.value("name").toString().compare(
                 b.value("name").toString(), Qt::CaseInsensitive) < 0;
         });
 
-    // Tag each row's `isFirstOfSource` — true when the row's
-    // (priority, sourceKey) tuple differs from the previous row's.
-    // The QML rowDelegate reads this to render a section header.
-    int prevPriority = -1;
-    QString prevKey;
+    // Stamp each row's key, and collect the keys in the order their
+    // groups appear so the proxy can hold that order across a re-sort.
+    QStringList sourceOrder;
     for (QVariantMap& row : packages) {
-        const int p = sourcePriority(row);
         const QString k = sourceKey(row);
-        row["isFirstOfSource"] = (p != prevPriority) || (k != prevKey);
-        prevPriority = p;
-        prevKey = k;
+        row["sourceKey"] = k;
+        if (sourceOrder.isEmpty() || sourceOrder.last() != k)
+            sourceOrder.append(k);
     }
+    m_packagesFilterProxy->setSourceOrder(sourceOrder);
 
     // setPackages emits hasSelectionChanged; the connected slot
     // (refreshActionSummary) rebuilds the bulk action plan and pushes
@@ -1078,9 +1149,10 @@ void PackageManagerBackend::installNextPackage(const QVariantList& results, int 
         // Bubble the per-package outcome back up through the model + progress
         // signal. installOnePackage handles both the download-failed fast path
         // (empty filePath) and the actual installPlugin IPC call.
+        const QString dlRepoUrl = dl.value("repositoryUrl").toString();
         QPointer<PackageManagerBackend> self(this);
         installOnePackage(dl,
-            [self, results, packageName, index, completed, totalPackages](bool success, const QString& err) {
+            [self, results, packageName, dlRepoUrl, index, completed, totalPackages](bool success, const QString& err) {
                 if (!self) return;
 
                 int newCompleted = completed + 1;
@@ -1096,8 +1168,9 @@ void PackageManagerBackend::installNextPackage(const QVariantList& results, int 
                     // failed installs.
                     self->m_packageModel->clearSelectionsByPackageNames({packageName});
                 } else {
-                    self->m_packageModel->updatePackageInstallation(
-                        packageName, static_cast<int>(PackageTypes::Failed), err);
+                    self->m_packageModel->updateRowInstallation(
+                        packageName, dlRepoUrl,
+                        static_cast<int>(PackageTypes::Failed), err);
                 }
                 emit self->installationProgressUpdated(
                     success ? static_cast<int>(PackageTypes::InProgress)
@@ -1158,9 +1231,11 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     }
 
     // Mark the row Installing immediately so the per-row button gates itself
-    // against double-click while the download is in flight.
-    m_packageModel->updatePackageInstallation(
-        packageName, static_cast<int>(PackageTypes::Installing));
+    // against double-click while the download is in flight. Scoped to the
+    // clicked row's repo — another repo publishing the same name is not
+    // installing anything.
+    m_packageModel->updateRowInstallation(
+        packageName, repoUrl, static_cast<int>(PackageTypes::Installing));
 
     emit installationProgressUpdated(
         static_cast<int>(PackageTypes::Started), packageName, 0, 1, true, "");
@@ -1236,9 +1311,10 @@ void PackageManagerBackend::installResultsSequential(const QVariantList& results
     if (index >= results.size()) return;
     const QVariantMap dl = results[index].toMap();
     const QString depName = dl.value("name").toString();
+    const QString depRepoUrl = dl.value("repositoryUrl").toString();
     QPointer<PackageManagerBackend> self(this);
     installOnePackage(dl,
-        [self, results, topLevelName, depName, index](bool success, const QString& err) {
+        [self, results, topLevelName, depName, depRepoUrl, index](bool success, const QString& err) {
             if (!self) return;
             if (success) {
                 self->m_packageModel->updatePackageInstallation(
@@ -1249,8 +1325,9 @@ void PackageManagerBackend::installResultsSequential(const QVariantList& results
                 // event also names the top-level so the UI's
                 // "Installing X…" banner flips to "X failed because
                 // dep Y failed" once we surface that on the QML side.
-                self->m_packageModel->updatePackageInstallation(
-                    depName, static_cast<int>(PackageTypes::Failed), err);
+                self->m_packageModel->updateRowInstallation(
+                    depName, depRepoUrl,
+                    static_cast<int>(PackageTypes::Failed), err);
                 // Earlier we marked EVERY entry in `results` as
                 // Installing so the row badges reflect the in-flight
                 // batch immediately. The loop stops here on failure;
@@ -1285,8 +1362,9 @@ void PackageManagerBackend::markEntriesInstalling(const QVariantList& entries)
         if (m.contains("error")) continue;
         const QString name = m.value("name").toString();
         if (name.isEmpty()) continue;
-        m_packageModel->updatePackageInstallation(
-            name, static_cast<int>(PackageTypes::Installing));
+        m_packageModel->updateRowInstallation(
+            name, m.value("repositoryUrl").toString(),
+            static_cast<int>(PackageTypes::Installing));
     }
 }
 
@@ -1336,8 +1414,9 @@ void PackageManagerBackend::installSpecs(const QList<PackageInstallSpec>& specs,
         static_cast<int>(PackageTypes::Started), "", 0, specs.size(), true, "");
 
     for (const PackageInstallSpec& spec : specs) {
-        m_packageModel->updatePackageInstallation(
-            spec.name, static_cast<int>(PackageTypes::Installing));
+        m_packageModel->updateRowInstallation(
+            spec.name, spec.repositoryUrl,
+            static_cast<int>(PackageTypes::Installing));
     }
 
     // Pack the specs into the JSON-array shape expected by
@@ -1644,8 +1723,13 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
 
     if (m_refreshDebounceTimer) m_refreshDebounceTimer->stop();
 
-    m_packageModel->updatePackageInstallation(
-        displayName, static_cast<int>(PackageTypes::Installing));
+    // Scoped to the repo performUpgrade pinned, so upgrading from one repo
+    // doesn't badge another repo's copy of the same package. Read without
+    // draining — the spec below still needs it. Empty (bare upgrade, no
+    // pin) falls back to the name-wide update.
+    m_packageModel->updateRowInstallation(
+        displayName, m_pendingUpgradeByModule.value(moduleName).repositoryUrl,
+        static_cast<int>(PackageTypes::Installing));
 
     static const char* modeLabels[] = {"Upgrading", "Downgrading", "Sidegrading"};
     const char* label = (mode >= 0 && mode <= 2) ? modeLabels[mode] : "Upgrading";

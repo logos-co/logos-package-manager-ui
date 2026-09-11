@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <QAbstractListModel>
 #include <QHash>
 #include <QList>
@@ -116,6 +118,7 @@ public:
         RepositoryUrlRole,           // canonical URL of the repo's logos-repo.json
         RepositoryNameRole,          // canonical id from logos-repo.json#name
         RepositoryDisplayNameRole,   // human-friendly badge label
+        SourceKeyRole,
 
         // Per-row version selector. `availableVersions` is an array of
         // { version, rootHash, releasedAt, url, signed, manifest } —
@@ -125,16 +128,6 @@ public:
         // (version, rootHash) from `availableVersions[selectedVersionIndex]`.
         AvailableVersionsRole,
         SelectedVersionIndexRole,
-
-        // True for the first row of each source group when the model is
-        // sorted by (sourcePriority, sourceName, name). The QML uses it
-        // to render a section header above the row instead of repeating
-        // the source label on every row. Computed by
-        // PackageManagerBackend::setPackagesFromVariantList after its
-        // group-ordered sort. Filter-proxy reslicing can stale the
-        // value when the first row of a source gets filtered out, but
-        // the default unfiltered view is always correct.
-        IsFirstOfSourceRole,
 
         // The row's primary action (PackageTypes::RowAction enum int),
         // resolved by RowActionResolver::resolveRowAction AGAINST THE
@@ -162,8 +155,23 @@ public:
 
     void setPackages(const QList<QVariantMap>& packages);
     void updatePackageSelection(int index, bool isSelected);
+
+    // Apply a status to EVERY row whose name/moduleName matches. Correct
+    // for states that describe the DISK — Installed, NotInstalled,
+    // Upgrade/DowngradeAvailable: once a package is on disk, every repo's
+    // copy of that row is equally installed.
     void updatePackageInstallation(const QString& packageName, int status,
                                    const QString& errorMessage = QString());
+
+    // Apply a status to the row from `repositoryUrl` alone. Required for
+    // states that describe one ATTEMPT rather than the disk — Installing
+    // and Failed. Fanning those across repos lights up every copy of the
+    // row, and it defeats updateDownloadProgress's Installing filter, so a
+    // download from one repo animates the other repo's row too.
+    void updateRowInstallation(const QString& packageName,
+                               const QString& repositoryUrl,
+                               int status,
+                               const QString& errorMessage = QString());
 
     // Record live download bytes for every row matching `packageName`
     // (same name/moduleName matching as updatePackageInstallation).
@@ -214,6 +222,13 @@ signals:
 
 private:
     void clearSelectionsBy(const QStringList& keys, const char* field);
+
+    // Shared body of the two update*Installation entry points. An unset
+    // `repositoryScope` means "every matching row"; a set one restricts to
+    // rows from that repo.
+    void applyInstallation(const QString& packageName, int status,
+                           const QString& errorMessage,
+                           const std::optional<QString>& repositoryScope);
 
     struct FailedEntry { QString errorMessage; };
     
