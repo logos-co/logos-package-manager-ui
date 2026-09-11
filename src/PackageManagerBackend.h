@@ -232,6 +232,19 @@ private:
     PackagesPagingProxy* m_packagesPagingProxy;
     int m_reloadGeneration = 0;
 
+    // URL of the built-in repository, straight from the registry's
+    // isDefault flag. Never inferred from the manifest's `name` — any repo
+    // can claim any name, and one in the wild claims the official repo's.
+    // Empty if the user removed the default. Refreshed every reload.
+    QString m_defaultRepositoryUrl;
+
+    // Rebuild m_defaultRepositoryUrl + the repositoryLabels PROP. Must run
+    // before loadCatalog — the grouping pass reads the former.
+    void applyRepositoryList(const QVariantList& repos);
+
+    // Catalog + installed + variants round-trips, then the model rebuild.
+    void loadCatalog(int currentGeneration);
+
     // Unfiltered catalog. Category / type filters run on the proxy without a
     // network round-trip. Reset on each reload.
     QVariantList m_allPackagesCache;

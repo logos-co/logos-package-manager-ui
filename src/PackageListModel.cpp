@@ -45,11 +45,11 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
         case RepositoryUrlRole:         return package.value("repositoryUrl");
         case RepositoryNameRole:        return package.value("repositoryName");
         case RepositoryDisplayNameRole: return package.value("repositoryDisplayName");
+        case SourceKeyRole:  return package.value("sourceKey");
         // QVariantList of per-version maps. See `availableVersions`
         // construction in PackageManagerBackend::setPackagesFromVariantList.
         case AvailableVersionsRole:      return package.value("availableVersions");
         case SelectedVersionIndexRole:   return package.value("selectedVersionIndex", 0);
-        case IsFirstOfSourceRole:        return package.value("isFirstOfSource", false);
         case RowActionRole:              return package.value("rowAction",
                                                   static_cast<int>(PackageTypes::NoOp));
         case UpdateAvailableRole:        return package.value("updateAvailable", false);
@@ -87,9 +87,9 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
         {RepositoryUrlRole,           "repositoryUrl"},
         {RepositoryNameRole,          "repositoryName"},
         {RepositoryDisplayNameRole,   "repositoryDisplayName"},
+        {SourceKeyRole,    "sourceKey"},
         {AvailableVersionsRole,       "availableVersions"},
         {SelectedVersionIndexRole,    "selectedVersionIndex"},
-        {IsFirstOfSourceRole,         "isFirstOfSource"},
         {RowActionRole,               "rowAction"},
         {UpdateAvailableRole,         "updateAvailable"},
         {DownloadReceivedRole,        "downloadReceived"},
@@ -328,23 +328,41 @@ void PackageListModel::updatePackageSelection(int index, bool isSelected)
 void PackageListModel::updatePackageInstallation(const QString& packageName, int status,
                                                   const QString& errorMessage)
 {
+    applyInstallation(packageName, status, errorMessage, std::nullopt);
+}
+
+void PackageListModel::updateRowInstallation(const QString& packageName,
+                                             const QString& repositoryUrl,
+                                             int status,
+                                             const QString& errorMessage)
+{
+    applyInstallation(packageName, status, errorMessage,
+                      repositoryUrl.isEmpty()
+                          ? std::nullopt
+                          : std::optional<QString>(repositoryUrl));
+}
+
+void PackageListModel::applyInstallation(const QString& packageName, int status,
+                                         const QString& errorMessage,
+                                         const std::optional<QString>& repositoryScope)
+{
     // Callers pass either the catalog `name` (install path keys on the .lgx
     // package name, which matches the catalog row's name) or the manifest
     // `moduleName` (uninstall / upgrade paths key on moduleName because
     // that's what package_manager_lib's byName map uses on disk). Match
     // against both so neither flow silently no-ops the model update.
     //
-    // In the multi-repo world two rows can share `name` (different repos
-    // publishing the same package); update EVERY matching row so the
-    // failed/installed badge surfaces on each. The failed cache is
-    // indexed by (repo, name) so post-refresh restoration keeps them
-    // independent.
+    // Two rows can share a `name` when two repos publish the same package,
+    // so `repositoryScope` decides how wide the update goes — see the two
+    // public entry points for which states belong in which bucket.
     int firstChanged = -1, lastChanged = -1;
     for (int i = 0; i < m_packages.size(); ++i) {
         QVariantMap& row = m_packages[i];
         const QString rowName = row.value("name").toString();
         const QString rowModuleName = row.value("moduleName").toString();
         if (rowName != packageName && rowModuleName != packageName) continue;
+        if (repositoryScope
+            && row.value("repositoryUrl").toString() != *repositoryScope) continue;
 
         const int prevStatus = row.value("installStatus", 0).toInt();
         row["installStatus"] = status;
@@ -362,13 +380,18 @@ void PackageListModel::updatePackageInstallation(const QString& packageName, int
         }
 
         // Maintain m_failedByKey in lockstep with the row's status.
-        // Indexed under both the composite (repo, name) key AND the bare
-        // moduleName so either flow's lookup works.
+        // Indexed under the composite (repo, name) key, and — only for an
+        // unscoped update — the bare moduleName as well, so a moduleName-
+        // keyed flow can still find it. A scoped failure skips the
+        // moduleName index deliberately: it belongs to one repo's row, and
+        // co-indexing it there would restore it onto another repo's copy
+        // at the next refresh, re-creating the leak this scoping fixes.
         const QString key = rowKey(row);
         if (status == static_cast<int>(PackageTypes::Failed)) {
             const FailedEntry entry{ errorMessage };
             if (!key.isEmpty())            m_failedByKey.insert(key, entry);
-            if (!rowModuleName.isEmpty())  m_failedByKey.insert(rowModuleName, entry);
+            if (!repositoryScope && !rowModuleName.isEmpty())
+                m_failedByKey.insert(rowModuleName, entry);
         } else {
             if (!key.isEmpty())            m_failedByKey.remove(key);
             if (!rowModuleName.isEmpty())  m_failedByKey.remove(rowModuleName);

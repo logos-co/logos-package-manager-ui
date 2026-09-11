@@ -51,10 +51,8 @@ void PackagesFilterProxy::recomputeRoleCaches()
     m_typeFilterRole     = -1;
     m_categoryFilterRole = -1;
     m_installStatusRole  = -1;
-    m_repositoryNameRole        = -1;
-    m_repositoryDisplayNameRole = -1;
-    m_repositoryUrlRole         = -1;
-    m_nameRole                  = -1;
+    m_sourceKeyRole      = -1;
+    m_nameRole           = -1;
     m_versionRoles.clear();
     m_searchRoles.clear();
     if (!sourceModel()) return;
@@ -67,14 +65,11 @@ void PackagesFilterProxy::recomputeRoleCaches()
     m_categoryFilterRole = m_roleByName.value(QByteArrayLiteral("category"), -1);
     m_installStatusRole  = m_roleByName.value(QByteArrayLiteral("installStatus"), -1);
 
-    // Source-grouping roles. The lessThan override consults these to pin
-    // the repo order ahead of the user-selected sort role; without them
-    // resolved we fall back to plain sorting (acceptable for the unit
-    // tests that don't surface multi-repo roles).
-    m_repositoryNameRole        = m_roleByName.value(QByteArrayLiteral("repositoryName"), -1);
-    m_repositoryDisplayNameRole = m_roleByName.value(QByteArrayLiteral("repositoryDisplayName"), -1);
-    m_repositoryUrlRole         = m_roleByName.value(QByteArrayLiteral("repositoryUrl"), -1);
-    m_nameRole                  = m_roleByName.value(QByteArrayLiteral("name"), -1);
+    // Source-grouping role. lessThan consults it to pin the repo order
+    // ahead of the user-selected sort role; unresolved, we fall back to
+    // plain sorting (fine for tests that don't surface multi-repo roles).
+    m_sourceKeyRole = m_roleByName.value(QByteArrayLiteral("sourceKey"), -1);
+    m_nameRole      = m_roleByName.value(QByteArrayLiteral("name"), -1);
 
     for (const QByteArray& name : { QByteArrayLiteral("name"),
                                     QByteArrayLiteral("description") }) {
@@ -155,6 +150,16 @@ void PackagesFilterProxy::setSortRoleByName(const QString& roleName)
     }
 }
 
+void PackagesFilterProxy::setSourceOrder(const QStringList& sourceKeys)
+{
+    if (sourceKeys == m_sourceOrder) return;
+    m_sourceOrder = sourceKeys;
+    // Group ranks changed. Re-sort only if sorting is active — sort(0, …)
+    // on an unsorted proxy would impose an order nobody asked for.
+    if (!m_sortRoleName.isEmpty())
+        sort(0, m_sortOrder);
+}
+
 void PackagesFilterProxy::setSortOrderInt(int order)
 {
     const Qt::SortOrder o = (order == Qt::DescendingOrder)
@@ -169,13 +174,10 @@ bool PackagesFilterProxy::lessThan(const QModelIndex& left,
                                    const QModelIndex& right) const
 {
     // Source grouping is the primary sort key — regardless of which column
-    // the user clicks to sort by. The default repository
-    // ("logos-modules-official") always groups first; user repos follow,
-    // sorted by displayName (case-insensitive). Within a group the
-    // user-selected role (sortRole()) decides ordering. This mirrors the
-    // backend's initial setPackagesFromVariantList ordering so the QML
-    // section headers (`repositoryDisplayName`) keep producing one strip
-    // per repo no matter how the user pivots the sort.
+    // the user clicks to sort by. Groups appear in setSourceOrder's order;
+    // within a group the user-selected role (sortRole()) decides. Keeps
+    // the QML section headers producing one strip per repo no matter how
+    // the user pivots the sort.
     //
     // Inversion note: QSortFilterProxyModel applies the active sortOrder
     // by flipping the comparator's result for descending. That'd also
@@ -189,23 +191,14 @@ bool PackagesFilterProxy::lessThan(const QModelIndex& left,
         return QSortFilterProxyModel::lessThan(left, right);
 
     auto groupRank = [this](const QModelIndex& idx) -> std::pair<int, QString> {
-        // Priority 0 = the canonical default repo (its `name` in
-        // logos-repo.json is "logos-modules-official"), 1 = everyone else.
-        QString name = (m_repositoryNameRole >= 0)
-                           ? sourceModel()->data(idx, m_repositoryNameRole).toString()
-                           : QString();
-        const int pri = (name == QLatin1String("logos-modules-official")) ? 0 : 1;
-        // Within the "everyone else" bucket, use displayName as the
-        // grouping key with a name → URL fallback chain, mirroring the
-        // backend's sourceKey().
-        QString key;
-        if (m_repositoryDisplayNameRole >= 0)
-            key = sourceModel()->data(idx, m_repositoryDisplayNameRole).toString();
-        if (key.isEmpty() && !name.isEmpty())
-            key = name;
-        if (key.isEmpty() && m_repositoryUrlRole >= 0)
-            key = sourceModel()->data(idx, m_repositoryUrlRole).toString();
-        return {pri, key};
+        const QString key =
+            (m_sourceKeyRole >= 0)
+                ? sourceModel()->data(idx, m_sourceKeyRole).toString()
+                : QString();
+        // Position in the backend-supplied order; an unlisted key (a row
+        // added since the last reload) ranks after every known group.
+        const int pos = m_sourceOrder.indexOf(key);
+        return {pos >= 0 ? pos : m_sourceOrder.size(), key};
     };
 
     const auto ra = groupRank(left);
