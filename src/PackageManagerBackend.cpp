@@ -738,8 +738,11 @@ void PackageManagerBackend::loadCatalog(int currentGeneration)
 static QString repositoryLabelFor(const QVariantMap& r,
                                   int sharingName, int sharingOwner)
 {
-    QString label = r.value("displayName").toString();
-    if (label.isEmpty()) label = r.value("name").toString();
+    // Trimmed: a trailing space is invisible on screen but would make two
+    // otherwise identical names render at different widths, and it has to
+    // match the trimming the collision keys below do.
+    QString label = r.value("displayName").toString().trimmed();
+    if (label.isEmpty()) label = r.value("name").toString().trimmed();
 
     const QString owner = r.value("sourceOwner").toString();
     const QString repo  = r.value("sourceRepo").toString();
@@ -774,11 +777,17 @@ void PackageManagerBackend::applyRepositoryList(const QVariantList& repos)
 
     // Two passes: a label depends on how many OTHER repos contest the name,
     // so the counts must all exist before any label is built.
+    // Comparison keys only — the rendered label keeps the repo's own
+    // spelling. Trimmed and case-folded so neither a stray space nor a
+    // different capitalisation of the same GitHub account (which GitHub
+    // treats as one account) can slip past the collision check and leave
+    // two repos rendering the same bare name.
     auto nameOf  = [](const QVariantMap& r) {
-        return r.value("displayName").toString().toLower();
+        return r.value("displayName").toString().trimmed().toLower();
     };
     auto pairOf = [&](const QVariantMap& r) {
-        return nameOf(r) + QChar(0x01) + r.value("sourceOwner").toString();
+        return nameOf(r) + QChar(0x01)
+             + r.value("sourceOwner").toString().trimmed().toLower();
     };
     QHash<QString, int> byName, byNameAndOwner;
     for (const QVariant& v : repos) {
