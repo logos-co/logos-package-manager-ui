@@ -556,6 +556,20 @@ test("row click: single click populates selectedPackageDetails", async (app) => 
 });
 
 // ─── Categories sidebar scroll test ────────────────────────────────
+// Bring the sidebar's Types section into view. It lives under Categories
+// in a clipped Flickable; when the two together overflow, Types is not
+// hittable until the Flickable is scrolled. No-op when there is no overflow.
+async function scrollSidebarToBottom(app) {
+  const scroll = await app.findByProperty("objectName", "pmui.CategorySidebar.scrollArea");
+  if (!scroll.matches || scroll.matches.length === 0) return;
+  const scrollId = scroll.matches[0].id;
+  const res = await app.inspector.send("evaluate", {
+    objectId: scrollId,
+    expression: "contentY = Math.max(0, contentHeight - height); String(contentY)",
+  });
+  if (res.error) throw new Error(`sidebar scroll failed: ${res.error}`);
+}
+
 test("categories sidebar: scrollable when contents overflow", async (app) => {
   await waitForPmuiLoaded(app);
 
@@ -629,6 +643,11 @@ test("row click after type filter: details.type matches the filtered type", asyn
   const chosenType = types[1];
 
   // The sidebar's Types entries are labelled by the type string itself.
+  // Types sits BELOW Categories inside a clipped Flickable, so with a
+  // fixture that has several categories it starts out scrolled off the
+  // bottom. The item is in the object tree either way, so a click resolves
+  // and silently lands nowhere — scroll it into view first.
+  await scrollSidebarToBottom(app);
   await app.click(chosenType, { exact: true });
   await app.waitFor(
     async () => {
@@ -658,6 +677,11 @@ test("row click after type filter: details.type matches the filtered type", asyn
     { timeout: 5000, interval: 250,
       description: "details to match the filtered type" }
   );
+
+  // Hand the filter back. This test is the only one that deliberately
+  // leaves a non-default type selected, and every later test that reads
+  // the model would otherwise inherit it.
+  await resetStoreFilters(app);
 });
 
 // ─── "Local" synthetic-repo tests ──────────────────────────────────
@@ -708,6 +732,44 @@ async function resetStoreFilters(app) {
       setInstallStateFilter(0);
     })()`,
   });
+
+  // Those are push* calls over QtRO — issuing them is not the same as
+  // them landing. Without this wait a caller can read a model that is
+  // still filtered by whatever the previous test left behind, pick a row
+  // index from it, and then act on a different row once the reset
+  // arrives. Poll the replica until the state it asked for is real.
+  await app.waitFor(
+    async () => {
+      const type   = await storeProperty(app, "selectedTypeIndex");
+      const cat    = await storeProperty(app, "selectedCategoryIndex");
+      const search = await storeProperty(app, "searchText");
+      const state  = await storeProperty(app, "installStateFilter");
+      if (type !== 0 || cat !== 0 || search !== "" || state !== 0) {
+        throw new Error(
+          `filters not reset yet (type=${type} cat=${cat} ` +
+          `search="${search}" state=${state})`);
+      }
+    },
+    { timeout: 5000, interval: 100, description: "store filters to reset" }
+  );
+
+  // The properties flip immediately, but the proxies re-filter on a 30ms
+  // debounce (m_filterApplyTimer), so for a moment the model still has the
+  // PREVIOUS shape while the filter state already reads clean. A caller
+  // that scans the model in that window picks a row index that then moves
+  // under it — and acting on a stale index silently hits a different row.
+  // Wait for the row count to hold steady across a gap wider than the
+  // debounce before handing the model back.
+  let lastCount = null;
+  await app.waitFor(
+    async () => {
+      const now = await storeProperty(app, "totalCount");
+      const settled = lastCount !== null && now === lastCount;
+      lastCount = now;
+      if (!settled) throw new Error(`totalCount still settling (${now})`);
+    },
+    { timeout: 5000, interval: 200, description: "model to settle after reset" }
+  );
 }
 
 // Read the backend-exposed role name → int map for `packagesModel`. Must

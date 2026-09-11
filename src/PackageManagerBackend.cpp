@@ -745,13 +745,21 @@ static QString repositoryLabelFor(const QVariantMap& r,
     const QString repo  = r.value("sourceRepo").toString();
     const QString host  = r.value("sourceHost").toString();
     // Off GitHub there is no owner segment, so the host identifies it.
-    const QString shortSource = owner.isEmpty() ? host : owner;
-    const QString longSource  = (owner.isEmpty() || repo.isEmpty())
-                                    ? shortSource
-                                    : owner + QLatin1Char('/') + repo;
+    // Both are absent entirely against a downloader older than the
+    // source* fields — fall back to the URL, which every entry has.
+    // Qualifying with an empty string renders "Logos Official ()", which
+    // is worse than not qualifying: it looks broken AND still fails to
+    // tell the two repos apart.
+    QString shortSource = owner.isEmpty() ? host : owner;
+    QString longSource  = (owner.isEmpty() || repo.isEmpty())
+                              ? shortSource
+                              : owner + QLatin1Char('/') + repo;
+    if (shortSource.isEmpty()) shortSource = r.value("url").toString();
+    if (longSource.isEmpty())  longSource  = shortSource;
 
     if (label.isEmpty()) return longSource;   // nothing to qualify
     if (sharingName <= 1) return label;
+    if (shortSource.isEmpty()) return label;  // nothing to qualify WITH
     return QStringLiteral("%1 (%2)").arg(label,
                                          sharingOwner > 1 ? longSource : shortSource);
 }
