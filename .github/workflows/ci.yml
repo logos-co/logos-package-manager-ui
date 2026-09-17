@@ -25,3 +25,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
       - run: nix build .#integration-test -L
+
+  unit-tests-linux:
+    name: Unit tests (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+      - run: nix build -L ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).unit-tests"
+
+  unit-tests-macos:
+    name: Unit tests (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - run: nix build -L ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).unit-tests"
