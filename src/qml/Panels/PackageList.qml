@@ -185,12 +185,10 @@ LogosTable {
             // PackageListModel so status/details bindings reflect the pick.
             title: qsTr("Available")
             role: "version"
-            // Wide enough for a describe-style version, "2.0.0-32.gf8ab37c1",
-            // which is what a per-commit repository publishes. The floor stays
-            // where it was so a narrow window shrinks the column instead of
-            // scrolling the table sideways.
+            // Holds a combo wide enough for "1.0.10" plus the chevron; a
+            // longer version reads in the dropdown, which sizes to its entries.
             minWidth: 120
-            preferredWidth: 220
+            preferredWidth: 130
             cellDelegate: versionCellComponent
         },
         // Size and Released describe the version SELECTED in Available —
