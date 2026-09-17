@@ -28,55 +28,71 @@
   };
 
   outputs = inputs@{ logos-module-builder, ... }:
-    logos-module-builder.lib.mkLogosQmlModule {
-      src = ./.;
-      configFile = ./metadata.json;
-      flakeInputs = inputs;
+    let
+      shared = {
+        src = ./.;
+        configFile = ./metadata.json;
+        flakeInputs = inputs;
 
-      # `headers`, NOT `lib` — because nothing here links lgx.
-      #
-      # This plugin's only use of logos-package is the header-only
-      # `logos/semver.hpp` (RowActionResolver.h); CMakeLists declares no
-      # EXTERNAL_LIBS and the built plugin's load commands name lgx zero times.
-      # The `lib` output ships liblgx.dylib, which the module builder then
-      # stages beside the plugin and into its .lgx — 0.6 MB of library nothing
-      # loads. `headers` ships no library, so there is nothing to copy.
-      #
-      # This choice used to be load-bearing for a second, sharper reason, and
-      # the note it carried was wrong about the mechanism. ui-host does NOT scan
-      # a directory: it takes `--path <plugin>` and loads exactly that file.
-      # What actually broke was logos-standalone-app picking the backend by
-      # globbing the install dir and taking the alphabetically first library, so
-      # liblgx.dylib ("l" < "p") was handed to ui-host in place of the plugin.
-      # Fixed in logos-standalone-app#44, which resolves manifest.json's `main`.
-      # Re-checked against that fix with `lib` and liblgx.dylib present:
-      # ui-host is spawned with package_manager_ui_plugin.dylib. So `lib` is now
-      # merely wasteful rather than fatal — hence still `headers`, on the
-      # first reason alone.
-      externalLibInputs = {
-        lgx = {
-          input = inputs.logos-package;
-          packages.default = "headers";
+        # `headers`, NOT `lib` — because nothing here links lgx.
+        #
+        # This plugin's only use of logos-package is the header-only
+        # `logos/semver.hpp` (RowActionResolver.h); CMakeLists declares no
+        # EXTERNAL_LIBS and the built plugin's load commands name lgx zero times.
+        # The `lib` output ships liblgx.dylib, which the module builder then
+        # stages beside the plugin and into its .lgx — 0.6 MB of library nothing
+        # loads. `headers` ships no library, so there is nothing to copy.
+        #
+        # This choice used to be load-bearing for a second, sharper reason, and
+        # the note it carried was wrong about the mechanism. ui-host does NOT scan
+        # a directory: it takes `--path <plugin>` and loads exactly that file.
+        # What actually broke was logos-standalone-app picking the backend by
+        # globbing the install dir and taking the alphabetically first library, so
+        # liblgx.dylib ("l" < "p") was handed to ui-host in place of the plugin.
+        # Fixed in logos-standalone-app#44, which resolves manifest.json's `main`.
+        # Re-checked against that fix with `lib` and liblgx.dylib present:
+        # ui-host is spawned with package_manager_ui_plugin.dylib. So `lib` is now
+        # merely wasteful rather than fatal — hence still `headers`, on the
+        # first reason alone.
+        externalLibInputs = {
+          lgx = {
+            input = inputs.logos-package;
+            packages.default = "headers";
+          };
         };
+
+        # Stage the shared semver headers into the tree so CMake can see them.
+        #
+        # The builder's normal external-lib staging flattens `include/*.h` into a
+        # single `lib/` directory, which would both drop our `.hpp` files and
+        # collapse `logos/semver.hpp` and `semver/semver.hpp` onto the same name.
+        # Copy the directories across intact instead; CMakeLists puts `vendor/` on
+        # the include path. preConfigure gets the per-system resolved derivation.
+        preConfigure = { externalLibs }: ''
+          # Clear any previously staged headers first, so an incremental/local
+          # build after the logos-package input changes can't leave a stale tree
+          # behind. (Nix sandbox builds start clean, but `nix develop` reuses the
+          # source dir.)
+          rm -rf vendor
+          mkdir -p vendor
+          cp -r ${externalLibs.lgx}/include/logos vendor/
+          cp -r ${externalLibs.lgx}/include/semver vendor/
+          chmod -R u+w vendor
+        '';
       };
 
-      # Stage the shared semver headers into the tree so CMake can see them.
-      #
-      # The builder's normal external-lib staging flattens `include/*.h` into a
-      # single `lib/` directory, which would both drop our `.hpp` files and
-      # collapse `logos/semver.hpp` and `semver/semver.hpp` onto the same name.
-      # Copy the directories across intact instead; CMakeLists puts `vendor/` on
-      # the include path. preConfigure gets the per-system resolved derivation.
-      preConfigure = { externalLibs }: ''
-        # Clear any previously staged headers first, so an incremental/local
-        # build after the logos-package input changes can't leave a stale tree
-        # behind. (Nix sandbox builds start clean, but `nix develop` reuses the
-        # source dir.)
-        rm -rf vendor
-        mkdir -p vendor
-        cp -r ${externalLibs.lgx}/include/logos vendor/
-        cp -r ${externalLibs.lgx}/include/semver vendor/
-        chmod -R u+w vendor
-      '';
+      module = logos-module-builder.lib.mkLogosQmlModule shared;
+
+      # Unit tests for the pure row-building transform. mkLogosQmlModule only
+      # picks up tests/*.mjs (the integration suite), and that suite's fixture
+      # can never reach the Local-row path: logos-standalone-app never sets
+      # package_manager's user directory, so nothing is ever installed there.
+      unitTests = logos-module-builder.lib.mkLogosModuleTests
+        (shared // { testDir = ./tests; });
+    in
+    module // {
+      checks = builtins.mapAttrs
+        (system: checks: checks // (unitTests.${system} or {}))
+        (module.checks or {});
     };
 }

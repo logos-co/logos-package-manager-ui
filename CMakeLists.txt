@@ -13,6 +13,8 @@ logos_module(
     SOURCES
         src/PackageManagerBackend.h
         src/PackageManagerBackend.cpp
+        src/PackageRowBuilder.h
+        src/PackageRowBuilder.cpp
         src/PackageListModel.h
         src/PackageListModel.cpp
         src/PackagesFilterProxy.h
