@@ -190,7 +190,8 @@ LogosTable {
             // PackageListModel so status/details bindings reflect the pick.
             title: qsTr("Available")
             role: "version"
-            // Holds a combo wide enough for "1.0.10" plus the chevron.
+            // Holds a combo wide enough for "1.0.10" plus the chevron; a
+            // longer version reads in the dropdown, which sizes to its entries.
             minWidth: 120
             preferredWidth: 130
             cellDelegate: versionCellComponent
@@ -435,6 +436,10 @@ LogosTable {
                     if (idx !== versionCell.selectedIdx)
                         root.versionChanged(rowIndex, idx)
                 }
+
+                hoverEnabled: true
+                ToolTip.visible: hovered && contentLabel.truncated
+                ToolTip.text: displayText
             }
 
             // Fallback plain text when no usable versions[] (legacy
