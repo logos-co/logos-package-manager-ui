@@ -240,6 +240,27 @@ static PackageTypes::NotAvailableReason classifyNotAvailable(
     return PackageTypes::PlatformMismatch;
 }
 
+// An entry is a plain name or an object carrying a version range and/or a
+// signer DID; QML wants a string list, so an object becomes "name version
+// [signer=…]". Shared, so a catalog row and a Local row read the same.
+static QStringList renderDependencies(const QVariantList& depsArray)
+{
+    QStringList deps;
+    for (const QVariant& dep : depsArray) {
+        if (dep.canConvert<QVariantMap>() && !dep.toString().size()) {
+            const QVariantMap dm = dep.toMap();
+            QString s = dm.value("name").toString();
+            if (dm.contains("version")) s += QStringLiteral(" ") + dm.value("version").toString();
+            if (dm.contains("signer"))
+                s += QStringLiteral(" [signer=") + dm.value("signer").toString() + QStringLiteral("]");
+            deps.append(s);
+        } else {
+            deps.append(dep.toString());
+        }
+    }
+    return deps;
+}
+
 // Build one model row from one raw catalog row + the installed-by-name index +
 // the valid-variants list for this platform. Pure transform; no instance state.
 //
@@ -404,26 +425,11 @@ static QVariantMap buildPackageRow(const QVariantMap& obj,
     pkg["updateAvailable"] = rowaction::hasUpdateAvailable(
         isInstalled, installedVersion, /*newestCatalogVersion=*/releaseVersion);
 
-    // dependencies may be a flat array of names (legacy) or a list mixing
-    // plain-string and object entries (new manifest schema). The QML side
-    // displays them as a string list; render objects as "name version
-    // [signer=…]" so the user can see the constraint.
-    QStringList deps;
+    // The catalog row lifts `dependencies` from versions[0].manifest; fall
+    // back to the manifest itself for index entries that didn't.
     QVariantList depsArray = obj.value("dependencies").toList();
     if (depsArray.isEmpty()) depsArray = manifest.value("dependencies").toList();
-    for (const QVariant& dep : depsArray) {
-        if (dep.canConvert<QVariantMap>() && !dep.toString().size()) {
-            const QVariantMap dm = dep.toMap();
-            QString s = dm.value("name").toString();
-            if (dm.contains("version")) s += QStringLiteral(" ") + dm.value("version").toString();
-            if (dm.contains("signer"))
-                s += QStringLiteral(" [signer=") + dm.value("signer").toString() + QStringLiteral("]");
-            deps.append(s);
-        } else {
-            deps.append(dep.toString());
-        }
-    }
-    pkg["dependencies"] = deps;
+    pkg["dependencies"] = renderDependencies(depsArray);
 
     return pkg;
 }
@@ -475,7 +481,23 @@ static QVariantMap buildLocalPackageRow(const QVariantMap& installed)
     pkg["notAvailableReason"]   = static_cast<int>(PackageTypes::Available);
     pkg["rowAction"]        = static_cast<int>(PackageTypes::NoOp);
     pkg["updateAvailable"]  = false;
-    pkg["dependencies"]     = QStringList{};
+    // From the installed record: a Local row is the only surface a package
+    // outside every catalog has, and hardcoding this empty read as
+    // "Dependencies: None". `dependencies` is a flat name list and
+    // `dependencyConstraints` repeats just the entries that declared a range
+    // or a signer, so re-join them to render what a catalog row renders.
+    QVariantMap constraintByName;
+    for (const QVariant& c : installed.value("dependencyConstraints").toList()) {
+        const QVariantMap cm = c.toMap();
+        constraintByName.insert(cm.value("name").toString(), cm);
+    }
+    QVariantList depsArray;
+    for (const QVariant& dep : installed.value("dependencies").toList()) {
+        const QString depName = dep.toString();
+        depsArray.append(constraintByName.contains(depName)
+                         ? constraintByName.value(depName) : QVariant(depName));
+    }
+    pkg["dependencies"] = renderDependencies(depsArray);
     return pkg;
 }
 
