@@ -122,3 +122,144 @@ LOGOS_TEST(catalog_row_renders_an_object_form_dependency_the_same_way) {
     LOGOS_ASSERT_EQ(deps.size(), 1);
     LOGOS_ASSERT_EQ(deps.at(0), QStringLiteral("token_list_module ~0.1.0"));
 }
+
+// ─── Provenance ───────────────────────────────────────────────────────────────
+//
+// A catalog can draw packages from other catalogs. Such a row is deliberately
+// stamped with the CONFIGURED repository's url — the list groups on that, and
+// an aggregate catalog would otherwise render as no section at all — so
+// `repository*` alone cannot say whose bytes a row carries. `origin*` is what
+// answers that, and it has to survive the transform to reach the details panel.
+
+namespace {
+
+// A catalog row as `package_downloader.getCatalog()` emits it, with the
+// repository / origin pair the caller wants to exercise.
+QVariantMap provenanceRow(const QVariantList& versions,
+                          const QString& originName = {},
+                          const QString& originDisplay = {})
+{
+    QVariantMap row;
+    row["name"]                  = QStringLiteral("chat_module");
+    row["versions"]              = versions;
+    row["repositoryUrl"]         = QStringLiteral("https://distro.example/logos-repo.json");
+    row["repositoryName"]        = QStringLiteral("my-distro");
+    row["repositoryDisplayName"] = QStringLiteral("My Distro");
+    if (!originName.isEmpty()) {
+        row["originRepositoryUrl"]         = QStringLiteral("https://b.example/logos-repo.json");
+        row["originRepositoryName"]        = originName;
+        row["originRepositoryDisplayName"] = originDisplay;
+    }
+    return row;
+}
+
+QVariantMap catalogVersion(const QString& version, const QString& hash,
+                           const QString& originName = {})
+{
+    QVariantMap manifest;
+    manifest["name"]    = QStringLiteral("chat_module");
+    manifest["version"] = version;
+    manifest["type"]    = QStringLiteral("core");
+    QVariantMap v;
+    v["manifest"] = manifest;
+    v["rootHash"] = hash;
+    if (!originName.isEmpty()) {
+        v["originRepositoryName"] = originName;
+        v["originRepositoryUrl"]  =
+            QStringLiteral("https://%1.example/logos-repo.json").arg(originName);
+    }
+    return v;
+}
+
+}  // namespace
+
+LOGOS_TEST(a_drawn_in_row_keeps_the_configured_repository_and_names_its_origin) {
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{catalogVersion(QStringLiteral("1.2.0"),
+                                                  QStringLiteral("h_b"))},
+                      QStringLiteral("team-b"), QStringLiteral("Team B")),
+        {}, {});
+
+    LOGOS_ASSERT_EQ(row.value("repositoryName").toString(), QStringLiteral("my-distro"));
+    LOGOS_ASSERT_EQ(row.value("originRepositoryName").toString(), QStringLiteral("team-b"));
+    LOGOS_ASSERT_EQ(row.value("originRepositoryDisplayName").toString(),
+                    QStringLiteral("Team B"));
+    LOGOS_ASSERT_EQ(row.value("originRepositoryUrl").toString(),
+                    QStringLiteral("https://b.example/logos-repo.json"));
+}
+
+// A catalog that draws from nobody has origin == repository by definition, and
+// so does every row from a downloader predating the field. One shape for every
+// row means the details panel needs no special case for the absence.
+LOGOS_TEST(a_row_with_no_origin_falls_back_to_its_repository) {
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{catalogVersion(QStringLiteral("1.2.0"),
+                                                  QStringLiteral("h_a"))}),
+        {}, {});
+
+    LOGOS_ASSERT_EQ(row.value("originRepositoryName").toString(),
+                    row.value("repositoryName").toString());
+    LOGOS_ASSERT_EQ(row.value("originRepositoryDisplayName").toString(),
+                    row.value("repositoryDisplayName").toString());
+    LOGOS_ASSERT_EQ(row.value("originRepositoryUrl").toString(),
+                    row.value("repositoryUrl").toString());
+}
+
+// Present-but-empty is the shape a source repository that never resolved
+// produces. The fallback is still the better answer than a blank label.
+LOGOS_TEST(an_empty_origin_is_treated_as_absent) {
+    QVariantMap raw = provenanceRow(
+        QVariantList{catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"))});
+    raw["originRepositoryName"]        = QString();
+    raw["originRepositoryDisplayName"] = QString();
+
+    const QVariantMap row = packagerow::buildPackageRow(raw, {}, {});
+    LOGOS_ASSERT_EQ(row.value("originRepositoryName").toString(),
+                    QStringLiteral("my-distro"));
+}
+
+// After a merge one package's versions can come from several catalogs, so the
+// dropdown can offer 1.2.0 from one and 1.0.0 from another.
+LOGOS_TEST(each_version_carries_the_catalog_that_published_it) {
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{
+                          catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_b"),
+                                         QStringLiteral("team-b")),
+                          catalogVersion(QStringLiteral("1.0.0"), QStringLiteral("h_root"),
+                                         QStringLiteral("my-distro")),
+                      },
+                      QStringLiteral("team-b"), QStringLiteral("Team B")),
+        {}, {});
+
+    const QVariantList avail = row.value("availableVersions").toList();
+    LOGOS_ASSERT_EQ(avail.size(), 2);
+    LOGOS_ASSERT_EQ(avail.at(0).toMap().value("originRepositoryName").toString(),
+                    QStringLiteral("team-b"));
+    LOGOS_ASSERT_EQ(avail.at(1).toMap().value("originRepositoryName").toString(),
+                    QStringLiteral("my-distro"));
+}
+
+// A version entry with no origin of its own belongs to whoever published the
+// package — not to nobody.
+LOGOS_TEST(a_version_without_its_own_origin_inherits_the_packages) {
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{catalogVersion(QStringLiteral("1.2.0"),
+                                                  QStringLiteral("h_b"))},
+                      QStringLiteral("team-b"), QStringLiteral("Team B")),
+        {}, {});
+
+    const QVariantList avail = row.value("availableVersions").toList();
+    LOGOS_ASSERT_EQ(avail.size(), 1);
+    LOGOS_ASSERT_EQ(avail.at(0).toMap().value("originRepositoryName").toString(),
+                    QStringLiteral("team-b"));
+}
+
+// Nothing published a Local row anywhere, so the "is this drawn from
+// elsewhere" comparison must simply be false rather than undefined.
+LOGOS_TEST(a_local_row_reports_itself_as_its_own_origin) {
+    const QVariantMap row = packagerow::buildLocalPackageRow(installedRecord({}));
+    LOGOS_ASSERT_EQ(row.value("originRepositoryName").toString(),
+                    row.value("repositoryName").toString());
+    LOGOS_ASSERT_EQ(row.value("originRepositoryDisplayName").toString(),
+                    QStringLiteral("local"));
+}

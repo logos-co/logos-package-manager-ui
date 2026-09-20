@@ -55,6 +55,16 @@ PackageTypes::NotAvailableReason classifyNotAvailable(
     return PackageTypes::PlatformMismatch;
 }
 
+// Read an `origin*` field, falling back when the producer did not set one.
+// An empty string counts as absent: the downloader stamps these
+// unconditionally, so present-but-empty means the source repository never
+// resolved, and the fallback is still the better answer.
+QString originOf(const QVariantMap& src, const char* key, const QString& fallback)
+{
+    const QString v = src.value(QLatin1String(key)).toString();
+    return v.isEmpty() ? fallback : v;
+}
+
 }  // namespace
 
 // An entry is a plain name or an object carrying a version range and/or a
@@ -132,6 +142,27 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
     pkg["repositoryName"]        = obj.value("repositoryName").toString();
     pkg["repositoryDisplayName"] = obj.value("repositoryDisplayName").toString();
 
+    // Where the package is actually PUBLISHED, which is not always the
+    // repository the user configured. A catalog can draw packages from other
+    // catalogs (logos-repo.json `includesUrl`), and a drawn-in package is
+    // deliberately stamped with the CONFIGURED repository's url — the section
+    // headers group on that, and an aggregate catalog would otherwise render
+    // as no section at all. So `repository*` is the shelf it sits on and
+    // `origin*` is who put it there; only the second answers "who am I
+    // trusting for these bytes".
+    //
+    // Falls back to `repository*` rather than staying empty: a catalog that
+    // draws from nobody has origin == repository by definition, and so does
+    // every row from a downloader predating the field. One shape for every
+    // row means no consumer has to special-case the absence.
+    pkg["originRepositoryUrl"] =
+        originOf(obj, "originRepositoryUrl", pkg["repositoryUrl"].toString());
+    pkg["originRepositoryName"] =
+        originOf(obj, "originRepositoryName", pkg["repositoryName"].toString());
+    pkg["originRepositoryDisplayName"] =
+        originOf(obj, "originRepositoryDisplayName",
+                 pkg["repositoryDisplayName"].toString());
+
     // Trim each entry of versions[] into a model-friendly shape.
     QVariantList availableVersions;
     for (const QVariant& vv : rawVersions) {
@@ -147,6 +178,14 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         entry["signed"]       = vm.contains("signature");
         entry["signerDid"]    = vm.value("signature").toMap().value("did").toString();
         entry["manifest"]     = vManifest;
+        // Per version, not just per package: after a merge one package's
+        // versions can come from several catalogs, so the dropdown can offer
+        // 1.2.0 from one and 1.0.0 from another. Mirrored onto the row by
+        // PackageListModel::setRowVersion as the user moves the picker.
+        entry["originRepositoryUrl"] =
+            originOf(vm, "originRepositoryUrl", pkg["originRepositoryUrl"].toString());
+        entry["originRepositoryName"] =
+            originOf(vm, "originRepositoryName", pkg["originRepositoryName"].toString());
         availableVersions.append(entry);
     }
     pkg["availableVersions"]    = availableVersions;
@@ -281,6 +320,11 @@ QVariantMap buildLocalPackageRow(const QVariantMap& installed)
     pkg["repositoryUrl"]         = QString();
     pkg["repositoryName"]        = QStringLiteral("local");
     pkg["repositoryDisplayName"] = QStringLiteral("local");
+    // Nothing published a Local row anywhere; origin mirrors the slot so the
+    // "is this drawn from elsewhere" comparison is simply false.
+    pkg["originRepositoryUrl"]         = QString();
+    pkg["originRepositoryName"]        = QStringLiteral("local");
+    pkg["originRepositoryDisplayName"] = QStringLiteral("local");
 
     pkg["availableVersions"]    = QVariantList{};
     pkg["selectedVersionIndex"] = 0;
