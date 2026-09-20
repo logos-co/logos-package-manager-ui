@@ -555,6 +555,142 @@ test("row click: single click populates selectedPackageDetails", async (app) => 
   );
 });
 
+// A catalog can draw packages from other catalogs; such a row is listed under
+// the repository the user configured, so `repositoryName` alone cannot say
+// whose bytes it carries. `originRepositoryName` is what answers that, and it
+// has to survive the row transform, the model and the details hop to be worth
+// anything.
+//
+// The fixture runs against a catalog that draws from nobody, so what is
+// checkable here is the invariant that holds for every such row: origin is
+// present and equals the repository. A row where the two silently differ, or
+// where origin arrives empty, means the plumbing broke.
+test("details: provenance fields are present and agree for a self-published row",
+     async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to load" }
+  );
+
+  const label = await firstVisibleRowLabel(app);
+  if (!label) return;   // empty fixture — nothing to click
+
+  await app.click(label, { exact: true });
+  let details;
+  await app.waitFor(
+    async () => {
+      details = await storeProperty(app, "selectedPackageDetails");
+      if (!details || !details.name) throw new Error("no details yet");
+    },
+    { timeout: 5000, interval: 250, description: "details to populate" }
+  );
+
+  const repo   = details.repositoryName || "";
+  const origin = details.originRepositoryName || "";
+  if (!repo) throw new Error(`row "${details.name}" has no repositoryName`);
+  if (!origin) {
+    throw new Error(
+      `row "${details.name}" has no originRepositoryName — the row builder ` +
+      `should fall back to repositoryName ("${repo}") when the catalog ` +
+      `declares no origin`);
+  }
+  if (origin !== repo) {
+    throw new Error(
+      `row "${details.name}": origin "${origin}" differs from repository ` +
+      `"${repo}", but this fixture's catalog draws from no other catalog`);
+  }
+  const originDisplay = details.originRepositoryDisplayName || "";
+  if (!originDisplay) {
+    throw new Error(`row "${details.name}" has no originRepositoryDisplayName`);
+  }
+});
+
+// The Details panel is the only surface that names the source at all, so the
+// line has to actually render — a field carried into `details` that no text
+// ever shows is worth nothing to the reader.
+test("details: the panel renders a Repository line", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to load" }
+  );
+
+  const label = await firstVisibleRowLabel(app);
+  if (!label) return;
+
+  await app.click(label, { exact: true });
+  let details;
+  await app.waitFor(
+    async () => {
+      details = await storeProperty(app, "selectedPackageDetails");
+      if (!details || !details.name) throw new Error("no details yet");
+    },
+    { timeout: 5000, interval: 250, description: "details to populate" }
+  );
+
+  const label2 = details.repositoryDisplayName || details.repositoryName;
+  await app.expectTexts([`Repository: ${label2}`]);
+});
+
+// The "drawn from" branch exists only for a package one catalog draws from
+// another, which no live catalog produces yet — so the fixture can never reach
+// it by clicking. Call the formatter directly instead, with a negative control
+// on the same call so a formatter that ignored its input would fail one of them.
+test("details: the Repository line names the origin only when it differs",
+     async (app) => {
+  await waitForPmuiLoaded(app);
+
+  // The formatter object itself, not the panel root: a QML `id` is not in the
+  // evaluate scope of the object that declares it.
+  const fmt = await app.findByProperty("objectName", "pmui.DetailsPanel.formatter");
+  if (!fmt.matches || fmt.matches.length === 0) {
+    throw new Error('No object found with objectName "pmui.DetailsPanel.formatter"');
+  }
+  const fmtId = fmt.matches[0].id;
+
+  async function format(detail) {
+    const res = await app.inspector.send("evaluate", {
+      objectId: fmtId,
+      expression: `formatDetails(${JSON.stringify(detail)})`,
+    });
+    if (res.error) throw new Error(`evaluate failed: ${res.error}`);
+    const out = res.result ?? res.value;
+    if (typeof out !== "string") {
+      throw new Error(`evaluate returned no string: ${JSON.stringify(res)}`);
+    }
+    return out;
+  }
+
+  const drawn = await format({
+    name: "chat_module",
+    repositoryDisplayName: "My Distro",
+    originRepositoryDisplayName: "Team B",
+  });
+  if (!drawn.includes("Repository: My Distro (drawn from Team B)")) {
+    throw new Error(`drawn-in row did not name its origin:\n${drawn}`);
+  }
+
+  // Negative control: same catalog on both sides must stay a bare line.
+  const own = await format({
+    name: "chat_module",
+    repositoryDisplayName: "My Distro",
+    originRepositoryDisplayName: "My Distro",
+  });
+  if (!own.includes("Repository: My Distro")) {
+    throw new Error(`self-published row lost its Repository line:\n${own}`);
+  }
+  if (own.includes("drawn from")) {
+    throw new Error(`self-published row claimed a foreign origin:\n${own}`);
+  }
+});
+
 // ─── Categories sidebar scroll test ────────────────────────────────
 // Bring the sidebar's Types section into view. It lives under Categories
 // in a clipped Flickable; when the two together overflow, Types is not

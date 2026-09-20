@@ -466,6 +466,14 @@ void PackageListModel::setRowVersion(int index, int versionIndex)
         const QVariantMap pick = avail.at(versionIndex).toMap();
         m_packages[index]["version"] = pick.value("version");
         m_packages[index]["hash"]    = pick.value("rootHash");
+        // After a catalog merge one package's versions can come from several
+        // catalogs, so the origin follows the pick as well. Without this the
+        // details panel would keep naming whoever published versions[0] while
+        // showing another catalog's version and hash beside it.
+        if (!pick.value("originRepositoryName").toString().isEmpty()) {
+            m_packages[index]["originRepositoryUrl"]  = pick.value("originRepositoryUrl");
+            m_packages[index]["originRepositoryName"] = pick.value("originRepositoryName");
+        }
     }
 
     // Size / date are per-version catalog metadata — mirror the pick's

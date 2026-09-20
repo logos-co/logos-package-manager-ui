@@ -12,6 +12,23 @@ selected version** (Install / Upgrade / Downgrade / Reinstall / Retry /
 Installed / Not available) and pinned to that row's **source repository**,
 so a package name published by two repos can't cross-wire.
 
+### Source vs origin
+
+A catalog can draw packages from other catalogs (`includesUrl` in its
+`logos-repo.json`). Such a row is listed — and sectioned — under the
+repository the **user configured**, because that is the one they added and
+grouping on anything else would render an aggregate catalog as no section at
+all. So `repositoryName` is the shelf a package sits on, not necessarily who
+put it there.
+
+`originRepositoryName` is who put it there, carried per row **and per
+version**: after a merge one package's versions can come from several
+catalogs, so it follows the version picker. The Details panel is the surface
+that says so — `Repository: My Distro (drawn from Team B)` — and it is the
+only one, since the table groups by the configured repository. For a catalog
+that draws from nobody the two are equal by definition, and so they are for
+any row from a downloader predating the field.
+
 ### Dependency-aware per-row actions (owned by PMU)
 
 When the user triggers an Install / Upgrade / Downgrade / Reinstall, PMU

@@ -10,6 +10,7 @@ import Logos.PackageManagerUi 1.0
 // Right-side details panel
 Rectangle {
     id: root
+    objectName: "pmui.DetailsPanel"
 
     property var details: ({})
 
@@ -21,6 +22,11 @@ Rectangle {
 
     QtObject {
         id: d
+        // Named so the integration suite can call formatDetails directly. Its
+        // "drawn from" branch only fires for a package one catalog draws from
+        // another, which no live fixture catalog produces — clicking a row can
+        // never reach it.
+        objectName: "pmui.DetailsPanel.formatter"
 
 
         function formatDetails(detail) {
@@ -39,6 +45,20 @@ Rectangle {
                 .arg(detail.description || qsTr("No description available")) + "\n\n"
             if (detail.type)     out += qsTr("Type: %1").arg(detail.type) + "\n"
             if (detail.category) out += qsTr("Category: %1").arg(detail.category) + "\n"
+
+            // Which catalog this came from, and — when they differ — which
+            // catalog actually publishes it. A catalog can draw packages from
+            // other catalogs, and such a row is listed under the repository
+            // the user added, so the list alone cannot say whose bytes these
+            // are. This is the only place that answers it.
+            var repoLabel   = detail.repositoryDisplayName || detail.repositoryName || ""
+            var originLabel = detail.originRepositoryDisplayName
+                              || detail.originRepositoryName || ""
+            if (repoLabel) {
+                out += (originLabel && originLabel !== repoLabel)
+                       ? qsTr("Repository: %1 (drawn from %2)").arg(repoLabel).arg(originLabel) + "\n"
+                       : qsTr("Repository: %1").arg(repoLabel) + "\n"
+            }
 
             var status           = detail.installStatus | 0
             var releaseVersion   = detail.version          || ""
