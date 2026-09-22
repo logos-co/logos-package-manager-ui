@@ -162,6 +162,7 @@ LogosTable {
             minWidth: 200
             preferredWidth: 220
             sortable: true
+            cellDelegate: packageNameCellComponent
         },
         // Source-by-row column intentionally absent — the row delegate
         // draws a section header for each source group (Logos Official
@@ -260,6 +261,35 @@ LogosTable {
                 onActionRequested: function(action) {
                     root.actionRequested(rowIndex, action)
                 }
+            }
+        }
+    }
+
+    Component {
+        id: packageNameCellComponent
+        Item {
+            Image {
+                id: sourceIcon
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                width: 16
+                height: 16
+                sourceSize: Qt.size(16, 16)
+                source: rowItem && String(rowItem.downloadSource || "").startsWith("logos:")
+                        ? Qt.resolvedUrl("../images/storage.png")
+                        : Qt.resolvedUrl("../images/globe.svg")
+            }
+            LogosText {
+                anchors.left: sourceIcon.right
+                anchors.leftMargin: Theme.spacing.small
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                text: rowItem ? (rowItem.displayName || "") : ""
+                color: Theme.palette.text
+                font.pixelSize: Theme.typography.primaryText
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
             }
         }
     }

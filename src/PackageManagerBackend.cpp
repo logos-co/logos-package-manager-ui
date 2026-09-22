@@ -1429,6 +1429,23 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
                                                      data.at(1).toULongLong(),
                                                      data.at(2).toULongLong());
     });
+
+    logos.package_downloader.on("downloadDone", [self](const QVariantList& data) {
+        if (!self || !self->m_packageModel) {
+             return;
+        }
+
+        if (data.size() < 2) {
+            qWarning() << "package_downloader.downloadDone: expected "
+                          "[name, source], got" << data.size() << "args";
+            return;
+        }
+
+        const QString packageName = data.at(0).toString();
+        const QString source = data.at(1).toString();
+
+        self->m_packageModel->updateDownloadSource(packageName, source);
+    });
 }
 
 void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,

@@ -143,7 +143,9 @@ public:
         // per buildPackageRow (no dropdown coupling).
         UpdateAvailableRole,
         DownloadReceivedRole,
-        DownloadTotalRole
+        DownloadTotalRole,
+        // `logos:<cid>` or the https url.
+        DownloadSourceRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);
@@ -179,6 +181,10 @@ public:
     // catalog size in place rather than blanking the denominator.
     void updateDownloadProgress(const QString& packageName,
                                 quint64 received, quint64 total);
+
+    // Record where a finished download came from, on the rows installing
+    // it. Survives setPackages, like a failure does.
+    void updateDownloadSource(const QString& packageName, const QString& source);
 
     // Pick a different version on a single row. Clamps `versionIndex`
     // to the row's `availableVersions` length; out-of-range or negative
@@ -231,8 +237,9 @@ private:
                            const std::optional<QString>& repositoryScope);
 
     struct FailedEntry { QString errorMessage; };
-    
+
     QHash<QString, FailedEntry> m_failedByKey;
+    QHash<QString, QString> m_downloadSourceByKey;
 
     QList<QVariantMap> m_packages;
 };
