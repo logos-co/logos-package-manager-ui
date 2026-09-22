@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Controls
 
 import Logos.Theme
 import Logos.Controls
@@ -438,8 +437,12 @@ LogosTable {
                 }
 
                 hoverEnabled: true
-                ToolTip.visible: hovered && contentLabel.truncated
-                ToolTip.text: displayText
+
+                LogosToolTip {
+                    text: versionCombo.displayText
+                    placement: LogosToolTip.Top
+                    visible: versionCombo.hovered && versionCombo.contentLabel.truncated
+                }
             }
 
             // Fallback plain text when no usable versions[] (legacy
