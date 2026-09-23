@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0.6 0.6 14.8 14.8">
+  <!-- Source: built-in (bundled with Basecamp). Solid cube, faces split by gaps. -->
+  <path fill="#969696" d="M8 .6 14.8 4.2 8 7.8 1.2 4.2Z"/>
+  <path fill="#969696" d="M.9 5.2 7.3 8.6V15.4L.9 12Z" opacity=".85"/>
+  <path fill="#969696" d="M15.1 5.2 8.7 8.6V15.4L15.1 12Z" opacity=".65"/>
+</svg>
