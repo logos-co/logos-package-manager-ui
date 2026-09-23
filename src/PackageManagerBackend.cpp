@@ -721,6 +721,7 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     QString downloadError = dl.value("error").toString();
     const QString expectedVersion = dl.value("version").toString();
     const QString expectedHash = dl.value("rootHash").toString();
+    const QString source = dl.value("source").toString();
 
     if (filePath.isEmpty()) {
         qWarning() << "Download failed for" << packageName << ":" << downloadError;
@@ -745,7 +746,7 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     // wrapper hands the callback a bare QVariantMap, so a transport failure is
     // indistinguishable from a provider that legitimately returned an empty
     // one. AsyncResult<T> carries the value and the error together.
-    logos.package_manager.installPluginAsyncResult(filePath, false,
+    logos.package_manager.installPluginAsyncResult(filePath, false, source,
         [self, packageName, expectedVersion, expectedHash, onDone](logos::AsyncResult<QVariantMap> r) {
             if (!self) return;
             // Transport-level failure FIRST. On a timeout `value` is
@@ -1428,23 +1429,6 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
         self->m_packageModel->updateDownloadProgress(data.at(0).toString(),
                                                      data.at(1).toULongLong(),
                                                      data.at(2).toULongLong());
-    });
-
-    logos.package_downloader.on("downloadDone", [self](const QVariantList& data) {
-        if (!self || !self->m_packageModel) {
-             return;
-        }
-
-        if (data.size() < 2) {
-            qWarning() << "package_downloader.downloadDone: expected "
-                          "[name, source], got" << data.size() << "args";
-            return;
-        }
-
-        const QString packageName = data.at(0).toString();
-        const QString source = data.at(1).toString();
-
-        self->m_packageModel->updateDownloadSource(packageName, source);
     });
 }
 

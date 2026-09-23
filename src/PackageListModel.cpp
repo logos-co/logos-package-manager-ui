@@ -260,12 +260,6 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
         const bool available = row.value("isVariantAvailable", false).toBool();
         row["isSelected"] = available && previouslySelectedKeys.contains(key);
 
-        if (row.value("installStatus", 0).toInt() == static_cast<int>(PackageTypes::NotInstalled)) {
-            m_downloadSourceByKey.remove(key);
-        }
-
-        row["downloadSource"] = m_downloadSourceByKey.value(key);
-
         bool dropdownRestored = false;
         if (selectedVersionByKey.contains(key)) {
             const QVariantList avail = row.value("availableVersions").toList();
@@ -381,8 +375,6 @@ void PackageListModel::applyInstallation(const QString& packageName, int status,
             if (prevStatus != static_cast<int>(PackageTypes::Installing)) {
                 row["downloadReceived"] = QVariant::fromValue(quint64(0));
                 row["downloadTotal"]    = QVariant::fromValue(selectedVersionSize(row));
-                row["downloadSource"]   = QString();
-                m_downloadSourceByKey.remove(rowKey(row));
             }
         } else {
             row["downloadReceived"] = QVariant::fromValue(quint64(0));
@@ -419,7 +411,7 @@ void PackageListModel::applyInstallation(const QString& packageName, int status,
     emit dataChanged(createIndex(firstChanged, 0),
                      createIndex(lastChanged, 0),
                      {InstallStatusRole, ErrorMessageRole, RowActionRole,
-                      DownloadReceivedRole, DownloadTotalRole, DownloadSourceRole});
+                      DownloadReceivedRole, DownloadTotalRole});
     emit hasSelectionChanged();
 }
 
@@ -454,40 +446,6 @@ void PackageListModel::updateDownloadProgress(const QString& packageName,
     emit dataChanged(createIndex(firstChanged, 0),
                      createIndex(lastChanged, 0),
                      {DownloadReceivedRole, DownloadTotalRole});
-}
-
-void PackageListModel::updateDownloadSource(const QString& packageName,
-                                            const QString& source)
-{
-    int firstChanged = -1, lastChanged = -1;
-    for (int i = 0; i < m_packages.size(); ++i) {
-        QVariantMap& row = m_packages[i];
-
-        const QString rowName = row.value("name").toString();
-        const QString rowModuleName = row.value("moduleName").toString();
-
-        if (rowName != packageName && rowModuleName != packageName) {
-            continue;
-        }
-
-        // Same logic as updateDownloadProgress
-        if (row.value("installStatus", 0).toInt() != static_cast<int>(PackageTypes::Installing)) {
-            continue;
-        }
-
-        row["downloadSource"] = source;
-        m_downloadSourceByKey.insert(rowKey(row), source);
-
-        if (firstChanged < 0) {
-            firstChanged = i;
-        }
-
-        lastChanged = i;
-    }
-    if (firstChanged < 0) return;
-    emit dataChanged(createIndex(firstChanged, 0),
-                     createIndex(lastChanged, 0),
-                     {DownloadSourceRole});
 }
 
 void PackageListModel::setRowVersion(int index, int versionIndex)

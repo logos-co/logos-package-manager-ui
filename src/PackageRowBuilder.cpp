@@ -204,6 +204,7 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
     QString installedVersion;
     QString installedHash;
     QString installType;
+    QString downloadSource;
     const bool isInstalled = installedByName.contains(moduleName);
     if (isInstalled) {
         const QVariantMap& inst = installedByName[moduleName];
@@ -211,10 +212,12 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         installedHash = inst.value("hashes").toMap().value("root").toString();
         // "embedded" or "user" — QML gates Uninstall on installType === "user".
         installType = inst.value("installType").toString();
+        downloadSource = inst.value("source").toString();
     }
     pkg["installedVersion"] = installedVersion;
     pkg["installedHash"] = installedHash;
     pkg["installType"] = installType;
+    pkg["downloadSource"] = downloadSource;
     rowaction::applyPickedSizeAndDate(pkg, 0);
 
     // Resolve install status. Embedded vs user doesn't change the status itself —
@@ -336,6 +339,7 @@ QVariantMap buildLocalPackageRow(const QVariantMap& installed)
     pkg["installedVersion"] = installedVersion;
     pkg["installedHash"]    = installedHash;
     pkg["installType"]      = installed.value("installType").toString();
+    pkg["downloadSource"]   = installed.value("source").toString();
     pkg["installStatus"]    = static_cast<int>(PackageTypes::Installed);
     pkg["errorMessage"]     = QString();
     pkg["isVariantAvailable"]   = true;

@@ -17,7 +17,7 @@
     # ancestry is the wrong test here, the files are the test.
     logos-module-builder.url = "github:logos-co/logos-module-builder";
 
-    package_manager.url = "github:logos-co/logos-package-manager-module";
+    package_manager.url = "github:logos-co/logos-package-manager-module?ref=feat/install-source";
     package_downloader.url = "github:logos-co/logos-package-downloader-module?ref=feat/storage-fetcher";
 
     # Header-only: supplies the shared semver implementation

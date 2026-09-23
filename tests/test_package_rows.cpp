@@ -263,3 +263,28 @@ LOGOS_TEST(a_local_row_reports_itself_as_its_own_origin) {
     LOGOS_ASSERT_EQ(row.value("originRepositoryDisplayName").toString(),
                     QStringLiteral("local"));
 }
+
+LOGOS_TEST(a_local_row_carries_the_installed_download_source) {
+    QVariantMap inst = installedRecord({});
+    inst["source"] = QStringLiteral("logos:zDvZRwzm");
+
+    const QVariantMap row = packagerow::buildLocalPackageRow(inst);
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toString(),
+                    QStringLiteral("logos:zDvZRwzm"));
+}
+
+LOGOS_TEST(a_catalog_row_carries_the_installed_download_source) {
+    QVariantMap inst;
+    inst["name"]    = QStringLiteral("chat_module");
+    inst["version"] = QStringLiteral("1.2.0");
+    inst["source"]  = QStringLiteral("logos:zDvZRwzm");
+    QHash<QString, QVariantMap> installedByName;
+    installedByName.insert(QStringLiteral("chat_module"), inst);
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{catalogVersion(QStringLiteral("1.2.0"),
+                                                  QStringLiteral("h_a"))}),
+        installedByName, {});
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toString(),
+                    QStringLiteral("logos:zDvZRwzm"));
+}

@@ -184,6 +184,14 @@ LogosTable {
             cellDelegate: installedVersionCellComponent
         },
         LogosTableColumn {
+            title: qsTr("Source")
+            role: "downloadSource"
+            minWidth: 60
+            preferredWidth: 70
+            alignment: Qt.AlignHCenter | Qt.AlignVCenter
+            cellDelegate: downloadSourceCellComponent
+        },
+        LogosTableColumn {
             // Per-row Version dropdown. Populated from
             // rowItem.availableVersions (date-sorted, newest first); the
             // currently selected entry mirrors into VersionRole on
@@ -268,28 +276,38 @@ LogosTable {
     Component {
         id: packageNameCellComponent
         Item {
-            Image {
-                id: sourceIcon
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                width: 16
-                height: 16
-                sourceSize: Qt.size(16, 16)
-                source: rowItem && String(rowItem.downloadSource || "").startsWith("logos:")
-                        ? Qt.resolvedUrl("../images/storage.png")
-                        : Qt.resolvedUrl("../images/globe.svg")
-            }
             LogosText {
-                anchors.left: sourceIcon.right
-                anchors.leftMargin: Theme.spacing.small
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
+                anchors.fill: parent
                 text: rowItem ? (rowItem.displayName || "") : ""
                 color: Theme.palette.text
                 font.pixelSize: Theme.typography.primaryText
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
+            }
+        }
+    }
+
+    Component {
+        id: downloadSourceCellComponent
+        Item {
+            Image {
+                // Downloaded packages only; one installed before sources were
+                // recorded has none and counts as GitHub.
+                visible: rowItem && rowItem.installType === "user"
+                readonly property bool fromStorage: rowItem
+                    && String(rowItem.downloadSource || "").startsWith("logos:")
+                anchors.centerIn: parent
+                width: 16
+                height: 16
+                sourceSize: Qt.size(16, 16)
+                source: fromStorage ? Qt.resolvedUrl("../images/storage.png")
+                                    : Qt.resolvedUrl("../images/globe.svg")
+                HoverHandler { id: sourceHover }
+                LogosToolTip {
+                    text: parent.fromStorage ? qsTr("Storage") : qsTr("GitHub")
+                    placement: LogosToolTip.Top
+                    visible: sourceHover.hovered
+                }
             }
         }
     }
