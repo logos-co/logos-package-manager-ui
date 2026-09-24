@@ -78,7 +78,7 @@ PackageTypes::DownloadSource downloadSourceOf(const QString& installType,
         return PackageTypes::Builtin;
     }
 
-    if (source.startsWith(QStringLiteral("logos:")) {
+    if (source.startsWith(QStringLiteral("logos:"))) {
         return PackageTypes::Storage;
     }
 
