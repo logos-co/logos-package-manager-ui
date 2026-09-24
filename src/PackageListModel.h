@@ -144,7 +144,7 @@ public:
         UpdateAvailableRole,
         DownloadReceivedRole,
         DownloadTotalRole,
-        // `logos:<cid>` or the https url.
+        // PackageTypes::DownloadSource enum int.
         DownloadSourceRole
     };
 

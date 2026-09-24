@@ -65,6 +65,26 @@ QString originOf(const QVariantMap& src, const char* key, const QString& fallbac
     return v.isEmpty() ? fallback : v;
 }
 
+// A downloaded package installed before sources were recorded has none and
+// counts as GitHub.
+PackageTypes::DownloadSource downloadSourceOf(const QString& installType,
+                                              const QString& source)
+{
+    if (installType.isEmpty()) {
+        return PackageTypes::NoSource;
+    }
+
+    if (installType != QStringLiteral("user")) {
+        return PackageTypes::Builtin;
+    }
+
+    if (source.startsWith(QStringLiteral("logos:")) {
+        return PackageTypes::Storage;
+    }
+
+    return PackageTypes::GitHub;
+}
+
 }  // namespace
 
 // An entry is a plain name or an object carrying a version range and/or a
@@ -217,7 +237,7 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
     pkg["installedVersion"] = installedVersion;
     pkg["installedHash"] = installedHash;
     pkg["installType"] = installType;
-    pkg["downloadSource"] = downloadSource;
+    pkg["downloadSource"] = static_cast<int>(downloadSourceOf(installType, downloadSource));
     rowaction::applyPickedSizeAndDate(pkg, 0);
 
     // Resolve install status. Embedded vs user doesn't change the status itself —
@@ -338,8 +358,10 @@ QVariantMap buildLocalPackageRow(const QVariantMap& installed)
     pkg["hash"]             = installedHash;
     pkg["installedVersion"] = installedVersion;
     pkg["installedHash"]    = installedHash;
-    pkg["installType"]      = installed.value("installType").toString();
-    pkg["downloadSource"]   = installed.value("source").toString();
+    const QString installType = installed.value("installType").toString();
+    pkg["installType"]      = installType;
+    pkg["downloadSource"]   = static_cast<int>(downloadSourceOf(
+                                  installType, installed.value("source").toString()));
     pkg["installStatus"]    = static_cast<int>(PackageTypes::Installed);
     pkg["errorMessage"]     = QString();
     pkg["isVariantAvailable"]   = true;

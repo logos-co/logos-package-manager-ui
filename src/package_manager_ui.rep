@@ -53,6 +53,13 @@ class PackageManagerUi
         NoOp         = 6
     }
 
+    ENUM DownloadSource {
+        NoSource = 0,
+        Builtin  = 1,
+        GitHub   = 2,
+        Storage  = 3
+    }
+
     PROP(QStringList categories)
     PROP(int selectedCategoryIndex)
     PROP(QStringList availableTypes READONLY)

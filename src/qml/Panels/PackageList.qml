@@ -291,26 +291,20 @@ LogosTable {
         id: downloadSourceCellComponent
         Item {
             Image {
-                // Installed packages only. A downloaded one installed before
-                // sources were recorded has none and counts as GitHub.
-                readonly property string origin: {
-                    if (!rowItem || !rowItem.installType) return ""
-                    if (rowItem.installType !== "user") return "builtin"
-                    return String(rowItem.downloadSource || "").startsWith("logos:")
-                           ? "storage" : "github"
-                }
-                visible: origin !== ""
+                readonly property int origin: rowItem ? rowItem.downloadSource
+                                                      : PackageManagerUi.NoSource
+                visible: origin !== PackageManagerUi.NoSource
                 anchors.centerIn: parent
                 width: 16
                 height: 16
                 sourceSize: Qt.size(16, 16)
-                source: origin === "storage" ? Qt.resolvedUrl("../images/storage.png")
-                      : origin === "github"  ? Qt.resolvedUrl("../images/github.svg")
+                source: origin === PackageManagerUi.Storage ? Qt.resolvedUrl("../images/storage.svg")
+                      : origin === PackageManagerUi.GitHub  ? Qt.resolvedUrl("../images/github.svg")
                       : Qt.resolvedUrl("../images/builtin-cube.svg")
                 HoverHandler { id: sourceHover }
                 LogosToolTip {
-                    text: parent.origin === "storage" ? qsTr("Storage")
-                        : parent.origin === "github"  ? qsTr("GitHub")
+                    text: parent.origin === PackageManagerUi.Storage ? qsTr("Storage")
+                        : parent.origin === PackageManagerUi.GitHub  ? qsTr("GitHub")
                         : qsTr("Built-in")
                     placement: LogosToolTip.Top
                     visible: sourceHover.hovered

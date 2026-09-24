@@ -12,6 +12,7 @@
 #include <QVariantMap>
 
 #include "PackageRowBuilder.h"
+#include "PackageTypes.h"
 
 namespace {
 
@@ -264,20 +265,21 @@ LOGOS_TEST(a_local_row_reports_itself_as_its_own_origin) {
                     QStringLiteral("local"));
 }
 
-LOGOS_TEST(a_local_row_carries_the_installed_download_source) {
+LOGOS_TEST(a_local_row_downloaded_from_storage_has_the_storage_source) {
     QVariantMap inst = installedRecord({});
     inst["source"] = QStringLiteral("logos:zDvZRwzm");
 
     const QVariantMap row = packagerow::buildLocalPackageRow(inst);
-    LOGOS_ASSERT_EQ(row.value("downloadSource").toString(),
-                    QStringLiteral("logos:zDvZRwzm"));
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toInt(),
+                    static_cast<int>(PackageTypes::Storage));
 }
 
-LOGOS_TEST(a_catalog_row_carries_the_installed_download_source) {
+LOGOS_TEST(a_catalog_row_downloaded_from_storage_has_the_storage_source) {
     QVariantMap inst;
-    inst["name"]    = QStringLiteral("chat_module");
-    inst["version"] = QStringLiteral("1.2.0");
-    inst["source"]  = QStringLiteral("logos:zDvZRwzm");
+    inst["name"]        = QStringLiteral("chat_module");
+    inst["version"]     = QStringLiteral("1.2.0");
+    inst["installType"] = QStringLiteral("user");
+    inst["source"]      = QStringLiteral("logos:zDvZRwzm");
     QHash<QString, QVariantMap> installedByName;
     installedByName.insert(QStringLiteral("chat_module"), inst);
 
@@ -285,6 +287,40 @@ LOGOS_TEST(a_catalog_row_carries_the_installed_download_source) {
         provenanceRow(QVariantList{catalogVersion(QStringLiteral("1.2.0"),
                                                   QStringLiteral("h_a"))}),
         installedByName, {});
-    LOGOS_ASSERT_EQ(row.value("downloadSource").toString(),
-                    QStringLiteral("logos:zDvZRwzm"));
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toInt(),
+                    static_cast<int>(PackageTypes::Storage));
+}
+
+LOGOS_TEST(a_row_downloaded_from_a_url_has_the_github_source) {
+    QVariantMap inst = installedRecord({});
+    inst["source"] = QStringLiteral("https://github.com/logos-co/chat/releases/chat.lgx");
+
+    const QVariantMap row = packagerow::buildLocalPackageRow(inst);
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toInt(),
+                    static_cast<int>(PackageTypes::GitHub));
+}
+
+// Installed before sources were recorded.
+LOGOS_TEST(a_row_downloaded_without_a_recorded_source_has_the_github_source) {
+    const QVariantMap row = packagerow::buildLocalPackageRow(installedRecord({}));
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toInt(),
+                    static_cast<int>(PackageTypes::GitHub));
+}
+
+LOGOS_TEST(an_embedded_row_has_the_builtin_source) {
+    QVariantMap inst = installedRecord({});
+    inst["installType"] = QStringLiteral("embedded");
+
+    const QVariantMap row = packagerow::buildLocalPackageRow(inst);
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toInt(),
+                    static_cast<int>(PackageTypes::Builtin));
+}
+
+LOGOS_TEST(a_catalog_row_not_installed_has_no_source) {
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{catalogVersion(QStringLiteral("1.2.0"),
+                                                  QStringLiteral("h_a"))}),
+        {}, {});
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toInt(),
+                    static_cast<int>(PackageTypes::NoSource));
 }
