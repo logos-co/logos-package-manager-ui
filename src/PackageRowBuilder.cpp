@@ -65,6 +65,30 @@ QString originOf(const QVariantMap& src, const char* key, const QString& fallbac
     return v.isEmpty() ? fallback : v;
 }
 
+// A downloaded package installed before sources were recorded has none and
+// counts as GitHub.
+PackageTypes::DownloadSource downloadSourceOf(const QString& installType,
+                                              const QString& source)
+{
+    if (installType.isEmpty()) {
+        return PackageTypes::NoSource;
+    }
+
+    if (installType != QStringLiteral("user")) {
+        return PackageTypes::Builtin;
+    }
+
+    if (source.startsWith(QStringLiteral("logos:"))) {
+        return PackageTypes::Storage;
+    }
+
+    if (source.startsWith(QStringLiteral("file:"))) {
+        return PackageTypes::LocalFile;
+    }
+
+    return PackageTypes::GitHub;
+}
+
 }  // namespace
 
 // An entry is a plain name or an object carrying a version range and/or a
@@ -175,6 +199,36 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         entry["size"]         = vm.value("size");
         entry["publisherRef"] = vm.value("publisherRef").toString();
         entry["url"]          = vm.value("url").toString();
+
+        QStringList urls = vm.value("urls").toStringList();
+
+        if (urls.isEmpty()) {
+            // Fall back to the single `url` if `urls` is empty.
+            urls.append(vm.value("url").toString());
+        }
+
+        bool onStorage = false;
+        bool onGitHub = false;
+
+        for (const QString& url : urls) {
+            if (url.startsWith(QStringLiteral("logos:"))) {
+                onStorage = true;
+            } else if (!url.isEmpty()) {
+                onGitHub = true;
+            }
+        }
+
+        QVariantList sources;
+
+        if (onStorage) {
+            sources.append(static_cast<int>(PackageTypes::Storage));
+        }
+
+        if (onGitHub) {
+            sources.append(static_cast<int>(PackageTypes::GitHub));
+        }
+
+        entry["sources"]      = sources;
         entry["signed"]       = vm.contains("signature");
         entry["signerDid"]    = vm.value("signature").toMap().value("did").toString();
         entry["manifest"]     = vManifest;
@@ -204,6 +258,7 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
     QString installedVersion;
     QString installedHash;
     QString installType;
+    QString downloadSource;
     const bool isInstalled = installedByName.contains(moduleName);
     if (isInstalled) {
         const QVariantMap& inst = installedByName[moduleName];
@@ -211,10 +266,12 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         installedHash = inst.value("hashes").toMap().value("root").toString();
         // "embedded" or "user" — QML gates Uninstall on installType === "user".
         installType = inst.value("installType").toString();
+        downloadSource = inst.value("source").toString();
     }
     pkg["installedVersion"] = installedVersion;
     pkg["installedHash"] = installedHash;
     pkg["installType"] = installType;
+    pkg["downloadSource"] = static_cast<int>(downloadSourceOf(installType, downloadSource));
     rowaction::applyPickedSizeAndDate(pkg, 0);
 
     // Resolve install status. Embedded vs user doesn't change the status itself —
@@ -335,7 +392,10 @@ QVariantMap buildLocalPackageRow(const QVariantMap& installed)
     pkg["hash"]             = installedHash;
     pkg["installedVersion"] = installedVersion;
     pkg["installedHash"]    = installedHash;
-    pkg["installType"]      = installed.value("installType").toString();
+    const QString installType = installed.value("installType").toString();
+    pkg["installType"]      = installType;
+    pkg["downloadSource"]   = static_cast<int>(downloadSourceOf(
+                                  installType, installed.value("source").toString()));
     pkg["installStatus"]    = static_cast<int>(PackageTypes::Installed);
     pkg["errorMessage"]     = QString();
     pkg["isVariantAvailable"]   = true;

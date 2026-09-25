@@ -143,7 +143,9 @@ public:
         // per buildPackageRow (no dropdown coupling).
         UpdateAvailableRole,
         DownloadReceivedRole,
-        DownloadTotalRole
+        DownloadTotalRole,
+        // PackageTypes::DownloadSource enum int.
+        DownloadSourceRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);
@@ -231,7 +233,7 @@ private:
                            const std::optional<QString>& repositoryScope);
 
     struct FailedEntry { QString errorMessage; };
-    
+
     QHash<QString, FailedEntry> m_failedByKey;
 
     QList<QVariantMap> m_packages;

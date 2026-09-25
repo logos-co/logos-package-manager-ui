@@ -57,6 +57,8 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
                                                               QVariant::fromValue(quint64(0)));
         case DownloadTotalRole:          return package.value("downloadTotal",
                                                               QVariant::fromValue(quint64(0)));
+        case DownloadSourceRole:         return package.value("downloadSource",
+                                                  static_cast<int>(PackageTypes::NoSource));
 
         default:                     return QVariant();
     }
@@ -94,6 +96,7 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
         {UpdateAvailableRole,         "updateAvailable"},
         {DownloadReceivedRole,        "downloadReceived"},
         {DownloadTotalRole,           "downloadTotal"},
+        {DownloadSourceRole,          "downloadSource"},
     };
 }
 

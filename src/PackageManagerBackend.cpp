@@ -721,6 +721,7 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     QString downloadError = dl.value("error").toString();
     const QString expectedVersion = dl.value("version").toString();
     const QString expectedHash = dl.value("rootHash").toString();
+    const QString source = dl.value("source").toString();
 
     if (filePath.isEmpty()) {
         qWarning() << "Download failed for" << packageName << ":" << downloadError;
@@ -745,7 +746,7 @@ void PackageManagerBackend::installOnePackage(const QVariantMap& dl,
     // wrapper hands the callback a bare QVariantMap, so a transport failure is
     // indistinguishable from a provider that legitimately returned an empty
     // one. AsyncResult<T> carries the value and the error together.
-    logos.package_manager.installPluginAsyncResult(filePath, false,
+    logos.package_manager.installPluginAsyncResult(filePath, false, source,
         [self, packageName, expectedVersion, expectedHash, onDone](logos::AsyncResult<QVariantMap> r) {
             if (!self) return;
             // Transport-level failure FIRST. On a timeout `value` is
@@ -1220,9 +1221,11 @@ void PackageManagerBackend::performInstall(QString name, QString version,
 {
     // Local .lgx: the file is already on disk, nothing to download.
     if (m_pendingLocalInstalls.contains(name)) {
+        const QString path = m_pendingLocalInstalls.take(name);
         const QVariantMap entry{
             {QStringLiteral("name"), name},
-            {QStringLiteral("path"), m_pendingLocalInstalls.take(name)},
+            {QStringLiteral("path"), path},
+            {QStringLiteral("source"), QUrl::fromLocalFile(path).toString()},
         };
         markEntriesInstalling({entry});
         installResultsSequential({entry}, name, 0);
@@ -1470,9 +1473,11 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     // is already on disk \u2014 install it directly, no download round-trip.
     if (m_pendingLocalInstalls.contains(moduleName)) {
         m_pendingUpgradeByModule.remove(moduleName);
+        const QString path = m_pendingLocalInstalls.take(moduleName);
         const QVariantMap entry{
             {QStringLiteral("name"), moduleName},
-            {QStringLiteral("path"), m_pendingLocalInstalls.take(moduleName)},
+            {QStringLiteral("path"), path},
+            {QStringLiteral("source"), QUrl::fromLocalFile(path).toString()},
         };
         markEntriesInstalling({entry});
         installResultsSequential({entry}, displayName, 0);

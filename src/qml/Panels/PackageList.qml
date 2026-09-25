@@ -162,6 +162,7 @@ LogosTable {
             minWidth: 200
             preferredWidth: 220
             sortable: true
+            cellDelegate: packageNameCellComponent
         },
         // Source-by-row column intentionally absent — the row delegate
         // draws a section header for each source group (Logos Official
@@ -181,6 +182,14 @@ LogosTable {
             preferredWidth: 90
             sortable: true
             cellDelegate: installedVersionCellComponent
+        },
+        LogosTableColumn {
+            title: qsTr("Source")
+            role: "downloadSource"
+            minWidth: 60
+            preferredWidth: 70
+            alignment: Qt.AlignHCenter | Qt.AlignVCenter
+            cellDelegate: downloadSourceCellComponent
         },
         LogosTableColumn {
             // Per-row Version dropdown. Populated from
@@ -259,6 +268,120 @@ LogosTable {
                 modelData: rowItem
                 onActionRequested: function(action) {
                     root.actionRequested(rowIndex, action)
+                }
+            }
+        }
+    }
+
+    Component {
+        id: packageNameCellComponent
+        Item {
+            LogosText {
+                anchors.fill: parent
+                text: rowItem ? (rowItem.displayName || "") : ""
+                color: Theme.palette.text
+                font.pixelSize: Theme.typography.primaryText
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+            }
+        }
+    }
+
+    Component {
+        id: downloadSourceCellComponent
+        Item {
+            id: sourceCell
+            readonly property int downloaded: rowItem ? rowItem.downloadSource
+                                                      : PackageManagerUi.NoSource
+
+            // The dropdown shows the copy on disk: only its source is shown.
+            function showsInstalledCopy() {
+                if (downloaded === PackageManagerUi.Builtin) {
+                    return true
+                }
+
+                if (downloaded === PackageManagerUi.NoSource) {
+                    return false
+                }
+
+                return rowItem.version === rowItem.installedVersion
+                    && rowItem.hash === rowItem.installedHash
+            }
+
+            function shownSources() {
+                if (!rowItem) {
+                    return []
+                }
+
+                if (showsInstalledCopy()) {
+                    return [downloaded]
+                }
+
+                const picked = rowItem.availableVersions[rowItem.selectedVersionIndex]
+
+                if (picked) {
+                    return picked.sources
+                }
+
+                return []
+            }
+
+            function sourceName(source) {
+                switch (source) {
+                case PackageManagerUi.Storage:   return qsTr("Storage")
+                case PackageManagerUi.GitHub:    return qsTr("GitHub")
+                case PackageManagerUi.LocalFile: return qsTr("Local file")
+                default:                         return qsTr("Built-in")
+                }
+            }
+
+            function sourceNames() {
+                const names = shownSources().map(source => sourceName(source))
+
+                if (names.length < 2) {
+                    return names.join("")
+                }
+
+                return qsTr("%1 and %2").arg(names.slice(0, -1).join(", ")).arg(names[names.length - 1])
+            }
+
+            Row {
+                anchors.centerIn: parent
+                spacing: 8
+                Repeater {
+                    model: sourceCell.shownSources()
+                    Item {
+                        readonly property int origin: modelData
+                        // install.svg draws inside a 20px box with a margin.
+                        readonly property int size: origin === PackageManagerUi.LocalFile ? 20 : 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: size
+                        height: size
+                        opacity: sourceCell.showsInstalledCopy() ? 1 : 0.35
+                        // The Storage logo keeps its gradient: LogosIcon would flatten it.
+                        Image {
+                            anchors.fill: parent
+                            visible: parent.origin === PackageManagerUi.Storage
+                            sourceSize: Qt.size(parent.size, parent.size)
+                            source: visible ? Qt.resolvedUrl("../images/storage.svg") : ""
+                        }
+                        LogosIcon {
+                            anchors.fill: parent
+                            visible: parent.origin !== PackageManagerUi.Storage
+                            color: Theme.palette.textSecondary
+                            source: parent.origin === PackageManagerUi.GitHub  ? Qt.resolvedUrl("../images/github.svg")
+                                  : parent.origin === PackageManagerUi.LocalFile ? LogosIcons.install
+                                  : Qt.resolvedUrl("../images/builtin-cube.svg")
+                        }
+                        HoverHandler { id: sourceHover }
+                        LogosToolTip {
+                            text: sourceCell.showsInstalledCopy()
+                                  ? sourceCell.sourceName(parent.origin)
+                                  : qsTr("Download possible over %1").arg(sourceCell.sourceNames())
+                            placement: LogosToolTip.Top
+                            visible: sourceHover.hovered
+                        }
+                    }
                 }
             }
         }

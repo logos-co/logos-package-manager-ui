@@ -75,5 +75,14 @@ public:
     };
     Q_ENUM(RowAction)
 
+    enum DownloadSource {
+        NoSource = 0,
+        Builtin  = 1,
+        GitHub   = 2,
+        Storage  = 3,
+        LocalFile = 4
+    };
+    Q_ENUM(DownloadSource)
+
     explicit PackageTypes(QObject* parent = nullptr) : QObject(parent) {}
 };
