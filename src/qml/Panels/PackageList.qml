@@ -340,19 +340,29 @@ LogosTable {
                 spacing: 8
                 Repeater {
                     model: sourceCell.shownSources()
-                    Image {
+                    Item {
                         readonly property int origin: modelData
                         // install.svg draws inside a 20px box with a margin.
                         readonly property int size: origin === PackageManagerUi.LocalFile ? 20 : 16
                         anchors.verticalCenter: parent.verticalCenter
                         width: size
                         height: size
-                        sourceSize: Qt.size(size, size)
                         opacity: sourceCell.showsInstalledCopy() ? 1 : 0.35
-                        source: origin === PackageManagerUi.Storage ? Qt.resolvedUrl("../images/storage.svg")
-                              : origin === PackageManagerUi.GitHub  ? Qt.resolvedUrl("../images/github.svg")
-                              : origin === PackageManagerUi.LocalFile ? LogosIcons.install
-                              : Qt.resolvedUrl("../images/builtin-cube.svg")
+                        // The Storage logo keeps its gradient: LogosIcon would flatten it.
+                        Image {
+                            anchors.fill: parent
+                            visible: parent.origin === PackageManagerUi.Storage
+                            sourceSize: Qt.size(parent.size, parent.size)
+                            source: visible ? Qt.resolvedUrl("../images/storage.svg") : ""
+                        }
+                        LogosIcon {
+                            anchors.fill: parent
+                            visible: parent.origin !== PackageManagerUi.Storage
+                            color: Theme.palette.textSecondary
+                            source: parent.origin === PackageManagerUi.GitHub  ? Qt.resolvedUrl("../images/github.svg")
+                                  : parent.origin === PackageManagerUi.LocalFile ? LogosIcons.install
+                                  : Qt.resolvedUrl("../images/builtin-cube.svg")
+                        }
                         HoverHandler { id: sourceHover }
                         LogosToolTip {
                             text: sourceCell.showsInstalledCopy()
