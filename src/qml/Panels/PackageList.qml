@@ -294,63 +294,45 @@ LogosTable {
             readonly property int downloaded: rowItem ? rowItem.downloadSource
                                                       : PackageManagerUi.NoSource
 
+            // The dropdown shows the copy on disk: only its source is shown.
+            function showsInstalledCopy() {
+                if (downloaded === PackageManagerUi.Builtin) {
+                    return true
+                }
+
+                if (downloaded === PackageManagerUi.NoSource) {
+                    return false
+                }
+
+                return rowItem.version === rowItem.installedVersion
+                    && rowItem.hash === rowItem.installedHash
+            }
+
             function shownSources() {
                 if (!rowItem) {
                     return []
                 }
 
-                if (downloaded === PackageManagerUi.Builtin) {
-                     return [PackageManagerUi.Builtin]
+                if (showsInstalledCopy()) {
+                    return [downloaded]
                 }
 
                 const picked = rowItem.availableVersions[rowItem.selectedVersionIndex]
 
-                if (picked && picked.sources.length > 0) {
-                    const sources = picked.sources.slice()
-
-                    // The installed copy may come from a source the catalog does not list.
-                    if (downloaded !== PackageManagerUi.NoSource
-                        && rowItem.version === rowItem.installedVersion
-                        && rowItem.hash === rowItem.installedHash
-                        && !sources.includes(downloaded)) {
-                        sources.push(downloaded)
-                    }
-
-                    return sources
-                }
-
-                if (downloaded !== PackageManagerUi.NoSource) {
-                    return [downloaded]
+                if (picked) {
+                    return picked.sources
                 }
 
                 return []
             }
 
-            function notUsedForInstall(source) {
-                if (downloaded === PackageManagerUi.NoSource) {
-                    return false
+            function sourceName(source) {
+                switch (source) {
+                case PackageManagerUi.Storage:   return qsTr("Storage")
+                case PackageManagerUi.GitHub:    return qsTr("GitHub")
+                case PackageManagerUi.LocalFile: return qsTr("Local file")
+                default:                         return qsTr("Built-in")
                 }
-
-                if (rowItem.version !== rowItem.installedVersion
-                    || rowItem.hash !== rowItem.installedHash) {
-                    return false
-                }
-
-                return source !== downloaded
-            }
-
-            function usageLabel(source) {
-                if (notUsedForInstall(source)) {
-                    return qsTr(" (not used)")
-                }
-
-                for (const other of shownSources()) {
-                    if (notUsedForInstall(other)) {
-                        return qsTr(" (used)")
-                    }
-                }
-
-                return ""
             }
 
             Row {
@@ -360,21 +342,22 @@ LogosTable {
                     model: sourceCell.shownSources()
                     Image {
                         readonly property int origin: modelData
-                        width: 16
-                        height: 16
-                        sourceSize: Qt.size(16, 16)
-                        opacity: sourceCell.notUsedForInstall(origin) ? 0.35 : 1
+                        // install.svg draws inside a 20px box with a margin.
+                        readonly property int size: origin === PackageManagerUi.LocalFile ? 20 : 16
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: size
+                        height: size
+                        sourceSize: Qt.size(size, size)
+                        opacity: sourceCell.showsInstalledCopy() ? 1 : 0.35
                         source: origin === PackageManagerUi.Storage ? Qt.resolvedUrl("../images/storage.svg")
                               : origin === PackageManagerUi.GitHub  ? Qt.resolvedUrl("../images/github.svg")
-                              : origin === PackageManagerUi.LocalFile ? Qt.resolvedUrl("../images/local-lgx-v2.svg")
+                              : origin === PackageManagerUi.LocalFile ? LogosIcons.install
                               : Qt.resolvedUrl("../images/builtin-cube.svg")
                         HoverHandler { id: sourceHover }
                         LogosToolTip {
-                            text: (parent.origin === PackageManagerUi.Storage ? qsTr("Storage")
-                                : parent.origin === PackageManagerUi.GitHub  ? qsTr("GitHub")
-                                : parent.origin === PackageManagerUi.LocalFile ? qsTr("Local file")
-                                : qsTr("Built-in"))
-                                + sourceCell.usageLabel(parent.origin)
+                            text: sourceCell.showsInstalledCopy()
+                                  ? sourceCell.sourceName(parent.origin)
+                                  : qsTr("Download possible over %1").arg(sourceCell.sourceName(parent.origin))
                             placement: LogosToolTip.Top
                             visible: sourceHover.hovered
                         }
