@@ -82,6 +82,10 @@ PackageTypes::DownloadSource downloadSourceOf(const QString& installType,
         return PackageTypes::Storage;
     }
 
+    if (source.startsWith(QStringLiteral("file:"))) {
+        return PackageTypes::LocalFile;
+    }
+
     return PackageTypes::GitHub;
 }
 
@@ -195,6 +199,36 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         entry["size"]         = vm.value("size");
         entry["publisherRef"] = vm.value("publisherRef").toString();
         entry["url"]          = vm.value("url").toString();
+
+        QStringList urls = vm.value("urls").toStringList();
+
+        if (urls.isEmpty()) {
+            // Fall back to the single `url` if `urls` is empty.
+            urls.append(vm.value("url").toString());
+        }
+
+        bool onStorage = false;
+        bool onGitHub = false;
+
+        for (const QString& url : urls) {
+            if (url.startsWith(QStringLiteral("logos:"))) {
+                onStorage = true;
+            } else if (!url.isEmpty()) {
+                onGitHub = true;
+            }
+        }
+
+        QVariantList sources;
+
+        if (onStorage) {
+            sources.append(static_cast<int>(PackageTypes::Storage));
+        }
+
+        if (onGitHub) {
+            sources.append(static_cast<int>(PackageTypes::GitHub));
+        }
+
+        entry["sources"]      = sources;
         entry["signed"]       = vm.contains("signature");
         entry["signerDid"]    = vm.value("signature").toMap().value("did").toString();
         entry["manifest"]     = vManifest;

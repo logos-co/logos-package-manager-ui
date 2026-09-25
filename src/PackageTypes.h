@@ -79,7 +79,8 @@ public:
         NoSource = 0,
         Builtin  = 1,
         GitHub   = 2,
-        Storage  = 3
+        Storage  = 3,
+        LocalFile = 4
     };
     Q_ENUM(DownloadSource)
 

@@ -1221,9 +1221,11 @@ void PackageManagerBackend::performInstall(QString name, QString version,
 {
     // Local .lgx: the file is already on disk, nothing to download.
     if (m_pendingLocalInstalls.contains(name)) {
+        const QString path = m_pendingLocalInstalls.take(name);
         const QVariantMap entry{
             {QStringLiteral("name"), name},
-            {QStringLiteral("path"), m_pendingLocalInstalls.take(name)},
+            {QStringLiteral("path"), path},
+            {QStringLiteral("source"), QUrl::fromLocalFile(path).toString()},
         };
         markEntriesInstalling({entry});
         installResultsSequential({entry}, name, 0);
@@ -1471,9 +1473,11 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     // is already on disk \u2014 install it directly, no download round-trip.
     if (m_pendingLocalInstalls.contains(moduleName)) {
         m_pendingUpgradeByModule.remove(moduleName);
+        const QString path = m_pendingLocalInstalls.take(moduleName);
         const QVariantMap entry{
             {QStringLiteral("name"), moduleName},
-            {QStringLiteral("path"), m_pendingLocalInstalls.take(moduleName)},
+            {QStringLiteral("path"), path},
+            {QStringLiteral("source"), QUrl::fromLocalFile(path).toString()},
         };
         markEntriesInstalling({entry});
         installResultsSequential({entry}, displayName, 0);

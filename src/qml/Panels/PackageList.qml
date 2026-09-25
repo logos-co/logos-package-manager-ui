@@ -290,24 +290,85 @@ LogosTable {
     Component {
         id: downloadSourceCellComponent
         Item {
-            Image {
-                readonly property int origin: rowItem ? rowItem.downloadSource
+            id: sourceCell
+            readonly property int downloaded: rowItem ? rowItem.downloadSource
                                                       : PackageManagerUi.NoSource
-                visible: origin !== PackageManagerUi.NoSource
+
+            function shownSources() {
+                if (!rowItem) {
+                    return []
+                }
+
+                if (downloaded === PackageManagerUi.Builtin) {
+                     return [PackageManagerUi.Builtin]
+                }
+
+                const picked = rowItem.availableVersions[rowItem.selectedVersionIndex]
+
+                if (picked && picked.sources.length > 0) {
+                    return picked.sources
+                }
+
+                if (downloaded !== PackageManagerUi.NoSource) {
+                    return [downloaded]
+                }
+
+                return []
+            }
+
+            function notUsedForInstall(source) {
+                if (downloaded === PackageManagerUi.NoSource) {
+                    return false
+                }
+
+                if (rowItem.version !== rowItem.installedVersion
+                    || rowItem.hash !== rowItem.installedHash) {
+                    return false
+                }
+
+                return source !== downloaded
+            }
+
+            function usageLabel(source) {
+                if (notUsedForInstall(source)) {
+                    return qsTr(" (not used)")
+                }
+
+                for (const other of shownSources()) {
+                    if (notUsedForInstall(other)) {
+                        return qsTr(" (used)")
+                    }
+                }
+
+                return ""
+            }
+
+            Row {
                 anchors.centerIn: parent
-                width: 16
-                height: 16
-                sourceSize: Qt.size(16, 16)
-                source: origin === PackageManagerUi.Storage ? Qt.resolvedUrl("../images/storage.svg")
-                      : origin === PackageManagerUi.GitHub  ? Qt.resolvedUrl("../images/github.svg")
-                      : Qt.resolvedUrl("../images/builtin-cube.svg")
-                HoverHandler { id: sourceHover }
-                LogosToolTip {
-                    text: parent.origin === PackageManagerUi.Storage ? qsTr("Storage")
-                        : parent.origin === PackageManagerUi.GitHub  ? qsTr("GitHub")
-                        : qsTr("Built-in")
-                    placement: LogosToolTip.Top
-                    visible: sourceHover.hovered
+                spacing: 8
+                Repeater {
+                    model: sourceCell.shownSources()
+                    Image {
+                        readonly property int origin: modelData
+                        width: 16
+                        height: 16
+                        sourceSize: Qt.size(16, 16)
+                        opacity: sourceCell.notUsedForInstall(origin) ? 0.35 : 1
+                        source: origin === PackageManagerUi.Storage ? Qt.resolvedUrl("../images/storage.svg")
+                              : origin === PackageManagerUi.GitHub  ? Qt.resolvedUrl("../images/github.svg")
+                              : origin === PackageManagerUi.LocalFile ? Qt.resolvedUrl("../images/local-lgx-v2.svg")
+                              : Qt.resolvedUrl("../images/builtin-cube.svg")
+                        HoverHandler { id: sourceHover }
+                        LogosToolTip {
+                            text: (parent.origin === PackageManagerUi.Storage ? qsTr("Storage")
+                                : parent.origin === PackageManagerUi.GitHub  ? qsTr("GitHub")
+                                : parent.origin === PackageManagerUi.LocalFile ? qsTr("Local file")
+                                : qsTr("Built-in"))
+                                + sourceCell.usageLabel(parent.origin)
+                            placement: LogosToolTip.Top
+                            visible: sourceHover.hovered
+                        }
+                    }
                 }
             }
         }

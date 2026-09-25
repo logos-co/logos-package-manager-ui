@@ -307,6 +307,15 @@ LOGOS_TEST(a_row_downloaded_without_a_recorded_source_has_the_github_source) {
                     static_cast<int>(PackageTypes::GitHub));
 }
 
+LOGOS_TEST(a_row_installed_from_a_local_file_has_the_local_file_source) {
+    QVariantMap inst = installedRecord({});
+    inst["source"] = QStringLiteral("file:///home/user/chat.lgx");
+
+    const QVariantMap row = packagerow::buildLocalPackageRow(inst);
+    LOGOS_ASSERT_EQ(row.value("downloadSource").toInt(),
+                    static_cast<int>(PackageTypes::LocalFile));
+}
+
 LOGOS_TEST(an_embedded_row_has_the_builtin_source) {
     QVariantMap inst = installedRecord({});
     inst["installType"] = QStringLiteral("embedded");
@@ -323,4 +332,41 @@ LOGOS_TEST(a_catalog_row_not_installed_has_no_source) {
         {}, {});
     LOGOS_ASSERT_EQ(row.value("downloadSource").toInt(),
                     static_cast<int>(PackageTypes::NoSource));
+}
+
+LOGOS_TEST(a_version_published_on_storage_and_github_offers_both_sources) {
+    QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    v["urls"] = QVariantList{
+        QStringLiteral("https://github.com/logos-co/chat/releases/chat.lgx"),
+        QStringLiteral("logos:logos.test:zDvZRwzm")};
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, {});
+    const QVariantList sources =
+        row.value("availableVersions").toList().at(0).toMap().value("sources").toList();
+    LOGOS_ASSERT_TRUE(sources == (QVariantList{static_cast<int>(PackageTypes::Storage),
+                                               static_cast<int>(PackageTypes::GitHub)}));
+}
+
+LOGOS_TEST(a_version_published_on_storage_alone_offers_only_storage) {
+    QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    v["urls"] = QVariantList{QStringLiteral("logos:logos.test:zDvZRwzm")};
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, {});
+    const QVariantList sources =
+        row.value("availableVersions").toList().at(0).toMap().value("sources").toList();
+    LOGOS_ASSERT_TRUE(sources == (QVariantList{static_cast<int>(PackageTypes::Storage)}));
+}
+
+// Catalogs older than `urls` carry a single `url`.
+LOGOS_TEST(a_version_without_urls_offers_the_source_of_its_url) {
+    QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    v["url"] = QStringLiteral("https://github.com/logos-co/chat/releases/chat.lgx");
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, {});
+    const QVariantList sources =
+        row.value("availableVersions").toList().at(0).toMap().value("sources").toList();
+    LOGOS_ASSERT_TRUE(sources == (QVariantList{static_cast<int>(PackageTypes::GitHub)}));
 }
