@@ -13,6 +13,7 @@
 
 #include "PackageRowBuilder.h"
 #include "PackageTypes.h"
+#include "RowActionResolver.h"
 
 namespace {
 
@@ -369,4 +370,111 @@ LOGOS_TEST(a_version_without_urls_offers_the_source_of_its_url) {
     const QVariantList sources =
         row.value("availableVersions").toList().at(0).toMap().value("sources").toList();
     LOGOS_ASSERT_TRUE(sources == (QVariantList{static_cast<int>(PackageTypes::GitHub)}));
+}
+
+// ── Download source ──────────────────────────────────────────────────────
+
+namespace {
+
+// A version this platform can install, so only the download source decides.
+QVariantMap installableVersion(const QString& version, const QString& hash)
+{
+    QVariantMap v = catalogVersion(version, hash);
+    QVariantMap manifest = v["manifest"].toMap();
+    manifest["main"] = QVariantMap{{QStringLiteral("linux-x86_64"), QStringLiteral("lib/chat.so")}};
+    v["manifest"] = manifest;
+    return v;
+}
+
+const QStringList kValidVariants{QStringLiteral("linux-x86_64")};
+
+}  // namespace
+
+LOGOS_TEST(a_version_the_download_source_cannot_serve_is_not_available) {
+    QVariantMap v = installableVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    v["sourceAvailable"] = false;
+    v["requiredSource"] = QStringLiteral("logos");
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, kValidVariants);
+
+    LOGOS_ASSERT_TRUE(row.value("isVariantAvailable").toBool());
+    LOGOS_ASSERT_FALSE(row.value("isSourceAvailable").toBool());
+    LOGOS_ASSERT_EQ(row.value("rowAction").toInt(), static_cast<int>(PackageTypes::NotAvailable));
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::NotOnLogosStorage));
+}
+
+LOGOS_TEST(http_only_reports_its_own_reason) {
+    QVariantMap v = installableVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    v["sourceAvailable"] = false;
+    v["requiredSource"] = QStringLiteral("http");
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, kValidVariants);
+
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::NotOverHttp));
+}
+
+// No download source setting can fix a platform mismatch, so that reason wins.
+LOGOS_TEST(the_variant_reason_wins_over_the_download_source) {
+    QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    v["sourceAvailable"] = false;
+    v["requiredSource"] = QStringLiteral("logos");
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, kValidVariants);
+
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::NoVariantsPublished));
+}
+
+// A downloader that predates the setting sends none of the fields.
+LOGOS_TEST(a_version_without_source_fields_stays_installable) {
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{installableVersion(QStringLiteral("1.2.0"),
+                                                      QStringLiteral("h_a"))}),
+        {}, kValidVariants);
+
+    LOGOS_ASSERT_TRUE(row.value("isSourceAvailable").toBool());
+    LOGOS_ASSERT_EQ(row.value("rowAction").toInt(), static_cast<int>(PackageTypes::Install));
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::Available));
+}
+
+LOGOS_TEST(source_icons_show_only_what_the_download_source_allows) {
+    QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    v["urls"] = QVariantList{
+        QStringLiteral("https://github.com/logos-co/chat/releases/chat.lgx"),
+        QStringLiteral("logos:logos.test:zDvZRwzm")};
+    v["allowedSources"] = QVariantList{QStringLiteral("logos")};
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, {});
+    const QVariantList sources =
+        row.value("availableVersions").toList().at(0).toMap().value("sources").toList();
+    LOGOS_ASSERT_TRUE(sources == (QVariantList{static_cast<int>(PackageTypes::Storage)}));
+}
+
+// The Version picker mirrors the pick through this helper (setRowVersion).
+LOGOS_TEST(picking_another_version_follows_its_download_source) {
+    QVariantMap older = installableVersion(QStringLiteral("1.1.0"), QStringLiteral("h_b"));
+    older["sourceAvailable"] = false;
+    older["requiredSource"] = QStringLiteral("http");
+    QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{installableVersion(QStringLiteral("1.2.0"),
+                                                      QStringLiteral("h_a")),
+                                   older}),
+        {}, kValidVariants);
+
+    rowaction::applyPickedSourceAvailability(row, 1);
+    LOGOS_ASSERT_FALSE(row.value("isSourceAvailable").toBool());
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::NotOverHttp));
+
+    rowaction::applyPickedSourceAvailability(row, 0);
+    LOGOS_ASSERT_TRUE(row.value("isSourceAvailable").toBool());
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::Available));
 }

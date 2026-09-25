@@ -127,6 +127,10 @@ Control {
                 return qsTr("Not available for this build flavor (dev / portable / release).")
             if (reason === PackageManagerUi.PlatformMismatch)
                 return qsTr("Not available for this platform.")
+            if (reason === PackageManagerUi.NotOnLogosStorage)
+                return qsTr("This version is not on Logos Storage, and the download source is set to Logos only.")
+            if (reason === PackageManagerUi.NotOverHttp)
+                return qsTr("This version has no HTTP download, and the download source is set to HTTP only.")
             return qsTr("Not available")
         }
 
