@@ -335,6 +335,16 @@ LogosTable {
                 }
             }
 
+            function sourceNames() {
+                const names = shownSources().map(source => sourceName(source))
+
+                if (names.length < 2) {
+                    return names.join("")
+                }
+
+                return qsTr("%1 and %2").arg(names.slice(0, -1).join(", ")).arg(names[names.length - 1])
+            }
+
             Row {
                 anchors.centerIn: parent
                 spacing: 8
@@ -367,7 +377,7 @@ LogosTable {
                         LogosToolTip {
                             text: sourceCell.showsInstalledCopy()
                                   ? sourceCell.sourceName(parent.origin)
-                                  : qsTr("Download possible over %1").arg(sourceCell.sourceName(parent.origin))
+                                  : qsTr("Download possible over %1").arg(sourceCell.sourceNames())
                             placement: LogosToolTip.Top
                             visible: sourceHover.hovered
                         }
