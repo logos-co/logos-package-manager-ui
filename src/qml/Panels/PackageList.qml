@@ -306,7 +306,17 @@ LogosTable {
                 const picked = rowItem.availableVersions[rowItem.selectedVersionIndex]
 
                 if (picked && picked.sources.length > 0) {
-                    return picked.sources
+                    const sources = picked.sources.slice()
+
+                    // The installed copy may come from a source the catalog does not list.
+                    if (downloaded !== PackageManagerUi.NoSource
+                        && rowItem.version === rowItem.installedVersion
+                        && rowItem.hash === rowItem.installedHash
+                        && !sources.includes(downloaded)) {
+                        sources.push(downloaded)
+                    }
+
+                    return sources
                 }
 
                 if (downloaded !== PackageManagerUi.NoSource) {
