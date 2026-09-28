@@ -218,17 +218,26 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
             }
         }
 
+        // Only the transports the download source allows. A downloader that
+        // predates the setting sends no `allowedSources`: all are allowed.
+        const bool hasAllowed = vm.contains(QStringLiteral("allowedSources"));
+        const QStringList allowed = vm.value(QStringLiteral("allowedSources")).toStringList();
+
         QVariantList sources;
 
-        if (onStorage) {
+        if (onStorage && (!hasAllowed || allowed.contains(QStringLiteral("logos")))) {
             sources.append(static_cast<int>(PackageTypes::Storage));
         }
 
-        if (onGitHub) {
+        if (onGitHub && (!hasAllowed || allowed.contains(QStringLiteral("http")))) {
             sources.append(static_cast<int>(PackageTypes::GitHub));
         }
 
         entry["sources"]      = sources;
+        entry["sourceAvailable"] = vm.value(QStringLiteral("sourceAvailable"), true).toBool();
+        entry["sourceUnavailableReason"] = static_cast<int>(
+            vm.value(QStringLiteral("requiredSource")).toString() == QLatin1String("http")
+                ? PackageTypes::NotOverHttp : PackageTypes::NotOnLogosStorage);
         entry["signed"]       = vm.contains("signature");
         entry["signerDid"]    = vm.value("signature").toMap().value("did").toString();
         entry["manifest"]     = vManifest;
@@ -316,9 +325,11 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         variantAvailable = true;
     }
     pkg["isVariantAvailable"] = variantAvailable;
-    pkg["notAvailableReason"] = static_cast<int>(
+    pkg["variantNotAvailableReason"] = static_cast<int>(
         variantAvailable ? PackageTypes::Available
                          : classifyNotAvailable(offeredVariants, validVariants));
+    // The newest version may be one the download source cannot serve.
+    rowaction::applyPickedSourceAvailability(pkg, 0);
 
     // ── Action-column inputs ────────────────────────────────────────
     // `rowAction` is the per-row primary action, resolved against the
@@ -331,7 +342,7 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
     // version exists in the catalog", and drives the small marker on
     // the Version cell. Computed once here.
     pkg["rowAction"] = rowaction::resolveRowAction(
-        isInstalled, variantAvailable, status,
+        isInstalled, variantAvailable && pkg.value("isSourceAvailable").toBool(), status,
         installedVersion, installedHash,
         /*selectedVersion=*/releaseVersion,
         /*selectedHash=*/releaseHash);

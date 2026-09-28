@@ -147,14 +147,15 @@ static void recomputeRowAction(QVariantMap& row)
     const bool isInstalled = !row.value("installedVersion").toString().isEmpty()
                           || !row.value("installedHash").toString().isEmpty()
                           || !row.value("installType").toString().isEmpty();
-    const bool variantAvailable = row.value("isVariantAvailable", false).toBool();
+    const bool available = row.value("isVariantAvailable", false).toBool()
+                        && row.value("isSourceAvailable", true).toBool();
     const int currentStatus = row.value("installStatus", 0).toInt();
     const QString instV = row.value("installedVersion").toString();
     const QString instH = row.value("installedHash").toString();
     const QString selV  = row.value("version").toString();      // mirrored by setRowVersion
     const QString selH  = row.value("hash").toString();         // mirrored by setRowVersion
     row["rowAction"] = rowaction::resolveRowAction(
-        isInstalled, variantAvailable, currentStatus,
+        isInstalled, available, currentStatus,
         instV, instH, selV, selH);
 }
 
@@ -167,6 +168,7 @@ using RowPredicate = bool (*)(const QVariantMap&);
 static bool isInstallableRow(const QVariantMap& pkg)
 {
     if (!pkg.value("isVariantAvailable", false).toBool()) return false;
+    if (!pkg.value("isSourceAvailable", true).toBool()) return false;
     const int status = pkg.value("installStatus", 0).toInt();
     return status == static_cast<int>(PackageTypes::NotInstalled)
         || status == static_cast<int>(PackageTypes::Failed);
@@ -258,8 +260,6 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
     for (QVariantMap& row : m_packages) {
         const QString moduleName = row.value("moduleName").toString();
         const QString key = rowKey(row);
-        const bool available = row.value("isVariantAvailable", false).toBool();
-        row["isSelected"] = available && previouslySelectedKeys.contains(key);
 
         bool dropdownRestored = false;
         if (selectedVersionByKey.contains(key)) {
@@ -281,9 +281,16 @@ void PackageListModel::setPackages(const QList<QVariantMap>& packages)
                 const QVariantMap pick = avail.at(idx).toMap();
                 row["version"] = pick.value("version");
                 row["hash"]    = pick.value("rootHash");
+                rowaction::applyPickedSourceAvailability(row, idx);
                 dropdownRestored = true;
             }
         }
+
+        // After the dropdown restore: the picked version may be one the
+        // download source cannot serve.
+        const bool available = row.value("isVariantAvailable", false).toBool()
+                            && row.value("isSourceAvailable", true).toBool();
+        row["isSelected"] = available && previouslySelectedKeys.contains(key);
 
         const int status = row.value("installStatus", 0).toInt();
         bool failedBackFilled = false;
@@ -483,6 +490,7 @@ void PackageListModel::setRowVersion(int index, int versionIndex)
     // fields onto the row so the columns reflect the newly-selected
     // version, not the initial (index 0) values from row build.
     rowaction::applyPickedSizeAndDate(m_packages[index], versionIndex);
+    rowaction::applyPickedSourceAvailability(m_packages[index], versionIndex);
 
     // The Action column reflects the SELECTED version, not the catalog
     // newest — recompute the resolved action against the new (version,
@@ -498,7 +506,7 @@ void PackageListModel::setRowVersion(int index, int versionIndex)
     emit dataChanged(mi, mi,
         {SelectedVersionIndexRole, VersionRole, HashRole,
          SizeRole, DateUpdatedRole,
-         InstallStatusRole, RowActionRole});
+         InstallStatusRole, RowActionRole, NotAvailableReasonRole});
 }
 
 // ─────────────────────────────── selectors ───────────────────────────────

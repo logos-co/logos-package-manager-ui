@@ -36,7 +36,9 @@ class PackageManagerUi
         Available           = 0,
         NoVariantsPublished = 1,
         BuildFlavorMismatch = 2,
-        PlatformMismatch    = 3
+        PlatformMismatch    = 3,
+        NotOnLogosStorage   = 4,
+        NotOverHttp         = 5
     }
 
     // Per-row primary action — resolved against the row's currently

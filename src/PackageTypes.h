@@ -41,7 +41,11 @@ public:
         Available = 0,
         NoVariantsPublished = 1,
         BuildFlavorMismatch = 2,
-        PlatformMismatch = 3
+        PlatformMismatch = 3,
+        // The download source setting excludes every transport the picked
+        // version is published on.
+        NotOnLogosStorage = 4,
+        NotOverHttp = 5
     };
     Q_ENUM(NotAvailableReason)
 

@@ -133,4 +133,25 @@ inline void applyPickedSizeAndDate(QVariantMap& pkg, int pickedIndex) {
     pkg["size"]        = pick.value("size");
 }
 
+// Mirror the picked version's download-source availability to the row's
+// `isSourceAvailable`, and derive `notAvailableReason`: the variant reason
+// first, since no source setting can fix a platform mismatch.
+inline void applyPickedSourceAvailability(QVariantMap& pkg, int pickedIndex) {
+    const QVariantList avail = pkg.value("availableVersions").toList();
+    const QVariantMap pick = (pickedIndex >= 0 && pickedIndex < avail.size())
+        ? avail.at(pickedIndex).toMap() : QVariantMap();
+    const bool sourceAvailable = pick.value("sourceAvailable", true).toBool();
+    pkg["isSourceAvailable"] = sourceAvailable;
+
+    if (!pkg.value("isVariantAvailable", false).toBool()) {
+        pkg["notAvailableReason"] = pkg.value("variantNotAvailableReason");
+    } else if (!sourceAvailable) {
+        pkg["notAvailableReason"] = static_cast<int>(
+            pick.value("sourceUnavailableReason").toInt() == PackageTypes::NotOverHttp
+                ? PackageTypes::NotOverHttp : PackageTypes::NotOnLogosStorage);
+    } else {
+        pkg["notAvailableReason"] = static_cast<int>(PackageTypes::Available);
+    }
+}
+
 } // namespace rowaction
