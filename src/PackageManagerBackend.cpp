@@ -59,6 +59,7 @@ PackageManagerBackend::PackageManagerBackend(QObject* parent)
     // fight them. PackagesPagingProxy defaults to pageSize=20, page=1.
     setSearchText(QString());
     setInstallStateFilter(0);
+    setShowUnavailable(false);
     setPageSize(20);
     setCurrentPage(1);
     setSortRole(QString());
@@ -100,6 +101,8 @@ PackageManagerBackend::PackageManagerBackend(QObject* parent)
             this, [this]() { m_packagesFilterProxy->setSearchText(searchText()); });
     connect(this, &PackageManagerUiSimpleSource::installStateFilterChanged,
             this, [this]() { m_packagesFilterProxy->setInstallStateFilter(installStateFilter()); });
+    connect(this, &PackageManagerUiSimpleSource::showUnavailableChanged,
+            this, [this]() { m_packagesFilterProxy->setShowUnavailable(showUnavailable()); });
     connect(this, &PackageManagerUiSimpleSource::sortRoleChanged,
             this, [this]() { m_packagesFilterProxy->setSortRoleByName(sortRole()); });
     connect(this, &PackageManagerUiSimpleSource::sortOrderChanged,
@@ -407,28 +410,13 @@ void PackageManagerBackend::refreshPackages()
 void PackageManagerBackend::loadCatalog(int currentGeneration)
 {
     // One round-trip for the catalog (union across every enabled
-    // repository); category list is derived from it client-side so
-    // subsequent category clicks only update the proxy filter — no
+    // repository); the Categories and Types lists are derived from it
+    // client-side so subsequent clicks only update the proxy filter — no
     // network round-trip and no model rebuild.
     LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.getCatalogAsync([self, currentGeneration](QVariantList packagesArray) {
         if (!self || self->m_reloadGeneration != currentGeneration) return;
-
-        // Derive categories from the catalog: "All" + sorted distinct
-        // (capitalised) values of each package's `category` field.
-        QStringList categoryList;
-        categoryList << QStringLiteral("All");
-        QStringList seen;
-        for (const QVariant& v : packagesArray) {
-            QString c = v.toMap().value(QStringLiteral("category")).toString();
-            if (c.isEmpty()) continue;
-            c[0] = c[0].toUpper();
-            if (!seen.contains(c)) seen.append(c);
-        }
-        std::sort(seen.begin(), seen.end());
-        categoryList.append(seen);
-        self->setCategories(categoryList);
 
         LogosModules& logos2 = self->modules();
         logos2.package_manager.getInstalledPackagesAsync([self, currentGeneration, packagesArray](QVariantList installedPackages) {
@@ -438,13 +426,13 @@ void PackageManagerBackend::loadCatalog(int currentGeneration)
             logos3.package_manager.getValidVariantsAsync([self, currentGeneration, packagesArray, installedPackages](QVariant result) {
                 if (!self || self->m_reloadGeneration != currentGeneration) return;
                 QStringList validVariants = result.toStringList();
+                self->setHostVariant(validVariants.value(0));
                 self->m_allPackagesCache = packagesArray;
                 self->m_installedPackagesCache = installedPackages;
                 self->m_validVariantsCache = validVariants;
                 self->setPackagesFromVariantList(self->m_allPackagesCache,
                                                  self->m_installedPackagesCache,
                                                  self->m_validVariantsCache);
-                self->recomputeAvailableTypes();
                 self->applyCategoryFilter();
                 self->setIsLoading(false);
             });
@@ -543,14 +531,32 @@ void PackageManagerBackend::applyCategoryFilter()
     m_packagesFilterProxy->setCategoryFilter(categoryFilter);
 }
 
-void PackageManagerBackend::recomputeAvailableTypes()
+void PackageManagerBackend::recomputeCategories(const QList<QVariantMap>& rows)
+{
+    QStringList categoryList;
+    categoryList << QStringLiteral("All");
+    QStringList seen;
+    for (const QVariantMap& row : rows) {
+        if (rowaction::isUnavailableOnThisPlatform(row)) continue;
+        QString c = row.value(QStringLiteral("category")).toString();
+        if (c.isEmpty()) continue;
+        c[0] = c[0].toUpper();
+        if (!seen.contains(c)) seen.append(c);
+    }
+    std::sort(seen.begin(), seen.end());
+    categoryList.append(seen);
+    setCategories(categoryList);
+}
+
+void PackageManagerBackend::recomputeAvailableTypes(const QList<QVariantMap>& rows)
 {
     // "All" is always at index 0; real types follow alphabetically. Using a
-    // QSet to dedupe keeps this O(N) over the cache; the final sort is over
+    // QSet to dedupe keeps this O(N) over the rows; the final sort is over
     // the small set of distinct types (typically 2-4 entries).
     QSet<QString> distinct;
-    for (const QVariant& v : m_allPackagesCache) {
-        const QString t = v.toMap().value("type").toString();
+    for (const QVariantMap& row : rows) {
+        if (rowaction::isUnavailableOnThisPlatform(row)) continue;
+        const QString t = row.value("type").toString();
         if (!t.isEmpty()) distinct.insert(t);
     }
     QStringList sorted(distinct.begin(), distinct.end());
@@ -694,6 +700,18 @@ void PackageManagerBackend::setPackagesFromVariantList(const QVariantList& packa
             sourceOrder.append(k);
     }
     m_packagesFilterProxy->setSourceOrder(sourceOrder);
+
+    // Facets before the model: both narrow the sidebar to what the rows can
+    // actually offer, and recomputeAvailableTypes ends by re-applying the
+    // resolved type filter to the proxy.
+    recomputeCategories(packages);
+    recomputeAvailableTypes(packages);
+
+    int availableHere = 0;
+    for (const QVariantMap& row : packages) {
+        if (!rowaction::isUnavailableOnThisPlatform(row)) ++availableHere;
+    }
+    setAvailableHereCount(availableHere);
 
     // setPackages emits hasSelectionChanged; the connected slot
     // (refreshActionSummary) rebuilds the bulk action plan and pushes

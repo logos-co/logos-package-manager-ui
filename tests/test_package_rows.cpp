@@ -478,3 +478,131 @@ LOGOS_TEST(picking_another_version_follows_its_download_source) {
     LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
                     static_cast<int>(PackageTypes::Available));
 }
+
+// ── Platform availability: which rows the list drops ──────────────────────
+//
+// A catalog is published per OS/arch, so on a platform with few variants most
+// of it is packages the user can never install. Those rows are dropped
+// outright (PackagesFilterProxy) and left out of the Categories / Types
+// lists — but only the two reasons nothing the user does can fix.
+
+LOGOS_TEST(a_package_with_no_variant_for_this_platform_is_dropped) {
+    QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    QVariantMap manifest = v["manifest"].toMap();
+    manifest["main"] = QVariantMap{
+        {QStringLiteral("windows-x86_64"), QStringLiteral("lib/chat.dll")}};
+    v["manifest"] = manifest;
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, kValidVariants);
+
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::PlatformMismatch));
+    LOGOS_ASSERT_TRUE(rowaction::isUnavailableOnThisPlatform(row));
+}
+
+LOGOS_TEST(a_package_publishing_no_variants_at_all_is_dropped) {
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{catalogVersion(QStringLiteral("1.2.0"),
+                                                  QStringLiteral("h_a"))}),
+        {}, kValidVariants);
+
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::NoVariantsPublished));
+    LOGOS_ASSERT_TRUE(rowaction::isUnavailableOnThisPlatform(row));
+}
+
+LOGOS_TEST(an_installable_package_is_kept) {
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{installableVersion(QStringLiteral("1.2.0"),
+                                                      QStringLiteral("h_a"))}),
+        {}, kValidVariants);
+
+    LOGOS_ASSERT_FALSE(rowaction::isUnavailableOnThisPlatform(row));
+}
+
+// A dev-flavor host accepts ONLY "-dev" variants -- platformVariantsToTry
+// replaces the bare spelling rather than adding to it -- so a release-only
+// package is as uninstallable there as a foreign OS is. This is the case that
+// dominates a developer's list, which is why it is dropped too.
+LOGOS_TEST(a_build_flavor_mismatch_is_dropped) {
+    QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    QVariantMap manifest = v["manifest"].toMap();
+    manifest["main"] = QVariantMap{
+        {QStringLiteral("linux-x86_64-dev"), QStringLiteral("lib/chat.so")}};
+    v["manifest"] = manifest;
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, kValidVariants);
+
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::BuildFlavorMismatch));
+    LOGOS_ASSERT_TRUE(rowaction::isUnavailableOnThisPlatform(row));
+}
+
+// Every version refused by the download source: nothing to install, so the
+// row goes. Recoverable in Settings, but so is a build flavor.
+LOGOS_TEST(a_package_no_version_of_which_the_source_will_serve_is_dropped) {
+    QVariantMap v = installableVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    v["sourceAvailable"] = false;
+    v["requiredSource"] = QStringLiteral("http");
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}), {}, kValidVariants);
+
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::NotOverHttp));
+    LOGOS_ASSERT_TRUE(rowaction::isUnavailableOnThisPlatform(row));
+}
+
+// ONE servable version is enough to keep the row, even when the newest is
+// refused and so the row currently reads "Not available". Filtering on the
+// selected version instead would both hide this package -- whose 1.1.0 is
+// installable -- and make a row disappear as the user worked its dropdown.
+LOGOS_TEST(a_package_with_one_servable_version_is_kept) {
+    QVariantMap newest = installableVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    newest["sourceAvailable"] = false;
+    newest["requiredSource"] = QStringLiteral("http");
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{newest,
+                                   installableVersion(QStringLiteral("1.1.0"),
+                                                      QStringLiteral("h_b"))}),
+        {}, kValidVariants);
+
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::NotOverHttp));
+    LOGOS_ASSERT_FALSE(rowaction::isUnavailableOnThisPlatform(row));
+}
+
+// The catalog dropped our variant AFTER the package was installed. Hiding it
+// would take its Uninstall button with it — the row is the only surface the
+// on-disk copy has.
+LOGOS_TEST(an_installed_package_survives_losing_its_variant) {
+    QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
+    QVariantMap manifest = v["manifest"].toMap();
+    manifest["main"] = QVariantMap{
+        {QStringLiteral("windows-x86_64"), QStringLiteral("lib/chat.dll")}};
+    v["manifest"] = manifest;
+
+    QVariantMap installed;
+    installed["name"]        = QStringLiteral("chat_module");
+    installed["version"]     = QStringLiteral("1.2.0");
+    installed["installType"] = QStringLiteral("user");
+
+    const QVariantMap row = packagerow::buildPackageRow(
+        provenanceRow(QVariantList{v}),
+        {{QStringLiteral("chat_module"), installed}}, kValidVariants);
+
+    LOGOS_ASSERT_EQ(row.value("notAvailableReason").toInt(),
+                    static_cast<int>(PackageTypes::PlatformMismatch));
+    LOGOS_ASSERT_FALSE(rowaction::isUnavailableOnThisPlatform(row));
+}
+
+// No catalog publishes it, so there is no variant list to check at all.
+LOGOS_TEST(a_local_row_is_never_dropped) {
+    const QVariantMap row = packagerow::buildLocalPackageRow(
+        installedRecord({QStringLiteral("token_list_module")}));
+
+    LOGOS_ASSERT_FALSE(rowaction::isUnavailableOnThisPlatform(row));
+}

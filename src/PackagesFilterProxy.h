@@ -25,6 +25,12 @@ public:
     void setInstallStateFilter(int state);
     int  installStateFilter() const { return m_installStateFilter; }
 
+    // Add back the rows this host cannot install. Default false — availability
+    // is a separate axis from the bucket above and composes with it, so
+    // "Installed" plus "show unavailable" is a question that can be asked.
+    void setShowUnavailable(bool show);
+    bool showUnavailable() const { return m_showUnavailable; }
+
     // Package "type" filter — exact-match against the row's `type` role
     // (e.g. "ui", "core"). Empty string = no type filter.
     void setTypeFilter(const QString& type);
@@ -34,6 +40,7 @@ public:
     // `category` role. Empty string = no category filter.
     void setCategoryFilter(const QString& category);
     QString categoryFilter() const { return m_categoryFilter; }
+    bool isUninstallableHere(const QModelIndex& sourceIndex) const;
 
     // Sort by role *name* — looks up the role int via roleNames() and
     // delegates to QSortFilterProxyModel::sort.
@@ -72,6 +79,7 @@ private:
 
     QString           m_searchText;
     int               m_installStateFilter = 0;
+    bool              m_showUnavailable = false;
     QString           m_typeFilter;
     QString           m_categoryFilter;
     QString           m_sortRoleName;
@@ -85,6 +93,10 @@ private:
     int m_installStatusRole  = -1;
     int m_sourceKeyRole  = -1;
     int m_nameRole                  = -1;
+    int m_hasInstallableVersionRole = -1;
+    int m_installedVersionRole      = -1;
+    int m_installedHashRole         = -1;
+    int m_installTypeRole           = -1;
 
     // Group display order, by section key. Index in this list IS the
     // group's rank; keys absent from it sort after every known group.

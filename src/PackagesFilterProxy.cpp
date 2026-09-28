@@ -2,7 +2,8 @@
 
 #include <QAbstractItemModel>
 
-#include "RowActionResolver.h"      // rowaction::versionCmp (shared semver)
+// rowaction::versionCmp (shared semver) + isUnavailableOnThisPlatform
+#include "RowActionResolver.h"
 
 PackagesFilterProxy::PackagesFilterProxy(QObject* parent)
     : QSortFilterProxyModel(parent)
@@ -22,6 +23,13 @@ void PackagesFilterProxy::setInstallStateFilter(int state)
 {
     if (state == m_installStateFilter) return;
     m_installStateFilter = state;
+    invalidateFilter();
+}
+
+void PackagesFilterProxy::setShowUnavailable(bool show)
+{
+    if (show == m_showUnavailable) return;
+    m_showUnavailable = show;
     invalidateFilter();
 }
 
@@ -53,6 +61,10 @@ void PackagesFilterProxy::recomputeRoleCaches()
     m_installStatusRole  = -1;
     m_sourceKeyRole      = -1;
     m_nameRole           = -1;
+    m_hasInstallableVersionRole = -1;
+    m_installedVersionRole   = -1;
+    m_installedHashRole      = -1;
+    m_installTypeRole        = -1;
     m_versionRoles.clear();
     m_searchRoles.clear();
     if (!sourceModel()) return;
@@ -64,6 +76,12 @@ void PackagesFilterProxy::recomputeRoleCaches()
     m_typeFilterRole     = m_roleByName.value(QByteArrayLiteral("type"), -1);
     m_categoryFilterRole = m_roleByName.value(QByteArrayLiteral("category"), -1);
     m_installStatusRole  = m_roleByName.value(QByteArrayLiteral("installStatus"), -1);
+
+    m_hasInstallableVersionRole =
+        m_roleByName.value(QByteArrayLiteral("hasInstallableVersion"), -1);
+    m_installedVersionRole   = m_roleByName.value(QByteArrayLiteral("installedVersion"), -1);
+    m_installedHashRole      = m_roleByName.value(QByteArrayLiteral("installedHash"), -1);
+    m_installTypeRole        = m_roleByName.value(QByteArrayLiteral("installType"), -1);
 
     // Source-grouping role. lessThan consults it to pin the repo order
     // ahead of the user-selected sort role; unresolved, we fall back to
@@ -89,6 +107,21 @@ void PackagesFilterProxy::recomputeRoleCaches()
         setSortRoleByName(m_sortRoleName);
 }
 
+bool PackagesFilterProxy::isUninstallableHere(const QModelIndex& sourceIndex) const
+{
+    if (!sourceModel() || m_hasInstallableVersionRole < 0) return false;
+
+    bool isInstalled = false;
+    for (int role : {m_installedVersionRole, m_installedHashRole, m_installTypeRole}) {
+        if (role >= 0 && !sourceModel()->data(sourceIndex, role).toString().isEmpty()) {
+            isInstalled = true;
+            break;
+        }
+    }
+    return rowaction::isUnavailableOnThisPlatform(
+        sourceModel()->data(sourceIndex, m_hasInstallableVersionRole).toBool(), isInstalled);
+}
+
 bool PackagesFilterProxy::filterAcceptsRow(int sourceRow,
                                         const QModelIndex& sourceParent) const
 {
@@ -107,6 +140,13 @@ bool PackagesFilterProxy::filterAcceptsRow(int sourceRow,
         if (rowCategory.compare(m_categoryFilter, Qt::CaseInsensitive) != 0)
             return false;
     }
+
+    // Availability, an axis of its own: it composes with the install-state
+    // bucket instead of being a fourth value of it. The two are independent —
+    // a package already on disk whose variant the catalog has since dropped is
+    // both "Installed" and unavailable — so folding them into one selector
+    // would make that row unrepresentable.
+    if (!m_showUnavailable && isUninstallableHere(idx)) return false;
 
     // Install-state filter. Looked up by role NAME (not by InstallStatusRole
     // enum) to avoid a hard #include dependency on the model.

@@ -111,6 +111,8 @@ Rectangle {
                         runnableActionCount: 0
                         actionSummary: ({})
                         stateIndex: store.installStateFilter
+                        showUnavailable: store.showUnavailable
+                        onShowUnavailableRequested: function(show) { store.setShowUnavailable(show) }
                         onReloadClicked: store.refreshCatalog()
                         onInstallLocalClicked: installLocalDialog.open()
                         onStateRequested: function(state) { store.setInstallStateFilter(state) }
@@ -160,13 +162,58 @@ Rectangle {
                         }
                     }
 
+                    Item {
+                        id: nothingForThisHost
+                        objectName: "pmui.nothingForThisHostView"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: store.repositoryCount > 0
+                                 && store.availableHereCount === 0
+                                 && !store.showUnavailable
+                                 && !store.isLoading
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            spacing: Theme.spacing.medium
+                            width: Math.min(parent.width * 0.6, 460)
+
+                            LogosText {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("Nothing available for this platform")
+                                font.pixelSize: Theme.typography.subtitleText
+                                font.weight: Theme.typography.weightMedium
+                                color: Theme.palette.text
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+
+                            LogosText {
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.fillWidth: true
+                                text: (store.hostVariant.length > 0
+                                       && !store.hostVariant.startsWith("unknown"))
+                                      ? qsTr("No configured repository publishes a build for %1.")
+                                            .arg(store.hostVariant)
+                                      : qsTr("No configured repository publishes a build for this platform.")
+                                font.pixelSize: Theme.typography.primaryText
+                                color: Theme.palette.textSecondary
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                            }
+
+                            // No call to action: the toolbar filter is the one
+                            // way to ask for the hidden rows, and it stays on
+                            // screen here — TableHeader is outside this view.
+                        }
+                    }
+
                     PackageList {
                         id: packageList
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: store.repositoryCount > 0
-                                 || store.totalCount > 0
-                                 || store.isLoading
+                        visible: !nothingForThisHost.visible
+                                 && (store.repositoryCount > 0
+                                     || store.totalCount > 0
+                                     || store.isLoading)
 
                         packagesModel: store.packagesModel
                         repositoryLabels: store.repositoryLabels

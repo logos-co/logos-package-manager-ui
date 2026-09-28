@@ -40,9 +40,12 @@ QtObject {
     // Filter / sort / pagination state
     readonly property string searchText: backend ? backend.searchText : ""
     readonly property int installStateFilter: backend ? backend.installStateFilter : 0
+    readonly property bool showUnavailable: backend ? backend.showUnavailable : false
     readonly property int pageSize: backend ? backend.pageSize : 20
     readonly property int currentPage: backend ? backend.currentPage : 1
     readonly property int totalCount: backend ? backend.totalCount : 0
+    readonly property int availableHereCount: backend ? backend.availableHereCount : 0
+    readonly property string hostVariant: backend ? backend.hostVariant : ""
     readonly property int repositoryCount: backend ? backend.repositoryCount : 0
     readonly property var repositoryLabels: backend ? backend.repositoryLabels : ({})
     readonly property string sortRole: backend ? backend.sortRole : ""
@@ -219,6 +222,7 @@ QtObject {
         if (selectedCategoryIndex !== 0) selectCategory(0)   // 0 = "All"
         if (selectedTypeIndex !== 0)     selectType(0)
         if (installStateFilter !== 0)    setInstallStateFilter(0)
+        if (!showUnavailable)            setShowUnavailable(true)
     }
 
 
@@ -278,6 +282,7 @@ QtObject {
     // setter is invoked and the proxy resliсes the model.
     function setSearchText(text)         { if (backend) backend.pushSearchText(text) }
     function setInstallStateFilter(state){ if (backend) backend.pushInstallStateFilter(state) }
+    function setShowUnavailable(show)    { if (backend) backend.pushShowUnavailable(show) }
     function setPageSize(n)              { if (backend) backend.pushPageSize(n) }
     function setCurrentPage(p)           { if (backend) backend.pushCurrentPage(p) }
     function setSortRole(role)           { if (backend) backend.pushSortRole(role) }

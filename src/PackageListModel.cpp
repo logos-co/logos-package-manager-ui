@@ -59,6 +59,7 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
                                                               QVariant::fromValue(quint64(0)));
         case DownloadSourceRole:         return package.value("downloadSource",
                                                   static_cast<int>(PackageTypes::NoSource));
+        case HasInstallableVersionRole:  return package.value("hasInstallableVersion", true);
 
         default:                     return QVariant();
     }
@@ -97,6 +98,7 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
         {DownloadReceivedRole,        "downloadReceived"},
         {DownloadTotalRole,           "downloadTotal"},
         {DownloadSourceRole,          "downloadSource"},
+        {HasInstallableVersionRole,   "hasInstallableVersion"},
     };
 }
 
