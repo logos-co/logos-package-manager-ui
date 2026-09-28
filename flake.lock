@@ -22079,11 +22079,11 @@
         "logos-package-manager": "logos-package-manager_9"
       },
       "locked": {
-        "lastModified": 1790244220,
-        "narHash": "sha256-58yLS1xppm05lS25E48PdcRGyyC/P6C/SyPlSMv+208=",
+        "lastModified": 1790623809,
+        "narHash": "sha256-Nk2U9UxtW5lK8fkWAVusENYPjRxLqM4Bw+wlWxgUkNQ=",
         "owner": "logos-co",
         "repo": "logos-package-manager-module",
-        "rev": "dec113b01883c87ff1f3f3a7387ca6187f1874e4",
+        "rev": "41df424fe04155c243db090659cef619e070a60b",
         "type": "github"
       },
       "original": {

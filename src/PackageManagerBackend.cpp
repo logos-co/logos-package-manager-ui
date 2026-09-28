@@ -1273,24 +1273,37 @@ void PackageManagerBackend::performUpgrade(QString moduleName, QString version, 
         ? m_packageModel->displayNameForModule(moduleName) : QString();
     const QString displayName = mapped.isEmpty() ? moduleName : mapped;
 
-    // The host has unloaded the old version; removing it is ours (the module
-    // used to do it). Bail before the download if that fails — installing over
-    // a package we could not remove is worse than a refused upgrade.
+    // The host has unloaded the old version. An embedded copy stays in the
+    // application directory and the new user-directory copy takes priority.
+    // Remove only a user-installed copy before downloading its replacement.
     LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
-    logos.package_manager.uninstallPackageAsync(moduleName,
-        [self, moduleName, version, mode, displayName](QVariantMap result) {
+    logos.package_manager.getInstalledPackagesAsync(
+        [self, moduleName, version, mode, displayName](QVariantList installed) {
             if (!self) return;
-            if (!result.value("success", false).toBool()) {
-                self->m_pendingUpgradeByModule.remove(moduleName);
-                self->m_pendingLocalInstalls.remove(moduleName);
-                emit self->cancellationOccurred(displayName,
-                    QStringLiteral("Upgrade of '%1' failed: could not remove the "
-                                   "installed version — %2")
-                        .arg(displayName, result.value("error").toString()));
-                return;
+            for (const QVariant& item : installed) {
+                const QVariantMap pkg = item.toMap();
+                if (pkg.value(QStringLiteral("name")).toString() == moduleName
+                    && pkg.value(QStringLiteral("installType")).toString()
+                           == QLatin1String("embedded")) {
+                    self->onUpgradeUninstallDone(moduleName, version, mode);
+                    return;
+                }
             }
-            self->onUpgradeUninstallDone(moduleName, version, mode);
+            self->modules().package_manager.uninstallPackageAsync(moduleName,
+                [self, moduleName, version, mode, displayName](QVariantMap result) {
+                    if (!self) return;
+                    if (!result.value("success", false).toBool()) {
+                        self->m_pendingUpgradeByModule.remove(moduleName);
+                        self->m_pendingLocalInstalls.remove(moduleName);
+                        emit self->cancellationOccurred(displayName,
+                            QStringLiteral("Upgrade of '%1' failed: could not remove the "
+                                           "installed version — %2")
+                                .arg(displayName, result.value("error").toString()));
+                        return;
+                    }
+                    self->onUpgradeUninstallDone(moduleName, version, mode);
+                });
         });
 }
 
@@ -1486,9 +1499,9 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
         displayName, 0, 1, true,
         QStringLiteral("%1 %2\u2026").arg(label, displayName));
 
-    // Local .lgx: the host has now unloaded + uninstalled the old copy, which
-    // was the whole point of routing through the upgrade gate. The replacement
-    // is already on disk \u2014 install it directly, no download round-trip.
+    // Local .lgx: the host has unloaded the old copy. A user-installed copy
+    // was removed; an embedded copy remains as the fallback. The replacement
+    // is already on disk — install it directly, with no download round-trip.
     if (m_pendingLocalInstalls.contains(moduleName)) {
         m_pendingUpgradeByModule.remove(moduleName);
         const QString path = m_pendingLocalInstalls.take(moduleName);

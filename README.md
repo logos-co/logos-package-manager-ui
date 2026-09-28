@@ -62,6 +62,11 @@ cascade-confirmation dialog and the two-phase ack protocol:
 
 PMU subscribes to `uninstallCancelled` / `upgradeCancelled` events for error toast display. User-initiated cancels are silent; system-originated cancellations (e.g. the module's ack-timeout when no listener takes over the gated flow) are surfaced via the dedicated `cancellationOccurred(name, message)` signal, which QML renders as a plain toast. The install-progress channel (`installationProgressUpdated`) is reserved for install progress and install failures; routing cancellations through it would render them with a misleading "Failed to install" prefix.
 
+When upgrading an embedded package, PMU leaves the embedded copy in place and
+installs the replacement in the user directory. Package scans select the user
+copy for that name. Upgrading a user-installed package still removes its old
+copy before installing the replacement.
+
 > Note: the bulk multi-select "Run Actions" surface is currently hidden
 > (`selectionMode: None`) — per-row actions are the supported path. The
 > backend plumbing for it remains in place behind that flag.
