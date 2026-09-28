@@ -171,6 +171,26 @@ test("store: exposes the documented properties with sane defaults", async (app) 
   if (typeof repositoryCount !== "number") throw new Error(`repositoryCount not number: ${repositoryCount}`);
   if (currentPage < 1) throw new Error(`currentPage must be 1-indexed, got ${currentPage}`);
   if (repositoryCount < 0) throw new Error(`repositoryCount must be >= 0, got ${repositoryCount}`);
+
+  // The two the "Nothing available for this platform" empty state binds to.
+  // Nothing else reads them on a healthy fixture, so without this a .rep /
+  // BackendStore typo would surface only on a host with no packages at all —
+  // i.e. only for the user the empty state exists for.
+  const availableHereCount = await storeProperty(app, "availableHereCount");
+  const hostVariant = await storeProperty(app, "hostVariant");
+  if (typeof availableHereCount !== "number") {
+    throw new Error(`availableHereCount not number: ${availableHereCount}`);
+  }
+  if (availableHereCount < 0) {
+    throw new Error(`availableHereCount must be >= 0, got ${availableHereCount}`);
+  }
+  if (typeof hostVariant !== "string") {
+    throw new Error(`hostVariant not string: ${hostVariant}`);
+  }
+  // package_manager always reports at least the host's own spelling.
+  if (hostVariant.indexOf("-") < 0) {
+    throw new Error(`hostVariant is not an <os>-<arch> variant: "${hostVariant}"`);
+  }
 });
 
 test("store: idle state — not installing once catalog has loaded", async (app) => {
@@ -855,6 +875,24 @@ async function inspectPackagesModel(app, expression) {
 // pick, a category, a search string). Uses the store's own setters —
 // those go through push* over QtRO so the source-side proxy actually
 // resets, not just the replica.
+// Push showUnavailable and wait for the replica to echo it back — a push*
+// issued is not a push* landed, and the caller reads totalCount right after.
+async function setStoreShowUnavailable(app, show) {
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) return;
+  await app.inspector.send("evaluate", {
+    objectId: store.matches[0].id,
+    expression: `setShowUnavailable(${show ? "true" : "false"})`,
+  });
+  await app.waitFor(
+    async () => {
+      const v = await storeProperty(app, "showUnavailable");
+      if (v !== show) throw new Error(`showUnavailable=${v} (expected ${show})`);
+    },
+    { timeout: 5000, interval: 200, description: `showUnavailable to become ${show}` }
+  );
+}
+
 async function resetStoreFilters(app) {
   const store = await app.findByProperty("objectName", "pmui.BackendStore");
   if (!store.matches || store.matches.length === 0) return;
@@ -866,6 +904,7 @@ async function resetStoreFilters(app) {
       selectCategory(0);
       setSearchText("");
       setInstallStateFilter(0);
+      setShowUnavailable(false);
     })()`,
   });
 
@@ -880,10 +919,11 @@ async function resetStoreFilters(app) {
       const cat    = await storeProperty(app, "selectedCategoryIndex");
       const search = await storeProperty(app, "searchText");
       const state  = await storeProperty(app, "installStateFilter");
-      if (type !== 0 || cat !== 0 || search !== "" || state !== 0) {
+      const unavail = await storeProperty(app, "showUnavailable");
+      if (type !== 0 || cat !== 0 || search !== "" || state !== 0 || unavail !== false) {
         throw new Error(
           `filters not reset yet (type=${type} cat=${cat} ` +
-          `search="${search}" state=${state})`);
+          `search="${search}" state=${state} showUnavailable=${unavail})`);
       }
     },
     { timeout: 5000, interval: 100, description: "store filters to reset" }
@@ -1489,6 +1529,236 @@ test("sections: every section key has a header label", async (app) => {
     throw new Error(
       "section keys with no repositoryLabels entry (headers would read " +
       "'(unresolved repository)'): " + outcome.replace(/^bad:/, ""));
+  }
+});
+
+async function filterIconColor(app) {
+  const btn = await app.findByProperty("objectName", "pmui.filterButton");
+  if (!btn.matches || btn.matches.length === 0) throw new Error("filter button not found");
+  const res = await app.inspector.send("evaluate", {
+    objectId: btn.matches[0].id, expression: "String(iconColor)",
+  });
+  if (res.error) throw new Error(`evaluate iconColor threw: ${res.error}`);
+  return String(res.result);
+}
+
+// The control itself, not just the backend flag behind it. The icon is a
+// PMUI-local asset, and an untracked/misnamed one fails as a console warning
+// and an invisible button — nothing that any other assertion would catch.
+test("filter: the filter button renders with its icon", async (app) => {
+  await waitForPmuiLoaded(app);
+
+  const btn = await app.findByProperty("objectName", "pmui.filterButton");
+  if (!btn.matches || btn.matches.length === 0) {
+    throw new Error("filter button not found in the header");
+  }
+  const res = await app.inspector.send("evaluate", {
+    objectId: btn.matches[0].id,
+    // iconImage is LogosIconButton's alias for the underlying Image.
+    expression: `(function() {
+      if (!iconImage) return "no-image";
+      return String(iconImage.status) + ":" + String(iconImage.source);
+    })()`,
+  });
+  if (res.error) throw new Error(`evaluate on filter button threw: ${res.error}`);
+  const [status, ...rest] = String(res.result).split(":");
+  const source = rest.join(":");
+  if (!source.endsWith("filter.svg")) {
+    throw new Error(`filter button icon source is "${source}"`);
+  }
+  // Image.Ready === 1; Image.Error === 3.
+  if (status !== "1") {
+    throw new Error(
+      `filter.svg did not load (Image.status=${status}, source=${source}) — ` +
+      "is the asset tracked by git so nix packages it?");
+  }
+});
+
+// The whole chain a user actually drives: button -> menu -> checkable item ->
+// signal -> push* -> proxy. The store-level test below covers the filtering
+// itself; this covers the wiring that exposes it.
+test("filter: the menu toggles showUnavailable", async (app) => {
+  await waitForPmuiLoaded(app);
+  await resetStoreFilters(app);
+
+  const btn = await app.findByProperty("objectName", "pmui.filterButton");
+  if (!btn.matches || btn.matches.length === 0) {
+    throw new Error("filter button not found in the header");
+  }
+  await app.inspector.send("evaluate", {
+    objectId: btn.matches[0].id, expression: "clicked()",
+  });
+
+  const restingColor = await filterIconColor(app);
+
+  await app.click("Show unavailable", { exact: true });
+  await app.waitFor(
+    async () => {
+      const v = await storeProperty(app, "showUnavailable");
+      if (v !== true) throw new Error(`showUnavailable=${v} (expected true)`);
+    },
+    { timeout: 5000, interval: 200, description: "menu item to turn the filter on" }
+  );
+
+  // Active and merely-hovered share a background fill, so the tint is the only
+  // thing distinguishing "filter on" once the cursor leaves. If these match,
+  // an active filter is invisible.
+  const activeColor = await filterIconColor(app);
+  if (activeColor === restingColor) {
+    throw new Error(
+      `filter icon did not change when the filter turned on (both ${activeColor}) — ` +
+      "an active filter would be indistinguishable from an untouched one");
+  }
+
+  await resetStoreFilters(app);
+});
+
+// The reported defect: a checked item painted its tick straight through the
+// label, because LogosMenuItem's label starts at leftPadding and the style's
+// indicator lands at the same x. Geometry, not appearance — the two boxes must
+// not share horizontal space.
+test("filter: the menu's check indicator does not overlap its label", async (app) => {
+  await waitForPmuiLoaded(app);
+  await resetStoreFilters(app);
+  // Checked is the state that regressed; an unchecked item hides the tick.
+  await setStoreShowUnavailable(app, true);
+
+  const btn = await app.findByProperty("objectName", "pmui.filterButton");
+  if (!btn.matches || btn.matches.length === 0) throw new Error("filter button not found");
+  await app.inspector.send("evaluate", {
+    objectId: btn.matches[0].id, expression: "clicked()",
+  });
+
+  const item = await app.findByProperty("objectName", "pmui.showUnavailableItem");
+  if (!item.matches || item.matches.length === 0) {
+    throw new Error("Show unavailable menu item not found");
+  }
+  const res = await app.inspector.send("evaluate", {
+    objectId: item.matches[0].id,
+    expression: `(function() {
+      if (!indicator || !contentItem) return "missing";
+      return [checked, indicator.visible, indicator.x, indicator.width,
+              contentItem.leftPadding].join(",");
+    })()`,
+  });
+  if (res.error) throw new Error(`evaluate on menu item threw: ${res.error}`);
+  if (res.result === "missing") throw new Error("menu item has no indicator/contentItem");
+
+  const [checked, visible, x, width, leftPadding] = String(res.result).split(",");
+  if (checked !== "true" || visible !== "true") {
+    throw new Error(`indicator not shown while checked (checked=${checked} visible=${visible})`);
+  }
+  const indicatorRight = Number(x) + Number(width);
+  if (!(indicatorRight <= Number(leftPadding))) {
+    throw new Error(
+      `check indicator overlaps the label: indicator ends at ${indicatorRight}, ` +
+      `label starts at ${leftPadding}`);
+  }
+
+  await resetStoreFilters(app);
+});
+
+// The escape hatch. Availability is its own axis, so turning it on must ADD
+// rows without disturbing the install-state tab the user is on.
+test("filter: showUnavailable adds back the rows the list hides", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  await resetStoreFilters(app);
+
+  const off = await storeProperty(app, "totalCount");
+  const stateBefore = await storeProperty(app, "installStateFilter");
+
+  await setStoreShowUnavailable(app, true);
+  const on = await storeProperty(app, "totalCount");
+  const stateAfter = await storeProperty(app, "installStateFilter");
+
+  if (on < off) {
+    throw new Error(`showUnavailable REMOVED rows: ${off} -> ${on}`);
+  }
+  if (stateAfter !== stateBefore) {
+    throw new Error(
+      `showUnavailable disturbed the install-state tab: ${stateBefore} -> ${stateAfter}`);
+  }
+
+  // And back off restores exactly the original set — the two axes compose
+  // rather than one clobbering the other.
+  await setStoreShowUnavailable(app, false);
+  const backOff = await storeProperty(app, "totalCount");
+  if (backOff !== off) {
+    throw new Error(`toggling showUnavailable off did not restore: ${off} -> ${backOff}`);
+  }
+});
+
+// ── Platform availability ──────────────────────────────────────────────────
+//
+// Catalogs are published per OS/arch AND per build flavor, so on many hosts
+// most of the catalog is packages that host cannot install. PackagesFilterProxy
+// drops them; `hasInstallableVersion` is the whole-row flag it filters on.
+//
+// This guards the proxy's role wiring specifically. The rule itself is unit
+// tested against QVariantMaps (tests/test_package_rows.cpp); what can only
+// break here is the role-name lookup, which fails silently — an unresolved
+// role filters nothing and every other test still passes.
+test("availability: no listed row is uninstallable on this host", async (app) => {
+  await waitForPmuiLoaded(app);
+  await app.waitFor(
+    async () => {
+      const loading = await storeProperty(app, "isLoading");
+      if (loading) throw new Error("still loading");
+    },
+    { timeout: 20000, interval: 500, description: "catalog to finish loading" }
+  );
+  // resetStoreFilters leaves showUnavailable false, which is the state this
+  // invariant is about: with it ON the uninstallable rows are meant to be here.
+  await resetStoreFilters(app);
+  const totalCount = await storeProperty(app, "totalCount");
+  if (!totalCount || totalCount === 0) return;
+
+  const roleIds = await fetchPackageRoleIds(app);
+  if (!roleIds || typeof roleIds !== "object") {
+    throw new Error(`packageRoleIds unavailable on BackendStore: ${JSON.stringify(roleIds)}`);
+  }
+  const availRole = roleIds.hasInstallableVersion;
+  const nameRole  = roleIds.moduleName;
+  const instRole  = roleIds.installedVersion;
+  const typeRole  = roleIds.installType;
+  if (typeof availRole !== "number") {
+    throw new Error(
+      "packageRoleIds is missing hasInstallableVersion — the proxy resolves " +
+      "the same role by name, so it is filtering nothing: " + JSON.stringify(roleIds));
+  }
+
+  const outcome = await inspectPackagesModel(app, `
+    var AVAIL = ${availRole};
+    var NAME = ${typeof nameRole === "number" ? nameRole : -1};
+    var INST = ${typeof instRole === "number" ? instRole : -1};
+    var ITYPE = ${typeof typeRole === "number" ? typeRole : -1};
+    var offenders = [];
+    for (var i = 0; i < m.rowCount(); ++i) {
+      var idx = m.index(i, 0);
+      if (m.data(idx, AVAIL) === true) continue;
+      // Installed rows are exempt: the catalog can drop our variant after the
+      // fact, and hiding the row would take its Uninstall button with it.
+      var installed =
+        (INST >= 0 && String(m.data(idx, INST) || "").length > 0)
+        || (ITYPE >= 0 && String(m.data(idx, ITYPE) || "").length > 0);
+      if (installed) continue;
+      offenders.push(NAME >= 0 ? String(m.data(idx, NAME) || "?") : "?");
+    }
+    return offenders.length === 0 ? "ok" : "bad:" + offenders.join(", ");
+  `);
+
+  if (outcome === null) throw new Error("packagesModel is null on BackendStore");
+  if (outcome !== "ok") {
+    throw new Error(
+      "rows this host cannot install are still listed: " +
+      outcome.replace(/^bad:/, ""));
   }
 });
 

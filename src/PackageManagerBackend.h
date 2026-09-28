@@ -152,9 +152,10 @@ private:
     // (index 0 / out-of-range / "All" → empty filter).
     void applyCategoryFilter();
 
-    // Rebuild availableTypes from m_allPackagesCache ("All" + sorted distinct
+    // Rebuild availableTypes from the built rows ("All" + sorted distinct
     // types). Clamps selectedTypeIndex to 0 if the prior pick is gone.
-    void recomputeAvailableTypes();
+    void recomputeAvailableTypes(const QList<QVariantMap>& rows);
+    void recomputeCategories(const QList<QVariantMap>& rows);
 
     // Push availableTypes[selectedTypeIndex] into the filter proxy
     // (index 0 / out-of-range / "All" → empty filter).

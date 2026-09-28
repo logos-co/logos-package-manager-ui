@@ -330,6 +330,8 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
                          : classifyNotAvailable(offeredVariants, validVariants));
     // The newest version may be one the download source cannot serve.
     rowaction::applyPickedSourceAvailability(pkg, 0);
+    pkg["hasInstallableVersion"] =
+        rowaction::hasInstallableVersion(variantAvailable, availableVersions);
 
     // ── Action-column inputs ────────────────────────────────────────
     // `rowAction` is the per-row primary action, resolved against the
@@ -411,6 +413,7 @@ QVariantMap buildLocalPackageRow(const QVariantMap& installed)
     pkg["errorMessage"]     = QString();
     pkg["isVariantAvailable"]   = true;
     pkg["notAvailableReason"]   = static_cast<int>(PackageTypes::Available);
+    pkg["hasInstallableVersion"] = true;
     pkg["rowAction"]        = static_cast<int>(PackageTypes::NoOp);
     pkg["updateAvailable"]  = false;
     // From the installed record: a Local row is the only surface a package

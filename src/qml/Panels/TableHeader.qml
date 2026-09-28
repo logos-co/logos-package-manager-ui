@@ -30,9 +30,16 @@ GridLayout {
     // sees exactly what's about to run before "Run Actions" fires.
     property var actionSummary: ({})
 
-    // Install-state tab: 0 = All, 1 = Installed, 2 = Not Installed.
+    // Install-state tab: 0 = All, 1 = Installed, 2 = Not Installed. "All" is
+    // all install states — availability is the separate filter below, so it
+    // stays accurate.
     property int stateIndex: 0
     readonly property alias stateTabs: tabs
+
+    // Availability filter. False (the default) lists only what this host can
+    // install; the filter menu is where the rest can be asked for.
+    property bool showUnavailable: false
+    signal showUnavailableRequested(bool show)
 
     signal reloadClicked()
     // Click on "Install Local Package". The parent QML owns the file picker —
@@ -90,6 +97,74 @@ GridLayout {
         spacing: Theme.spacing.medium
 
         Item { Layout.fillWidth: root.columns === 2 }
+
+        LogosIconButton {
+            id: filterButton
+            objectName: "pmui.filterButton"
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: 40
+            Layout.preferredHeight: 40
+            size: 40
+            iconSize: 16
+            iconSource: Qt.resolvedUrl("../images/filter.svg")
+            iconColor: root.showUnavailable
+                       ? Theme.palette.primary
+                       : Theme.palette.text
+            onClicked: filterMenu.popupUnder(filterButton)
+
+            background: Rectangle {
+                radius: Theme.spacing.radiusLarge
+                color: (root.showUnavailable || filterButton.hovered
+                        || filterButton.pressed || filterButton.activeFocus)
+                       ? Theme.palette.backgroundMuted
+                       : "transparent"
+            }
+
+            LogosToolTip {
+                text: root.showUnavailable
+                      ? qsTr("Filters: showing unavailable")
+                      : qsTr("Filter packages")
+                placement: LogosToolTip.Bottom
+                visible: filterButton.hovered && !filterMenu.visible
+            }
+        }
+
+        LogosMenu {
+            id: filterMenu
+            objectName: "pmui.filterMenu"
+
+            LogosMenuItem {
+                id: showUnavailableItem
+                objectName: "pmui.showUnavailableItem"
+                readonly property int indicatorSize: 14
+                text: qsTr("Show unavailable")
+                checkable: true
+                checked: root.showUnavailable
+                onTriggered: root.showUnavailableRequested(checked)
+
+                indicator: LogosIcon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: Theme.spacing.medium
+                    width: showUnavailableItem.indicatorSize
+                    height: showUnavailableItem.indicatorSize
+                    visible: showUnavailableItem.checked
+                    source: LogosIcons.check
+                    color: Theme.palette.text
+                }
+
+                contentItem: LogosText {
+                    leftPadding: Theme.spacing.medium
+                                 + showUnavailableItem.indicatorSize
+                                 + Theme.spacing.small
+                    rightPadding: Theme.spacing.medium
+                    verticalAlignment: Text.AlignVCenter
+                    text: showUnavailableItem.text
+                    color: showUnavailableItem.enabled
+                           ? Theme.palette.text
+                           : Theme.palette.textMuted
+                }
+            }
+        }
 
         LogosButton {
             id: installLocalBtn

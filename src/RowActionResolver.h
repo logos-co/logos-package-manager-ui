@@ -154,4 +154,30 @@ inline void applyPickedSourceAvailability(QVariantMap& pkg, int pickedIndex) {
     }
 }
 
+inline bool hasInstallableVersion(bool variantAvailable,
+                                  const QVariantList& availableVersions)
+{
+    if (!variantAvailable) return false;
+    for (const QVariant& v : availableVersions) {
+        if (v.toMap().value(QStringLiteral("sourceAvailable"), true).toBool())
+            return true;
+    }
+    return false;
+}
+
+inline bool isUnavailableOnThisPlatform(bool hasInstallableVersion, bool isInstalled)
+{
+    if (isInstalled) return false;
+    return !hasInstallableVersion;
+}
+
+inline bool isUnavailableOnThisPlatform(const QVariantMap& pkg)
+{
+    const bool isInstalled = !pkg.value("installedVersion").toString().isEmpty()
+                          || !pkg.value("installedHash").toString().isEmpty()
+                          || !pkg.value("installType").toString().isEmpty();
+    return isUnavailableOnThisPlatform(
+        pkg.value("hasInstallableVersion", true).toBool(), isInstalled);
+}
+
 } // namespace rowaction

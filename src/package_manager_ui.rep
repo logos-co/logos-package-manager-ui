@@ -90,9 +90,12 @@ class PackageManagerUi
 
     PROP(QString searchText)
     PROP(int installStateFilter)
+    PROP(bool showUnavailable)
     PROP(int pageSize)
     PROP(int currentPage)
     PROP(int totalCount READONLY)
+    PROP(int availableHereCount READONLY)
+    PROP(QString hostVariant READONLY)
     PROP(int repositoryCount READONLY)
     PROP(QVariantMap repositoryLabels READONLY)
     PROP(QString sortRole)

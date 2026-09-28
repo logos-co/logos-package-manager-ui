@@ -145,7 +145,8 @@ public:
         DownloadReceivedRole,
         DownloadTotalRole,
         // PackageTypes::DownloadSource enum int.
-        DownloadSourceRole
+        DownloadSourceRole,
+        HasInstallableVersionRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);
