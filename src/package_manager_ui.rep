@@ -148,8 +148,8 @@ class PackageManagerUi
     SLOT(QString displayNameForModule(QString moduleName))
 
     // ── Confirmed actions ─────────────────────────────────────────────────
-    SLOT(void performInstall(QString name, QString version, QString repositoryUrl))
-    SLOT(void performUpgrade(QString moduleName, QString version, int mode, QString repositoryUrl))
+    SLOT(void performInstall(QString name, QString version, QString repositoryUrl, QVariantList optionalPackages))
+    SLOT(void performUpgrade(QString moduleName, QString version, int mode, QString repositoryUrl, QVariantList optionalPackages))
     SLOT(void performUninstall(QStringList names))
 
     // Host refused, was unreachable, cancelled, or never answered. Called for

@@ -85,7 +85,7 @@ QtObject {
             }
             logos.request(intent, params, function (result) {
                 if (!store.backend) return
-                if (result && result.ok) { onApproved(); return }
+                if (result && result.ok) { onApproved(result.data || {}); return }
                 store.backend.reportActionFailed(
                     names, result ? (result.error || "failed") : "failed")
             })
@@ -126,8 +126,9 @@ QtObject {
             if (!r.name) return
             confirm("basecamp.packages.confirm_install", [r.name],
                 { name: r.name, version: r.version, repositoryUrl: r.repositoryUrl },
-                function () {
-                    store.backend.performInstall(r.name, r.version, r.repositoryUrl)
+                function (data) {
+                    store.backend.performInstall(r.name, r.version, r.repositoryUrl,
+                                                 data.optionalPackages || [])
                 })
         }
 
@@ -136,9 +137,9 @@ QtObject {
             confirm("basecamp.packages.confirm_upgrade", [r.moduleName],
                 { name: r.moduleName, version: r.version, mode: mode,
                   repositoryUrl: r.repositoryUrl },
-                function () {
+                function (data) {
                     store.backend.performUpgrade(r.moduleName, r.version, mode,
-                                                 r.repositoryUrl)
+                                                 r.repositoryUrl, data.optionalPackages || [])
                 })
         }
 

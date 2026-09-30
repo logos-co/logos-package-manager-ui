@@ -25,7 +25,7 @@ constexpr int DOWNLOAD_TIMEOUT_MS = 300000; // 5 minutes
 // repositoryUrl / version fields are omitted entirely so the resolver
 // falls back to its default cross-repo / newest-version behaviour
 // where the caller didn't pin one.
-QString PackageManagerBackend::buildDepsJson(const QList<PackageInstallSpec>& specs)
+QString PackageManagerBackend::buildDepsJson(const QList<PackageInstallSpec>& specs, const QVariantList& optionalPackages)
 {
     QJsonArray arr;
     for (const PackageInstallSpec& s : specs) {
@@ -37,6 +37,8 @@ QString PackageManagerBackend::buildDepsJson(const QList<PackageInstallSpec>& sp
             obj.insert(QStringLiteral("version"), s.version);
         arr.append(obj);
     }
+    for (const QVariant& request : optionalPackages)
+        arr.append(QJsonObject::fromVariantMap(request.toMap()));
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 }
 
@@ -965,7 +967,8 @@ void PackageManagerBackend::runSelectedActions()
 void PackageManagerBackend::installSinglePackageAsync(const QString& packageName,
                                                        const QString& repoUrl,
                                                        const QString& version,
-                                                       bool includeDeps)
+                                                       bool includeDeps,
+                                                       const QVariantList& optionalPackages)
 {
     if (!bothClientsReady()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
@@ -1002,7 +1005,7 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     // restricted to a safe charset), but repo URLs are user-provided.
     PackageInstallSpec spec; spec.name = packageName;
     spec.repositoryUrl = repoUrl; spec.version = version;
-    const QString depsJson = buildDepsJson({spec});
+    const QString depsJson = buildDepsJson({spec}, optionalPackages);
     LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
@@ -1235,7 +1238,7 @@ QString PackageManagerBackend::buildInstalledPackagesJson() const
 
 
 void PackageManagerBackend::performInstall(QString name, QString version,
-                                           QString repositoryUrl)
+                                           QString repositoryUrl, QVariantList optionalPackages)
 {
     // Local .lgx: the file is already on disk, nothing to download.
     if (m_pendingLocalInstalls.contains(name)) {
@@ -1252,16 +1255,17 @@ void PackageManagerBackend::performInstall(QString name, QString version,
 
     // Deps are always included — the host dialog is confirm-or-cancel, with no
     // "just the package" split.
-    installSinglePackageAsync(name, repositoryUrl, version, /*includeDeps=*/true);
+    installSinglePackageAsync(name, repositoryUrl, version, /*includeDeps=*/true, optionalPackages);
 }
 
 void PackageManagerBackend::performUpgrade(QString moduleName, QString version, int mode,
-                                           QString repositoryUrl)
+                                           QString repositoryUrl, QVariantList optionalPackages)
 {
     // The repo url used to be stashed during the dep preview; QML carries it
     // through the confirmation now, so there is nothing to look up.
     PendingUpgradeMeta meta;
     meta.repositoryUrl = repositoryUrl;
+    meta.optionalPackages = optionalPackages;
     m_pendingUpgradeByModule.insert(moduleName, meta);
 
     if (!packageManagerReady()) {
@@ -1538,7 +1542,7 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     spec.name          = displayName;
     spec.repositoryUrl = meta.repositoryUrl;  // empty = no pin (bare upgrade)
     spec.version       = releaseTag;          // empty = newest matching
-    const QString depsJson = buildDepsJson({spec});
+    const QString depsJson = buildDepsJson({spec}, meta.optionalPackages);
 
     LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
