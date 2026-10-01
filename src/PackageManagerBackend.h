@@ -61,9 +61,9 @@ public slots:
 
     // Run an action the host approved. QML calls these from the intent
     // callback; the backend itself knows nothing about intents.
-    void performInstall(QString name, QString version, QString repositoryUrl) override;
+    void performInstall(QString name, QString version, QString repositoryUrl, QVariantList optionalPackages) override;
     void performUpgrade(QString moduleName, QString version, int mode,
-                        QString repositoryUrl) override;
+                        QString repositoryUrl, QVariantList optionalPackages) override;
     void performUninstall(QStringList names) override;
     void reportActionFailed(QStringList names, QString error) override;
 
@@ -109,7 +109,8 @@ private:
     void installSinglePackageAsync(const QString& packageName,
                                    const QString& repoUrl = QString(),
                                    const QString& version = QString(),
-                                   bool includeDeps = true);
+                                   bool includeDeps = true,
+                                   const QVariantList& optionalPackages = {});
 
     // Sequential per-row install. Bulk path uses installNextPackage,
     // which locks isInstalling — per-row stays unlocked so concurrent
@@ -224,7 +225,7 @@ private:
     // user-provided. Empty repositoryUrl / version fields are omitted
     // entirely so the resolver falls back to its default behaviour for
     // unpinned entries.
-    static QString buildDepsJson(const QList<PackageInstallSpec>& specs);
+    static QString buildDepsJson(const QList<PackageInstallSpec>& specs, const QVariantList& optionalPackages = {});
 
     // Proxy stack: raw rows → filter (search/state/sort) → paging (page slice;
     // exposed via the `packages` Q_PROPERTY).
@@ -259,6 +260,7 @@ private:
     // Drained on use in onUpgradeUninstallDone, keyed by moduleName.
     struct PendingUpgradeMeta {
         QString repositoryUrl;
+        QVariantList optionalPackages;
     };
     QHash<QString, PendingUpgradeMeta> m_pendingUpgradeByModule;
 
