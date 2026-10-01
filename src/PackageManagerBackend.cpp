@@ -1,4 +1,5 @@
 #include "PackageManagerBackend.h"
+#include "InstallSequence.h"
 #include <algorithm>
 #include <QDebug>
 #include <QFileInfo>
@@ -25,18 +26,6 @@ constexpr int DOWNLOAD_TIMEOUT_MS = 300000; // 5 minutes
 // repositoryUrl / version fields are omitted entirely so the resolver
 // falls back to its default cross-repo / newest-version behaviour
 // where the caller didn't pin one.
-// Marks rows of host-selected optional packages: their failure must not stop the rest.
-static QVariantList tagOptionalRows(QVariantList rows, const QVariantList& optionalPackages)
-{
-    QSet<QString> names;
-    for (const QVariant& request : optionalPackages) names.insert(request.toMap().value("name").toString());
-    for (QVariant& row : rows) {
-        QVariantMap m = row.toMap();
-        if (names.contains(m.value("name").toString())) { m["optional"] = true; row = m; }
-    }
-    return rows;
-}
-
 QString PackageManagerBackend::buildDepsJson(const QList<PackageInstallSpec>& specs, const QVariantList& optionalPackages)
 {
     QJsonArray arr;
@@ -1023,7 +1012,7 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
         [self, packageName, includeDeps, optionalPackages](QVariantList results) {
             if (!self) return;
-            results = tagOptionalRows(results, optionalPackages);
+            results = install_sequence::tagOptionalRows(results, optionalPackages);
             // Filter to top-level entries when the caller asked for
             // "just the package". The resolver may still have
             // downloaded transitives (the request goes out before this
@@ -1070,39 +1059,27 @@ void PackageManagerBackend::installResultsSequential(const QVariantList& results
     // on the top-level name so the UI shows the user's clicked row as
     // the one being acted on, even when the loop is iterating
     // transitive deps in between.
-    if (index >= results.size()) return;
-    const QVariantMap dl = results[index].toMap();
-    const QString depName = dl.value("name").toString();
-    const QString depRepoUrl = dl.value("repositoryUrl").toString();
     QPointer<PackageManagerBackend> self(this);
-    installOnePackage(dl,
-        [self, results, topLevelName, depName, depRepoUrl, index,
-         optional = dl.value("optional").toBool()](bool success, const QString& err) {
+    install_sequence::installSequentially(results,
+        [self](const QVariantMap& row, install_sequence::Done done) {
+            if (self) self->installOnePackage(row, done);
+        },
+        [self, results, topLevelName](int index, bool success, bool proceed, const QString& err) {
             if (!self) return;
+            const QVariantMap dl = results[index].toMap();
+            const QString depName = dl.value("name").toString();
             if (success) {
                 self->m_packageModel->updatePackageInstallation(
                     depName, static_cast<int>(PackageTypes::Installed));
             } else {
-                // Failure attribution: the model's row for the
-                // failing entry takes the Failed status. The progress
-                // event also names the top-level so the UI's
-                // "Installing X…" banner flips to "X failed because
-                // dep Y failed" once we surface that on the QML side.
+                // The failing entry's row takes the Failed status. Every entry
+                // was marked Installing up front, so when the batch stops here
+                // the rest revert to NotInstalled rather than stay Installing.
                 self->m_packageModel->updateRowInstallation(
-                    depName, depRepoUrl,
+                    depName, dl.value("repositoryUrl").toString(),
                     static_cast<int>(PackageTypes::Failed), err);
-                // Earlier we marked EVERY entry in `results` as
-                // Installing so the row badges reflect the in-flight
-                // batch immediately. The loop stops here on failure;
-                // revert remaining entries to NotInstalled so they
-                // don't stay stuck on Installing forever (the
-                // subsequent refreshPackages via the debounce timer
-                // would eventually correct them, but the window between
-                // failure and refresh would be visibly wrong).
-                if (!optional) self->revertPendingEntries(results, index + 1);
+                if (!proceed) self->revertPendingEntries(results, index + 1);
             }
-            // A failed optional keeps its own Failed row; the rest still installs.
-            const bool proceed = success || optional;
             const bool isLast = (index + 1) >= results.size();
             emit self->installationProgressUpdated(
                 proceed ? (isLast ? static_cast<int>(PackageTypes::Completed)
@@ -1110,9 +1087,7 @@ void PackageManagerBackend::installResultsSequential(const QVariantList& results
                         : static_cast<int>(PackageTypes::ProgressFailed),
                 topLevelName, index + 1, results.size(), proceed,
                 success ? QString() : err);
-            if (proceed && !isLast)
-                self->installResultsSequential(results, topLevelName, index + 1);
-        });
+        }, index);
 }
 
 void PackageManagerBackend::markEntriesInstalling(const QVariantList& entries)
@@ -1565,7 +1540,7 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
         [self, displayName, mode, optionalPackages = meta.optionalPackages](QVariantList results) {
             if (!self) return;
-            results = tagOptionalRows(results, optionalPackages);
+            results = install_sequence::tagOptionalRows(results, optionalPackages);
             // Deps are always included — the host dialog is confirm-or-cancel,
             // with no "just the package" split to honour.
             QVariantList toInstall = results;
