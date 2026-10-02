@@ -195,10 +195,22 @@ void PackageManagerBackend::finishInitialSetup(int attempt)
     }
     m_initialSetupComplete = true;
 
-    subscribePackageManagerRefreshEvents();
-    subscribePackageDownloaderEvents();
+    // package_downloader does nothing until a consumer starts it. Everything
+    // below calls into it, so it waits for the answer, whatever it is: one
+    // that predates start() refuses the method and is running already.
+    LogosModules& logos = modules();
+    QPointer<PackageManagerBackend> self(this);
+    logos.package_downloader.startAsync([self](QVariantMap r) {
+        if (!self) return;
+        if (!r.value(QStringLiteral("success")).toBool())
+            qWarning() << "package_downloader.start did not succeed:"
+                       << r.value(QStringLiteral("error")).toString();
 
-    refreshCatalog();
+        self->subscribePackageManagerRefreshEvents();
+        self->subscribePackageDownloaderEvents();
+
+        self->refreshCatalog();
+    });
 }
 
 

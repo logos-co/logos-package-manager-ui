@@ -1,6 +1,6 @@
 # logos-package-manager-ui
 
-A Qt/QML UI plugin that browses **multi-repository** module catalogs and lets users install, upgrade, downgrade, sidegrade, and uninstall packages. The catalog comes from the [`package_downloader`](https://github.com/logos-co/logos-package-downloader-module) module (merged across every configured repository); the UI also manages the repository list (add / remove / enable / disable).
+A Qt/QML UI plugin that browses **multi-repository** module catalogs and lets users install, upgrade, downgrade, sidegrade, and uninstall packages. The catalog comes from the [`package_downloader`](https://github.com/logos-co/logos-package-downloader-module) module (merged across every configured repository); the UI also manages the repository list (add / remove / enable / disable). `package_downloader` does nothing until a consumer starts it, so the view calls its `start()` once both modules are connected, before its first catalog load.
 
 > 📖 Catalog formats (`logos-repo.json` / `index.json`):
 > [logos-modules-release-tool/docs/catalog-format.md](https://github.com/logos-co/logos-modules-release-tool/blob/main/docs/catalog-format.md).
