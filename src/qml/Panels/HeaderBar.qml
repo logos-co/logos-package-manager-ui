@@ -42,7 +42,7 @@ RowLayout {
         Layout.minimumWidth: 200
         text: root.searchText
         placeholderText: qsTr("Search packages…")
-        shortcutHint: "⌘K"
+        shortcutHint: searchShortcut.nativeText
         onTextChanged: {
             if (text !== root.searchText)
                 root.searchEdited(text)
@@ -50,6 +50,7 @@ RowLayout {
     }
 
     Shortcut {
+        id: searchShortcut
         sequence: "Ctrl+K"
         context: Qt.WindowShortcut
         onActivated: {
