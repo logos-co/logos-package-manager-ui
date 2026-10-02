@@ -257,6 +257,24 @@ test("search: clearing search resets totalCount to its pre-filter value", async 
   );
 }, { skip: ["offscreen"] });
 
+// A hardcoded "⌘K" chip drew tofu on Windows and named the wrong key on Linux.
+test("search: the shortcut chip shows the platform's text (⌘K on macOS, Ctrl+K elsewhere)", async (app) => {
+  await waitForPmuiLoaded(app);
+
+  // The bar's inner text field matches the placeholder too; only the bar has the hint.
+  const search = await app.findByProperty("placeholderText", "Search packages…");
+  const hints = [];
+  for (const m of search.matches ?? []) {
+    const res = await app.getProperties(m.id);
+    const prop = res.properties?.find((p) => p.name === "shortcutHint");
+    if (prop) hints.push(prop.value);
+  }
+  const expected = process.platform === "darwin" ? "⌘K" : "Ctrl+K";
+  if (hints.length !== 1 || hints[0] !== expected) {
+    throw new Error(`shortcutHint=${JSON.stringify(hints)} (expected ["${expected}"])`);
+  }
+});
+
 test("filter tabs: All/Installed/Not Installed labels render", async (app) => {
   await waitForPmuiLoaded(app);
   await app.expectTexts(["All", "Installed", "Not Installed"]);
