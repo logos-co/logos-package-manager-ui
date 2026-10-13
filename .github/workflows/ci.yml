@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: logos-co/setup-nix-cache-action@v1
       # The uncached integration closure has exhausted the hosted runner.
-      - run: nix build .#integration-test -L --max-jobs 2 --cores 2
+      - run: nix run .#ui-tests --max-jobs 2 --cores 2
 
   integration-test-macos:
     name: Agentic UI tests (macos-latest)
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: logos-co/setup-nix-cache-action@v1
-      - run: nix build .#integration-test -L
+      - run: nix run .#ui-tests
 
   unit-tests-linux:
     name: Unit tests (ubuntu-latest)

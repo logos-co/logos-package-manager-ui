@@ -84,15 +84,15 @@
       module = logos-module-builder.lib.mkLogosQmlModule shared;
 
       # Unit tests for the pure row-building transform. mkLogosQmlModule only
-      # picks up tests/*.mjs (the integration suite), and that suite's fixture
-      # can never reach the Local-row path: logos-standalone-app never sets
-      # package_manager's user directory, so nothing is ever installed there.
+      # picks up tests/*.mjs (`nix run .#ui-tests`), and that suite can never
+      # reach the Local-row path: Basecamp's standalone mode ignores the user
+      # directory's modules, so nothing installed there is ever listed.
       unitTests = logos-module-builder.lib.mkLogosModuleTests
         (shared // { testDir = ./tests; });
     in
     module // {
       checks = builtins.mapAttrs
-        (system: checks: checks // (unitTests.${system} or {}))
-        (module.checks or {});
+        (system: tests: ((module.checks or {}).${system} or {}) // tests)
+        unitTests;
     };
 }
