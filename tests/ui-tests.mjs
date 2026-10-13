@@ -19,6 +19,18 @@ async function waitForPmuiLoaded(app, timeout = 15000) {
   );
 }
 
+// The view mounts before the catalog has loaded, and isLoading is what gates
+// the controls and the last-set state (hostVariant). Wait for it before
+// asserting on either.
+async function waitForCatalogLoaded(app, timeout = 20000) {
+  await app.waitFor(
+    async () => {
+      if (await storeProperty(app, "isLoading")) throw new Error("still loading");
+    },
+    { timeout, interval: 500, description: "catalog to finish loading" }
+  );
+}
+
 // findByType doesn't match QML-declared types (Qt mangles them as
 // <Type>_QMLTYPE_<n>). Anchor lookups on the QObject objectName instead —
 // BackendStore.qml sets objectName: "pmui.BackendStore".
@@ -58,6 +70,7 @@ test("smoke: top-bar action labels render", async (app) => {
 
 test("structure: install-local button is present and enabled", async (app) => {
   await waitForPmuiLoaded(app);
+  await waitForCatalogLoaded(app);
 
   const res = await app.findByProperty("objectName", "pmui.installLocalButton");
   if (res.error || !res.matches || res.matches.length === 0) {
@@ -156,6 +169,7 @@ test("structure: table headers render", async (app) => {
 
 test("store: exposes the documented properties with sane defaults", async (app) => {
   await waitForPmuiLoaded(app);
+  await waitForCatalogLoaded(app);
 
   // Values depend on fixture; only types and existence are pinned here.
   const isLoading = await storeProperty(app, "isLoading");
