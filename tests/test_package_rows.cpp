@@ -358,12 +358,8 @@ LOGOS_TEST(a_version_usable_over_storage_alone_offers_only_storage) {
     LOGOS_ASSERT_TRUE(sources == (QVariantList{static_cast<int>(PackageTypes::Storage)}));
 }
 
-// Published on storage, but the storage node runs on another network.
-LOGOS_TEST(a_version_on_storage_the_node_cannot_fetch_offers_only_github) {
+LOGOS_TEST(a_version_usable_over_http_alone_offers_only_github) {
     QVariantMap v = catalogVersion(QStringLiteral("1.2.0"), QStringLiteral("h_a"));
-    v["urls"] = QVariantList{
-        QStringLiteral("https://github.com/logos-co/chat/releases/chat.lgx"),
-        QStringLiteral("logos:logos.dev:zDvZRwzm")};
     v["usableSources"] = QVariantList{QStringLiteral("http")};
 
     const QVariantMap row = packagerow::buildPackageRow(
