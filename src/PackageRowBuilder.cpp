@@ -200,8 +200,6 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         entry["publisherRef"] = vm.value("publisherRef").toString();
         entry["url"]          = vm.value("url").toString();
 
-        // The downloader keeps "logos" only when the storage node runs on the
-        // network of the version's `logos:` URL.
         const QStringList usable = vm.value("usableSources").toStringList();
         QVariantList sources;
 
