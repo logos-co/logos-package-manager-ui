@@ -291,6 +291,7 @@ LogosTable {
         id: downloadSourceCellComponent
         Item {
             id: sourceCell
+            objectName: "pmui.sourceCell." + (rowItem ? rowItem.name : "")
             readonly property int downloaded: rowItem ? rowItem.downloadSource
                                                       : PackageManagerUi.NoSource
 
@@ -393,6 +394,7 @@ LogosTable {
                 anchors.centerIn: parent
                 spacing: 8
                 Repeater {
+                    objectName: "pmui.sourceIcons." + (rowItem ? rowItem.name : "")
                     model: sourceCell.shownSources()
                     Item {
                         id: sourceMark
