@@ -149,7 +149,8 @@ public:
         HasInstallableVersionRole,
         // Where an install's bytes come from now: "logos" (Logos Storage),
         // "http", or "" before the downloader says.
-        DownloadTransportRole
+        DownloadTransportRole,
+        QueuedRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);
@@ -174,6 +175,11 @@ public:
     // and Failed. Fanning those across repos lights up every copy of the
     // row, and it defeats updateDownloadProgress's Installing filter, so a
     // download from one repo animates the other repo's row too.
+    // The row's install waits behind another: Installing, and queued until
+    // any status update for it (the install starting is one).
+    void queueRowInstallation(const QString& packageName, const QString& repositoryUrl);
+    bool isRowQueued(const QString& packageName, const QString& repositoryUrl) const;
+
     void updateRowInstallation(const QString& packageName,
                                const QString& repositoryUrl,
                                int status,

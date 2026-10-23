@@ -14,8 +14,9 @@ import Logos.PackageManagerUi 1.0
 // the matching backend slot.
 //
 // Two states are computed independently of `rowAction`:
-//   * `installStatus === Installing` → the pill labels itself
-//     "Installing…" and stops being clickable, regardless of what action
+//   * `installStatus === Installing` → the pill names the stage, in the App
+//     Manager's words (Queued, Finding peers…, Downloading…, bytes,
+//     Installing…) and stops being clickable, regardless of what action
 //     would otherwise be runnable. The transient state isn't a RowAction
 //     value (see PackageTypes::RowAction comment).
 //   * `rowAction === NotAvailable` → not clickable, tooltip carries the
@@ -41,6 +42,8 @@ Control {
                                              : PackageManagerUi.NoOp
     readonly property int installStatus: modelData ? (modelData.installStatus | 0) : 0
     readonly property bool installing: installStatus === PackageManagerUi.Installing
+    // Waiting behind another install: nothing of its own has started.
+    readonly property bool queued: installing && !!modelData && modelData.queued === true
     readonly property bool runnable: !installing
                                       && action !== PackageManagerUi.NoOp
                                       && action !== PackageManagerUi.NotAvailable
@@ -55,6 +58,10 @@ Control {
     readonly property bool findingPeers: installing && !downloadDone
                                          && downloadReceived <= 0
                                          && modelData && modelData.downloadTransport === "logos"
+    // Over HTTP and no byte yet: the transfer has begun, nothing has arrived.
+    readonly property bool downloadStarted: installing && !downloadDone
+                                            && downloadReceived <= 0
+                                            && !!modelData && modelData.downloadTransport === "http"
     // Installing, but this package's own download has not begun: another
     // download is still running, or its dependencies come first. The first
     // sample of its own download names the transport.
@@ -109,8 +116,10 @@ Control {
             if (root.showProgress) {
                 return d.progressLabel(root.downloadReceived, root.downloadTotal)
             }
+            // The words the App Manager's package rows use for the same stages.
+            if (root.queued || root.waitingToDownload) return qsTr("Queued")
             if (root.findingPeers) return qsTr("Finding peers…")
-            if (root.waitingToDownload) return qsTr("Waiting…")
+            if (root.downloadStarted) return qsTr("Downloading…")
             if (installing) return qsTr("Installing…")
             // Verb only. The version it would install is one hover away in
             // the tooltip, and the Installed / Available columns carry the

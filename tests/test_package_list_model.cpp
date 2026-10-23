@@ -72,3 +72,39 @@ LOGOS_TEST(the_transport_is_cleared_when_the_install_ends) {
 
     LOGOS_ASSERT_EQ(transportOf(model).toStdString(), std::string());
 }
+
+// Waiting behind another install: the pill says "Queued" until its own
+// install starts.
+LOGOS_TEST(a_queued_row_is_installing_and_queued) {
+    PackageListModel model;
+    QVariantMap row;
+    row["name"] = QStringLiteral("blockchain_ui");
+    row["repositoryUrl"] = kRepo;
+    row["installStatus"] = static_cast<int>(PackageTypes::NotInstalled);
+    model.setPackages({row});
+
+    model.queueRowInstallation(QStringLiteral("blockchain_ui"), kRepo);
+
+    const QModelIndex mi = model.index(0);
+    LOGOS_ASSERT_EQ(model.data(mi, PackageListModel::InstallStatusRole).toInt(),
+                    static_cast<int>(PackageTypes::Installing));
+    LOGOS_ASSERT_TRUE(model.data(mi, PackageListModel::QueuedRole).toBool());
+    LOGOS_ASSERT_TRUE(model.isRowQueued(QStringLiteral("blockchain_ui"), kRepo));
+}
+
+// Its install starting is a status update: it is no longer queued.
+LOGOS_TEST(a_queued_row_stops_being_queued_when_its_install_starts) {
+    PackageListModel model;
+    QVariantMap row;
+    row["name"] = QStringLiteral("blockchain_ui");
+    row["repositoryUrl"] = kRepo;
+    row["installStatus"] = static_cast<int>(PackageTypes::NotInstalled);
+    model.setPackages({row});
+    model.queueRowInstallation(QStringLiteral("blockchain_ui"), kRepo);
+
+    model.updateRowInstallation(QStringLiteral("blockchain_ui"), kRepo,
+                                static_cast<int>(PackageTypes::Installing));
+
+    LOGOS_ASSERT_FALSE(model.data(model.index(0), PackageListModel::QueuedRole).toBool());
+    LOGOS_ASSERT_FALSE(model.isRowQueued(QStringLiteral("blockchain_ui"), kRepo));
+}

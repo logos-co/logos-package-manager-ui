@@ -158,6 +158,87 @@ test("failure notice: a message surfaces and can be dismissed", async (app) => {
   await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
 });
 
+// Installing a package, then one that depends on it while the first was still
+// downloading, fetched and installed the dependency twice: it was not on disk
+// yet, so the second install's resolver asked for it again. One install runs
+// at a time now; a second waits its turn, then resolves against the disk.
+//
+// Names no catalog has: each install fails at resolution, which is all this
+// needs, and nothing is downloaded or installed.
+test("install queue: a second install waits for the first, then runs", async (app) => {
+  await waitForPmuiLoaded(app);
+  await waitForCatalogLoaded(app);
+
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) {
+    throw new Error('No object found with objectName "pmui.BackendStore"');
+  }
+  const storeId = store.matches[0].id;
+  const refused = "An installation is already in progress.";
+  const install = (name) => `backend.performInstall("${name}", "", "", [])`;
+  const idle = async (description) => app.waitFor(
+    async () => {
+      if (await storeProperty(app, "isInstalling")) throw new Error("an install is still running");
+    },
+    { timeout: 30000, interval: 500, description }
+  );
+
+  await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
+
+  // Records every isInstalling change and every message, so the run can be
+  // read afterwards: polling would miss installs that fail this fast.
+  await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `(function () {
+      var probe = Qt.createQmlObject('import QtQuick; QtObject { objectName: "pmui.installProbe"; ' +
+                                     'property var installing: []; property var messages: [] }', d);
+      isInstallingChanged.connect(function () { probe.installing = probe.installing.concat([isInstalling]); });
+      lastMessageChanged.connect(function () { if (lastMessage) probe.messages = probe.messages.concat([lastMessage]); });
+    })()`,
+  });
+  const probe = await app.findByProperty("objectName", "pmui.installProbe");
+  if (!probe.matches || probe.matches.length === 0) throw new Error("the install probe was not created");
+  const probeId = probe.matches[0].id;
+
+  // Back to back: the second arrives while the first runs, and must wait for
+  // it rather than be refused or run beside it.
+  await app.inspector.send("evaluate", {
+    objectId: storeId,
+    expression: `${install("pmui_queue_probe_a")}; ${install("pmui_queue_probe_b")}`,
+  });
+  await idle("both installs to end");
+  await new Promise((r) => setTimeout(r, 500));
+
+  // Arrays come back from getProperties as an opaque "<QJSValue>": read them
+  // through JSON instead.
+  const recorded = JSON.parse((await app.inspector.send("evaluate", {
+    objectId: probeId,
+    expression: "JSON.stringify({ installing: installing, messages: messages })",
+  })).result);
+  const installing = recorded.installing;
+  const messages = recorded.messages.map(String);
+  // Run side by side, these installs never took the lock at all.
+  if (!Array.isArray(installing) || !installing.includes(true)) {
+    throw new Error(`the installs never took the install lock: ${JSON.stringify(installing)}`);
+  }
+  if (messages.includes(refused)) throw new Error("the second install was refused instead of queued");
+  const last = messages[messages.length - 1] || "";
+  if (!last.includes("pmui_queue_probe_b")) {
+    throw new Error(`the second install did not run last: ${JSON.stringify(messages)}`);
+  }
+  await app.inspector.send("evaluate", { objectId: probeId, expression: "destroy()" });
+
+  // Nothing left holding the lock: a later install runs at once.
+  await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
+  await app.inspector.send("evaluate", { objectId: storeId, expression: install("pmui_queue_probe_c") });
+  await idle("a later install to end");
+  const after = await storeProperty(app, "lastMessage");
+  if (!String(after).includes("pmui_queue_probe_c")) {
+    throw new Error(`a later install did not run, message ${JSON.stringify(after)}`);
+  }
+  await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
+});
+
 test("structure: table headers render", async (app) => {
   await waitForPmuiLoaded(app);
   // The old single "Status" column was split into per-row version + "Action".

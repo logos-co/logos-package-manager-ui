@@ -182,6 +182,12 @@ private:
     // Auto-refresh the catalog whenever the package_downloader emits catalogChanged.
     void subscribePackageDownloaderEvents();
 
+    // One install at a time, whatever starts it: a request that arrives while
+    // one runs waits in m_queuedInstalls, in the order asked. Every install
+    // ends in installEnded(), which starts the next or releases the lock.
+    void installEnded();
+    QList<std::function<void()>> m_queuedInstalls;
+
     // online, from the platform's reachability. Unknown counts as online.
     void watchNetwork();
     // downloadSource and storageState, read from package_downloader.
