@@ -24,6 +24,9 @@ QtObject {
     // ─── Properties: reactive state (bind from views) ───
     readonly property bool isInstalling: backend ? backend.isInstalling : false
     readonly property bool isLoading: backend ? backend.isLoading : false
+    readonly property bool online: backend ? backend.online !== false : true
+    readonly property string downloadSource: backend ? (backend.downloadSource || "") : ""
+    readonly property string storageState: backend ? (backend.storageState || "") : ""
     // Bulk "Run Actions" surface. Replaces the old has*Selection
     // booleans: the header reads the count for its label and the
     // confirm-summary popup reads the map for its per-action breakdown.

@@ -8,6 +8,8 @@ import Logos.Controls
 
 import Panels
 
+import "DownloadNotice.js" as DownloadNotice
+
 Rectangle {
 
     id: root
@@ -32,6 +34,22 @@ Rectangle {
 
             searchText: store.searchText
             onSearchEdited: function(text) { store.setSearchText(text) }
+        }
+
+        // ─── Download notice ── why downloads may not work right now.
+        LogosNotice {
+            id: downloadNotice
+            objectName: "pmui.downloadNotice"
+            readonly property var notice: DownloadNotice.notice(
+                store.online, store.downloadSource, store.storageState)
+            Layout.fillWidth: true
+            shown: notice !== null
+            severity: !notice ? LogosNotice.Info
+                    : notice.severity === "error" ? LogosNotice.Error
+                    : notice.severity === "warning" ? LogosNotice.Warning
+                    : LogosNotice.Info
+            title: notice ? notice.title : ""
+            message: notice ? notice.message : ""
         }
 
         // ─── Failure notice ── the only place a refused or unanswered

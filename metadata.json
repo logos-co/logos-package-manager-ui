@@ -48,8 +48,9 @@
       }
     ],
     "cmake": {
-      "find_packages": [],
-      "extra_sources": []
+      "find_packages": ["Qt6Network"],
+      "extra_sources": [],
+      "extra_link_libraries": ["Qt6::Network"]
     }
   }
 }

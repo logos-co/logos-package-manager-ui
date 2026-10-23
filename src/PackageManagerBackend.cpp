@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkInformation>
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
@@ -194,6 +195,7 @@ void PackageManagerBackend::finishInitialSetup(int attempt)
         return;
     }
     m_initialSetupComplete = true;
+    watchNetwork();
 
     // package_downloader does nothing until a consumer starts it. Everything
     // below calls into it, so it waits for the answer, whatever it is: one
@@ -208,6 +210,7 @@ void PackageManagerBackend::finishInitialSetup(int attempt)
 
         self->subscribePackageManagerRefreshEvents();
         self->subscribePackageDownloaderEvents();
+        self->refreshDownloadStatus();
 
         self->refreshCatalog();
     });
@@ -949,7 +952,7 @@ void PackageManagerBackend::installNextPackage(const QVariantList& results, int 
 
 void PackageManagerBackend::finishInstallation(int completed)
 {
-    setIsInstalling(false);
+    installEnded();
     emit installationProgressUpdated(
         static_cast<int>(PackageTypes::Completed), "", completed, completed, true, "");
     refreshPackages();
@@ -977,6 +980,37 @@ void PackageManagerBackend::runSelectedActions()
 }
 
 
+// Two installs at once resolved a shared dependency twice: the one still
+// downloading was not on disk yet, so the second fetched and installed it
+// again, and both downloads drew on the same row. So they queue instead.
+void PackageManagerBackend::installEnded()
+{
+    if (m_queuedInstalls.isEmpty()) {
+        setIsInstalling(false);
+        return;
+    }
+
+    // The lock stays held until the next starts, so nothing overtakes it.
+    QPointer<PackageManagerBackend> self(this);
+    auto startNext = [self]() {
+        if (!self) return;
+        self->setIsInstalling(false);
+        while (self && !self->isInstalling() && !self->m_queuedInstalls.isEmpty())
+            self->m_queuedInstalls.takeFirst()();
+    };
+
+    if (!packageManagerReady()) {
+        startNext();
+        return;
+    }
+    modules().package_manager.getInstalledPackagesAsync(
+        [self, startNext](QVariantList installed) {
+            if (!self) return;
+            self->m_installedPackagesCache = installed;
+            startNext();
+        });
+}
+
 void PackageManagerBackend::installSinglePackageAsync(const QString& packageName,
                                                        const QString& repoUrl,
                                                        const QString& version,
@@ -996,6 +1030,8 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     // against double-click while the download is in flight. Scoped to the
     // clicked row's repo — another repo publishing the same name is not
     // installing anything.
+    setIsInstalling(true);
+
     m_packageModel->updateRowInstallation(
         packageName, repoUrl, static_cast<int>(PackageTypes::Installing));
 
@@ -1064,13 +1100,20 @@ void PackageManagerBackend::installResultsSequential(const QVariantList& results
                                                      const QString& topLevelName,
                                                      int index)
 {
-    // Per-row install pipeline counterpart to installNextPackage. The
-    // bulk path locks isInstalling and emits Completed at the end via
-    // finishInstallation; per-row stays unlocked so concurrent per-row
-    // clicks don't deadlock each other. We emit progress events keyed
+    // Per-row install pipeline counterpart to installNextPackage. Every path
+    // into it holds the install lock, given up (installEnded) when the last
+    // entry is done or a failure stops the batch. We emit progress events keyed
     // on the top-level name so the UI shows the user's clicked row as
     // the one being acted on, even when the loop is iterating
     // transitive deps in between.
+
+    // Nothing to install (a download that answered nothing): the loop below
+    // would never report back, and the lock would stay taken for good.
+    if (index >= results.size()) {
+        installEnded();
+        return;
+    }
+
     QPointer<PackageManagerBackend> self(this);
     install_sequence::installSequentially(results,
         [self](const QVariantMap& row, install_sequence::Done done) {
@@ -1093,6 +1136,7 @@ void PackageManagerBackend::installResultsSequential(const QVariantList& results
                 if (!proceed) self->revertPendingEntries(results, index + 1);
             }
             const bool isLast = (index + 1) >= results.size();
+            if (isLast || !proceed) self->installEnded();
             emit self->installationProgressUpdated(
                 proceed ? (isLast ? static_cast<int>(PackageTypes::Completed)
                                   : static_cast<int>(PackageTypes::InProgress))
@@ -1146,7 +1190,21 @@ void PackageManagerBackend::installSpecs(const QList<PackageInstallSpec>& specs,
                                          bool includeDeps)
 {
     if (isInstalling()) {
-        emit errorOccurred(static_cast<int>(PackageTypes::InstallationAlreadyInProgress));
+        for (const PackageInstallSpec& spec : specs)
+            m_packageModel->queueRowInstallation(spec.name, spec.repositoryUrl);
+        QPointer<PackageManagerBackend> self(this);
+        m_queuedInstalls.append([self, specs, includeDeps]() {
+            if (!self) return;
+            self->installSpecs(specs, includeDeps);
+            // Still queued: it stopped before it started. The disk says what
+            // the rows really are.
+            for (const PackageInstallSpec& spec : specs) {
+                if (self && self->m_packageModel->isRowQueued(spec.name, spec.repositoryUrl)) {
+                    self->refreshPackages();
+                    break;
+                }
+            }
+        });
         return;
     }
 
@@ -1244,7 +1302,24 @@ void PackageManagerBackend::performInstall(QString name, QString version,
                                            QString repositoryUrl, QVariantList optionalPackages)
 {
     // Local .lgx: the file is already on disk, nothing to download.
+    // Behind the install that is running, in the order asked; the row says
+    // "Queued" meanwhile.
+    if (isInstalling()) {
+        m_packageModel->queueRowInstallation(name, repositoryUrl);
+        QPointer<PackageManagerBackend> self(this);
+        m_queuedInstalls.append([self, name, version, repositoryUrl, optionalPackages]() {
+            if (!self) return;
+            self->performInstall(name, version, repositoryUrl, optionalPackages);
+            // Still queued: it stopped before it started (a module not
+            // connected). The disk says what the row really is.
+            if (self && self->m_packageModel->isRowQueued(name, repositoryUrl))
+                self->refreshPackages();
+        });
+        return;
+    }
+
     if (m_pendingLocalInstalls.contains(name)) {
+        setIsInstalling(true);
         const QString path = m_pendingLocalInstalls.take(name);
         const QVariantMap entry{
             {QStringLiteral("name"), name},
@@ -1275,6 +1350,15 @@ void PackageManagerBackend::performUpgrade(QString moduleName, QString version, 
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
         return;
     }
+    // Queued before anything is removed: the old copy stays until its turn.
+    if (isInstalling()) {
+        QPointer<PackageManagerBackend> self(this);
+        m_queuedInstalls.append([self, moduleName, version, mode, repositoryUrl, optionalPackages]() {
+            if (self) self->performUpgrade(moduleName, version, mode, repositoryUrl, optionalPackages);
+        });
+        return;
+    }
+    setIsInstalling(true);
 
     const QString mapped = m_packageModel
         ? m_packageModel->displayNameForModule(moduleName) : QString();
@@ -1301,6 +1385,7 @@ void PackageManagerBackend::performUpgrade(QString moduleName, QString version, 
                 [self, moduleName, version, mode, displayName](QVariantMap result) {
                     if (!self) return;
                     if (!result.value("success", false).toBool()) {
+                        self->installEnded();
                         self->m_pendingUpgradeByModule.remove(moduleName);
                         self->m_pendingLocalInstalls.remove(moduleName);
                         emit self->cancellationOccurred(displayName,
@@ -1443,6 +1528,54 @@ void PackageManagerBackend::subscribePackageManagerRefreshEvents()
     logos.package_manager.on("uiPluginUninstalled",     deselectAndArm);
 }
 
+void PackageManagerBackend::watchNetwork()
+{
+    // The platform's own backend first. By features alone Qt may take glib,
+    // which outside Linux never sees the connection go.
+    const bool loaded = QNetworkInformation::loadDefaultBackend()
+        || QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::Reachability);
+    if (!loaded) {
+        qInfo() << "PackageManagerBackend: no reachability backend among"
+                << QNetworkInformation::availableBackends() << "- assuming online";
+        return;
+    }
+
+    qInfo() << "PackageManagerBackend: reachability backend"
+            << QNetworkInformation::instance()->backendName()
+            << "of" << QNetworkInformation::availableBackends();
+
+    // Local: a network, but no internet behind it.
+    auto apply = [this]() {
+        const auto r = QNetworkInformation::instance()->reachability();
+        qInfo() << "PackageManagerBackend: reachability" << r;
+        setOnline(r != QNetworkInformation::Reachability::Disconnected
+                  && r != QNetworkInformation::Reachability::Local);
+    };
+    connect(QNetworkInformation::instance(), &QNetworkInformation::reachabilityChanged,
+            this, apply);
+    apply();
+}
+
+// Raw calls rather than the typed wrappers: a downloader that predates these
+// methods answers nothing, and the values stay "".
+void PackageManagerBackend::refreshDownloadStatus()
+{
+    if (!clientReady("package_downloader")) return;
+    LogosAPIClient* client = modules().api->getClient("package_downloader");
+
+    QPointer<PackageManagerBackend> self(this);
+    client->invokeRemoteMethodAsync(
+        "package_downloader", "getDownloadSource", QVariantList{},
+        [self](QVariant result) {
+            if (self) self->setDownloadSource(result.toString());
+        });
+    client->invokeRemoteMethodAsync(
+        "package_downloader", "getStorageState", QVariantList{},
+        [self](QVariant result) {
+            if (self) self->setStorageState(result.toMap().value("state").toString());
+        });
+}
+
 void PackageManagerBackend::subscribePackageDownloaderEvents()
 {
     if (!clientReady("package_downloader")) return;
@@ -1452,6 +1585,13 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
     logos.package_downloader.on("catalogChanged", [self](const QVariantList&) {
         if (!self) return;
         if (self->m_refreshDebounceTimer) self->m_refreshDebounceTimer->start();
+        // A change of download source is announced this way too.
+        self->refreshDownloadStatus();
+    });
+
+    logos.package_downloader.on("storageStateChanged", [self](const QVariantList& data) {
+        if (!self) return;
+        self->setStorageState(data.value(0).toString());
     });
 
     // Live byte progress for whatever is currently downloading. Payload is
@@ -1463,12 +1603,14 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
         if (!self || !self->m_packageModel) return;
         if (data.size() < 3) {
             qWarning() << "package_downloader.downloadProgress: expected "
-                          "[name, received, total], got" << data.size() << "args";
+                          "[name, received, total, transport], got" << data.size() << "args";
             return;
         }
+        // The transport is the fourth; a downloader that predates it sends three.
         self->m_packageModel->updateDownloadProgress(data.at(0).toString(),
                                                      data.at(1).toULongLong(),
-                                                     data.at(2).toULongLong());
+                                                     data.at(2).toULongLong(),
+                                                     data.value(3).toString());
     });
 }
 
@@ -1481,6 +1623,7 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     const QString displayName = mapped.isEmpty() ? moduleName : mapped;
 
     if (!bothClientsReady()) {
+        installEnded();
         const QString msg = QStringLiteral("Cannot complete upgrade of '%1': "
                                            "required modules not connected").arg(displayName);
         emit installationProgressUpdated(

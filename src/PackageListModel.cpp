@@ -57,6 +57,8 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
                                                               QVariant::fromValue(quint64(0)));
         case DownloadTotalRole:          return package.value("downloadTotal",
                                                               QVariant::fromValue(quint64(0)));
+        case DownloadTransportRole:      return package.value("downloadTransport").toString();
+        case QueuedRole:                 return package.value("queued").toBool();
         case DownloadSourceRole:         return package.value("downloadSource",
                                                   static_cast<int>(PackageTypes::NoSource));
         case HasInstallableVersionRole:  return package.value("hasInstallableVersion", true);
@@ -98,6 +100,8 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
         {DownloadReceivedRole,        "downloadReceived"},
         {DownloadTotalRole,           "downloadTotal"},
         {DownloadSourceRole,          "downloadSource"},
+        {DownloadTransportRole,       "downloadTransport"},
+        {QueuedRole,                  "queued"},
         {HasInstallableVersionRole,   "hasInstallableVersion"},
     };
 }
@@ -343,6 +347,39 @@ void PackageListModel::updatePackageInstallation(const QString& packageName, int
     applyInstallation(packageName, status, errorMessage, std::nullopt);
 }
 
+void PackageListModel::queueRowInstallation(const QString& packageName,
+                                            const QString& repositoryUrl)
+{
+    updateRowInstallation(packageName, repositoryUrl, static_cast<int>(PackageTypes::Installing));
+
+    int firstChanged = -1, lastChanged = -1;
+    for (int i = 0; i < m_packages.size(); ++i) {
+        QVariantMap& row = m_packages[i];
+        if (row.value("name").toString() != packageName
+            && row.value("moduleName").toString() != packageName) continue;
+        if (!repositoryUrl.isEmpty()
+            && row.value("repositoryUrl").toString() != repositoryUrl) continue;
+        row["queued"] = true;
+        if (firstChanged < 0) firstChanged = i;
+        lastChanged = i;
+    }
+    if (firstChanged < 0) return;
+    emit dataChanged(createIndex(firstChanged, 0), createIndex(lastChanged, 0), {QueuedRole});
+}
+
+bool PackageListModel::isRowQueued(const QString& packageName,
+                                   const QString& repositoryUrl) const
+{
+    for (const QVariantMap& row : m_packages) {
+        if (row.value("name").toString() != packageName
+            && row.value("moduleName").toString() != packageName) continue;
+        if (!repositoryUrl.isEmpty()
+            && row.value("repositoryUrl").toString() != repositoryUrl) continue;
+        if (row.value("queued").toBool()) return true;
+    }
+    return false;
+}
+
 void PackageListModel::updateRowInstallation(const QString& packageName,
                                              const QString& repositoryUrl,
                                              int status,
@@ -379,16 +416,21 @@ void PackageListModel::applyInstallation(const QString& packageName, int status,
         const int prevStatus = row.value("installStatus", 0).toInt();
         row["installStatus"] = status;
         row["errorMessage"] = errorMessage;
+        // Any status update ends the wait: the install started, or the row
+        // moved on (queueRowInstallation sets it again after this).
+        row["queued"] = false;
 
         // Download counters live only for the duration of an install.
         if (status == static_cast<int>(PackageTypes::Installing)) {
             if (prevStatus != static_cast<int>(PackageTypes::Installing)) {
                 row["downloadReceived"] = QVariant::fromValue(quint64(0));
                 row["downloadTotal"]    = QVariant::fromValue(selectedVersionSize(row));
+                row["downloadTransport"] = QString();
             }
         } else {
             row["downloadReceived"] = QVariant::fromValue(quint64(0));
             row["downloadTotal"]    = QVariant::fromValue(quint64(0));
+            row["downloadTransport"] = QString();
         }
 
         // Maintain m_failedByKey in lockstep with the row's status.
@@ -421,12 +463,14 @@ void PackageListModel::applyInstallation(const QString& packageName, int status,
     emit dataChanged(createIndex(firstChanged, 0),
                      createIndex(lastChanged, 0),
                      {InstallStatusRole, ErrorMessageRole, RowActionRole,
-                      DownloadReceivedRole, DownloadTotalRole});
+                      DownloadReceivedRole, DownloadTotalRole, DownloadTransportRole,
+                      QueuedRole});
     emit hasSelectionChanged();
 }
 
 void PackageListModel::updateDownloadProgress(const QString& packageName,
-                                              quint64 received, quint64 total)
+                                              quint64 received, quint64 total,
+                                              const QString& transport)
 {
     int firstChanged = -1, lastChanged = -1;
     for (int i = 0; i < m_packages.size(); ++i) {
@@ -446,6 +490,8 @@ void PackageListModel::updateDownloadProgress(const QString& packageName,
         // total == 0 means the transport didn't say. Keep whatever the
         // catalog seeded rather than blanking a working denominator.
         if (total > 0) row["downloadTotal"] = QVariant::fromValue(total);
+        // A downloader that predates the transport sends none: keep the last.
+        if (!transport.isEmpty()) row["downloadTransport"] = transport;
 
         if (firstChanged < 0) firstChanged = i;
         lastChanged = i;
@@ -455,7 +501,7 @@ void PackageListModel::updateDownloadProgress(const QString& packageName,
     // wider role set would re-evaluate every binding on the row.
     emit dataChanged(createIndex(firstChanged, 0),
                      createIndex(lastChanged, 0),
-                     {DownloadReceivedRole, DownloadTotalRole});
+                     {DownloadReceivedRole, DownloadTotalRole, DownloadTransportRole});
 }
 
 void PackageListModel::setRowVersion(int index, int versionIndex)

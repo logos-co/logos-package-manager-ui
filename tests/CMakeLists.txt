@@ -9,10 +9,12 @@ logos_test(
         ../src/PackageRowBuilder.cpp
         ../src/PackageTypes.cpp
         ../src/InstallSequence.cpp
+        ../src/PackageListModel.cpp
     TEST_SOURCES
         main.cpp
         test_package_rows.cpp
         test_install_sequence.cpp
+        test_package_list_model.cpp
     EXTRA_INCLUDES
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
         # Shared semver headers, staged by the flake's preConfigure —

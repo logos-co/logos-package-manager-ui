@@ -3,6 +3,7 @@ import QtQuick.Controls
 
 import Logos.Theme
 import Logos.Controls
+import Logos.Icons
 import Logos.PackageManagerUi 1.0
 
 // Per-row primary-action pill. Replaces the read-only StatusBadge: this
@@ -13,8 +14,9 @@ import Logos.PackageManagerUi 1.0
 // the matching backend slot.
 //
 // Two states are computed independently of `rowAction`:
-//   * `installStatus === Installing` → the pill labels itself
-//     "Installing…" and stops being clickable, regardless of what action
+//   * `installStatus === Installing` → the pill names the stage, in the App
+//     Manager's words (Queued, Finding peers…, Downloading…, bytes,
+//     Installing…) and stops being clickable, regardless of what action
 //     would otherwise be runnable. The transient state isn't a RowAction
 //     value (see PackageTypes::RowAction comment).
 //   * `rowAction === NotAvailable` → not clickable, tooltip carries the
@@ -40,6 +42,8 @@ Control {
                                              : PackageManagerUi.NoOp
     readonly property int installStatus: modelData ? (modelData.installStatus | 0) : 0
     readonly property bool installing: installStatus === PackageManagerUi.Installing
+    // Waiting behind another install: nothing of its own has started.
+    readonly property bool queued: installing && !!modelData && modelData.queued === true
     readonly property bool runnable: !installing
                                       && action !== PackageManagerUi.NoOp
                                       && action !== PackageManagerUi.NotAvailable
@@ -49,6 +53,28 @@ Control {
                                          && downloadReceived >= downloadTotal
     readonly property bool showProgress: installing && downloadTotal > 0
                                          && downloadReceived > 0 && !downloadDone
+    // Logos Storage with no byte yet is still finding peers that have the
+    // package: where a slow install spends its time.
+    readonly property bool findingPeers: installing && !downloadDone
+                                         && downloadReceived <= 0
+                                         && modelData && modelData.downloadTransport === "logos"
+    // Over HTTP and no byte yet: the transfer has begun, nothing has arrived.
+    readonly property bool downloadStarted: installing && !downloadDone
+                                            && downloadReceived <= 0
+                                            && !!modelData && modelData.downloadTransport === "http"
+    // Installing, but this package's own download has not begun: another
+    // download is still running, or its dependencies come first. The first
+    // sample of its own download names the transport.
+    readonly property bool waitingToDownload: installing && !downloadDone
+                                              && downloadReceived <= 0
+                                              && !(modelData && modelData.downloadTransport)
+    // Where the bytes come from, at the start of the pill. Only once the
+    // downloader has said: while waiting, the Source column shows the one
+    // it will try first.
+    readonly property url transportIcon: !installing || !modelData ? ""
+        : modelData.downloadTransport === "logos" ? LogosIcons.logosStorage
+        : modelData.downloadTransport === "http" ? LogosIcons.github
+        : ""
     readonly property bool indeterminateProgress:
         installing && !downloadDone && (downloadReceived <= 0 || downloadTotal <= 0)
 
@@ -90,6 +116,10 @@ Control {
             if (root.showProgress) {
                 return d.progressLabel(root.downloadReceived, root.downloadTotal)
             }
+            // The words the App Manager's package rows use for the same stages.
+            if (root.queued || root.waitingToDownload) return qsTr("Queued")
+            if (root.findingPeers) return qsTr("Finding peers…")
+            if (root.downloadStarted) return qsTr("Downloading…")
             if (installing) return qsTr("Installing…")
             // Verb only. The version it would install is one hover away in
             // the tooltip, and the Installed / Available columns carry the
@@ -182,8 +212,10 @@ Control {
         font: badge.labelItem.font
         text: "999.9 / 999.9 MB"
     }
+    // The badge's icon is 12px with 4px spacing.
     readonly property int installingWidth:
         Math.ceil(widestInstallLabel.width) + badge.leftPadding + badge.rightPadding
+        + (root.transportIcon.toString().length > 0 ? 16 : 0)
     implicitWidth: root.installing ? installingWidth : badge.implicitWidth
 
     // Ease the one remaining step — natural width to installingWidth on
@@ -195,6 +227,7 @@ Control {
     contentItem: LogosBadge {
         id: badge
         text: d.actionText(root.action, root.installing)
+        iconSource: root.transportIcon
         color: root.runnable
                ? d.baseColor(root.action, root.installing)
                : Theme.palette.textTertiary
