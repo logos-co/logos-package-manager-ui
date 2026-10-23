@@ -146,7 +146,10 @@ public:
         DownloadTotalRole,
         // PackageTypes::DownloadSource enum int.
         DownloadSourceRole,
-        HasInstallableVersionRole
+        HasInstallableVersionRole,
+        // Where an install's bytes come from now: "logos" (Logos Storage),
+        // "http", or "" before the downloader says.
+        DownloadTransportRole
     };
 
     explicit PackageListModel(QObject* parent = nullptr);
@@ -181,7 +184,8 @@ public:
     // `total` of 0 means "size unknown" and leaves any already-seeded
     // catalog size in place rather than blanking the denominator.
     void updateDownloadProgress(const QString& packageName,
-                                quint64 received, quint64 total);
+                                quint64 received, quint64 total,
+                                const QString& transport = {});
 
     // Pick a different version on a single row. Clamps `versionIndex`
     // to the row's `availableVersions` length; out-of-range or negative

@@ -294,6 +294,39 @@ LogosTable {
             readonly property int downloaded: rowItem ? rowItem.downloadSource
                                                       : PackageManagerUi.NoSource
 
+            // While installing: the source the bytes come from now. Before
+            // the first sample, the one the downloader tries first: Logos
+            // Storage when the release is there and allowed, else GitHub.
+            // -1 when not installing.
+            function liveSource() {
+                if (!rowItem || rowItem.installStatus !== PackageManagerUi.Installing) {
+                    return -1
+                }
+
+                switch (rowItem.downloadTransport) {
+                case "logos": return PackageManagerUi.Storage
+                case "http":  return PackageManagerUi.GitHub
+                case "":
+                case undefined:
+                    break
+                default:
+                    // A source this column has no icon for: no guess either.
+                    return -1
+                }
+
+                const picked = rowItem.availableVersions
+                    ? rowItem.availableVersions[rowItem.selectedVersionIndex] : null
+                const sources = picked && picked.sources ? picked.sources : []
+                if (sources.indexOf(PackageManagerUi.Storage) >= 0) return PackageManagerUi.Storage
+                if (sources.indexOf(PackageManagerUi.GitHub) >= 0)  return PackageManagerUi.GitHub
+                return -1
+            }
+
+            // liveSource() is the one it will try, not one it is using yet.
+            function liveSourceIsPredicted() {
+                return liveSource() >= 0 && !rowItem.downloadTransport
+            }
+
             // The dropdown shows the copy on disk: only its source is shown.
             function showsInstalledCopy() {
                 if (downloaded === PackageManagerUi.Builtin) {
@@ -310,6 +343,17 @@ LogosTable {
 
             function shownSources() {
                 if (!rowItem) {
+                    return []
+                }
+
+                if (liveSource() >= 0) {
+                    return [liveSource()]
+                }
+
+                // Downloading from a source with no icon here: show nothing
+                // rather than sources it is not using.
+                if (rowItem.installStatus === PackageManagerUi.Installing
+                        && rowItem.downloadTransport) {
                     return []
                 }
 
@@ -351,32 +395,53 @@ LogosTable {
                 Repeater {
                     model: sourceCell.shownSources()
                     Item {
+                        id: sourceMark
                         readonly property int origin: modelData
                         // install.svg draws inside a 20px box with a margin.
                         readonly property int size: origin === PackageManagerUi.LocalFile ? 20 : 16
                         anchors.verticalCenter: parent.verticalCenter
                         width: size
                         height: size
-                        opacity: sourceCell.showsInstalledCopy() ? 1 : 0.35
+                        readonly property bool predicted: sourceCell.liveSourceIsPredicted()
+                        property real pulse: 1
+                        opacity: (sourceCell.liveSource() >= 0 || sourceCell.showsInstalledCopy() ? 1 : 0.35)
+                                 * pulse
+                        SequentialAnimation {
+                            running: sourceMark.predicted
+                            loops: Animation.Infinite
+                            NumberAnimation {
+                                target: sourceMark; property: "pulse"
+                                to: 0.3; duration: 600; easing.type: Easing.InOutQuad
+                            }
+                            NumberAnimation {
+                                target: sourceMark; property: "pulse"
+                                to: 1; duration: 600; easing.type: Easing.InOutQuad
+                            }
+                            onRunningChanged: if (!running) sourceMark.pulse = 1
+                        }
                         // The Storage logo keeps its gradient: LogosIcon would flatten it.
                         Image {
                             anchors.fill: parent
                             visible: parent.origin === PackageManagerUi.Storage
                             sourceSize: Qt.size(parent.size, parent.size)
-                            source: visible ? Qt.resolvedUrl("../images/storage.svg") : ""
+                            source: visible ? LogosIcons.logosStorage : ""
                         }
                         LogosIcon {
                             anchors.fill: parent
                             visible: parent.origin !== PackageManagerUi.Storage
                             color: Theme.palette.textSecondary
-                            source: parent.origin === PackageManagerUi.GitHub  ? Qt.resolvedUrl("../images/github.svg")
+                            source: parent.origin === PackageManagerUi.GitHub  ? LogosIcons.github
                                   : parent.origin === PackageManagerUi.LocalFile ? LogosIcons.install
                                   : Qt.resolvedUrl("../images/builtin-cube.svg")
                         }
                         HoverHandler { id: sourceHover }
                         LogosToolTip {
-                            text: sourceCell.showsInstalledCopy()
-                                  ? sourceCell.sourceName(parent.origin)
+                            text: sourceCell.liveSourceIsPredicted()
+                                  ? qsTr("Will try %1 first").arg(sourceCell.sourceName(sourceMark.origin))
+                                  : sourceCell.liveSource() >= 0
+                                  ? qsTr("Downloading from %1").arg(sourceCell.sourceName(sourceMark.origin))
+                                  : sourceCell.showsInstalledCopy()
+                                  ? sourceCell.sourceName(sourceMark.origin)
                                   : qsTr("Download possible over %1").arg(sourceCell.sourceNames())
                             placement: LogosToolTip.Top
                             visible: sourceHover.hovered

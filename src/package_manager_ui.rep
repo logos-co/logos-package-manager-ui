@@ -87,6 +87,13 @@ class PackageManagerUi
     PROP(QVariantList actionPlanItems READONLY)
     PROP(bool isInstalling READONLY)
     PROP(bool isLoading READONLY)
+    // Why downloads may not work right now, for the notice at the top.
+    // `online` is false only when the platform says there is no internet;
+    // downloadSource and storageState are package_downloader's, "" until it
+    // answers (and when it predates them).
+    PROP(bool online=true READONLY)
+    PROP(QString downloadSource READONLY)
+    PROP(QString storageState READONLY)
 
     PROP(QString searchText)
     PROP(int installStateFilter)

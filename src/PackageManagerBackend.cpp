@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkInformation>
 #include <QPointer>
 #include <QSet>
 #include <QTimer>
@@ -194,6 +195,7 @@ void PackageManagerBackend::finishInitialSetup(int attempt)
         return;
     }
     m_initialSetupComplete = true;
+    watchNetwork();
 
     // package_downloader does nothing until a consumer starts it. Everything
     // below calls into it, so it waits for the answer, whatever it is: one
@@ -208,6 +210,7 @@ void PackageManagerBackend::finishInitialSetup(int attempt)
 
         self->subscribePackageManagerRefreshEvents();
         self->subscribePackageDownloaderEvents();
+        self->refreshDownloadStatus();
 
         self->refreshCatalog();
     });
@@ -1443,6 +1446,54 @@ void PackageManagerBackend::subscribePackageManagerRefreshEvents()
     logos.package_manager.on("uiPluginUninstalled",     deselectAndArm);
 }
 
+void PackageManagerBackend::watchNetwork()
+{
+    // The platform's own backend first. By features alone Qt may take glib,
+    // which outside Linux never sees the connection go.
+    const bool loaded = QNetworkInformation::loadDefaultBackend()
+        || QNetworkInformation::loadBackendByFeatures(QNetworkInformation::Feature::Reachability);
+    if (!loaded) {
+        qInfo() << "PackageManagerBackend: no reachability backend among"
+                << QNetworkInformation::availableBackends() << "- assuming online";
+        return;
+    }
+
+    qInfo() << "PackageManagerBackend: reachability backend"
+            << QNetworkInformation::instance()->backendName()
+            << "of" << QNetworkInformation::availableBackends();
+
+    // Local: a network, but no internet behind it.
+    auto apply = [this]() {
+        const auto r = QNetworkInformation::instance()->reachability();
+        qInfo() << "PackageManagerBackend: reachability" << r;
+        setOnline(r != QNetworkInformation::Reachability::Disconnected
+                  && r != QNetworkInformation::Reachability::Local);
+    };
+    connect(QNetworkInformation::instance(), &QNetworkInformation::reachabilityChanged,
+            this, apply);
+    apply();
+}
+
+// Raw calls rather than the typed wrappers: a downloader that predates these
+// methods answers nothing, and the values stay "".
+void PackageManagerBackend::refreshDownloadStatus()
+{
+    if (!clientReady("package_downloader")) return;
+    LogosAPIClient* client = modules().api->getClient("package_downloader");
+
+    QPointer<PackageManagerBackend> self(this);
+    client->invokeRemoteMethodAsync(
+        "package_downloader", "getDownloadSource", QVariantList{},
+        [self](QVariant result) {
+            if (self) self->setDownloadSource(result.toString());
+        });
+    client->invokeRemoteMethodAsync(
+        "package_downloader", "getStorageState", QVariantList{},
+        [self](QVariant result) {
+            if (self) self->setStorageState(result.toMap().value("state").toString());
+        });
+}
+
 void PackageManagerBackend::subscribePackageDownloaderEvents()
 {
     if (!clientReady("package_downloader")) return;
@@ -1452,6 +1503,13 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
     logos.package_downloader.on("catalogChanged", [self](const QVariantList&) {
         if (!self) return;
         if (self->m_refreshDebounceTimer) self->m_refreshDebounceTimer->start();
+        // A change of download source is announced this way too.
+        self->refreshDownloadStatus();
+    });
+
+    logos.package_downloader.on("storageStateChanged", [self](const QVariantList& data) {
+        if (!self) return;
+        self->setStorageState(data.value(0).toString());
     });
 
     // Live byte progress for whatever is currently downloading. Payload is
@@ -1463,12 +1521,14 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
         if (!self || !self->m_packageModel) return;
         if (data.size() < 3) {
             qWarning() << "package_downloader.downloadProgress: expected "
-                          "[name, received, total], got" << data.size() << "args";
+                          "[name, received, total, transport], got" << data.size() << "args";
             return;
         }
+        // The transport is the fourth; a downloader that predates it sends three.
         self->m_packageModel->updateDownloadProgress(data.at(0).toString(),
                                                      data.at(1).toULongLong(),
-                                                     data.at(2).toULongLong());
+                                                     data.at(2).toULongLong(),
+                                                     data.value(3).toString());
     });
 }
 

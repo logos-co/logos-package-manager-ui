@@ -3,6 +3,7 @@ import QtQuick.Controls
 
 import Logos.Theme
 import Logos.Controls
+import Logos.Icons
 import Logos.PackageManagerUi 1.0
 
 // Per-row primary-action pill. Replaces the read-only StatusBadge: this
@@ -49,6 +50,24 @@ Control {
                                          && downloadReceived >= downloadTotal
     readonly property bool showProgress: installing && downloadTotal > 0
                                          && downloadReceived > 0 && !downloadDone
+    // Logos Storage with no byte yet is still finding peers that have the
+    // package: where a slow install spends its time.
+    readonly property bool findingPeers: installing && !downloadDone
+                                         && downloadReceived <= 0
+                                         && modelData && modelData.downloadTransport === "logos"
+    // Installing, but this package's own download has not begun: another
+    // download is still running, or its dependencies come first. The first
+    // sample of its own download names the transport.
+    readonly property bool waitingToDownload: installing && !downloadDone
+                                              && downloadReceived <= 0
+                                              && !(modelData && modelData.downloadTransport)
+    // Where the bytes come from, at the start of the pill. Only once the
+    // downloader has said: while waiting, the Source column shows the one
+    // it will try first.
+    readonly property url transportIcon: !installing || !modelData ? ""
+        : modelData.downloadTransport === "logos" ? LogosIcons.logosStorage
+        : modelData.downloadTransport === "http" ? LogosIcons.github
+        : ""
     readonly property bool indeterminateProgress:
         installing && !downloadDone && (downloadReceived <= 0 || downloadTotal <= 0)
 
@@ -90,6 +109,8 @@ Control {
             if (root.showProgress) {
                 return d.progressLabel(root.downloadReceived, root.downloadTotal)
             }
+            if (root.findingPeers) return qsTr("Finding peers…")
+            if (root.waitingToDownload) return qsTr("Waiting…")
             if (installing) return qsTr("Installing…")
             // Verb only. The version it would install is one hover away in
             // the tooltip, and the Installed / Available columns carry the
@@ -182,8 +203,10 @@ Control {
         font: badge.labelItem.font
         text: "999.9 / 999.9 MB"
     }
+    // The badge's icon is 12px with 4px spacing.
     readonly property int installingWidth:
         Math.ceil(widestInstallLabel.width) + badge.leftPadding + badge.rightPadding
+        + (root.transportIcon.toString().length > 0 ? 16 : 0)
     implicitWidth: root.installing ? installingWidth : badge.implicitWidth
 
     // Ease the one remaining step — natural width to installingWidth on
@@ -195,6 +218,7 @@ Control {
     contentItem: LogosBadge {
         id: badge
         text: d.actionText(root.action, root.installing)
+        iconSource: root.transportIcon
         color: root.runnable
                ? d.baseColor(root.action, root.installing)
                : Theme.palette.textTertiary

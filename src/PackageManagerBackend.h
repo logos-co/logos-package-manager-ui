@@ -182,6 +182,11 @@ private:
     // Auto-refresh the catalog whenever the package_downloader emits catalogChanged.
     void subscribePackageDownloaderEvents();
 
+    // online, from the platform's reachability. Unknown counts as online.
+    void watchNetwork();
+    // downloadSource and storageState, read from package_downloader.
+    void refreshDownloadStatus();
+
     // Second half of an approved upgrade: old version gone, download+install
     // the new one. Catalog `name` resolved from moduleName via PackageListModel.
     void onUpgradeUninstallDone(const QString& moduleName,

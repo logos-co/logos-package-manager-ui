@@ -57,6 +57,7 @@ QVariant PackageListModel::data(const QModelIndex& index, int role) const
                                                               QVariant::fromValue(quint64(0)));
         case DownloadTotalRole:          return package.value("downloadTotal",
                                                               QVariant::fromValue(quint64(0)));
+        case DownloadTransportRole:      return package.value("downloadTransport").toString();
         case DownloadSourceRole:         return package.value("downloadSource",
                                                   static_cast<int>(PackageTypes::NoSource));
         case HasInstallableVersionRole:  return package.value("hasInstallableVersion", true);
@@ -98,6 +99,7 @@ QHash<int, QByteArray> PackageListModel::roleNames() const
         {DownloadReceivedRole,        "downloadReceived"},
         {DownloadTotalRole,           "downloadTotal"},
         {DownloadSourceRole,          "downloadSource"},
+        {DownloadTransportRole,       "downloadTransport"},
         {HasInstallableVersionRole,   "hasInstallableVersion"},
     };
 }
@@ -385,10 +387,12 @@ void PackageListModel::applyInstallation(const QString& packageName, int status,
             if (prevStatus != static_cast<int>(PackageTypes::Installing)) {
                 row["downloadReceived"] = QVariant::fromValue(quint64(0));
                 row["downloadTotal"]    = QVariant::fromValue(selectedVersionSize(row));
+                row["downloadTransport"] = QString();
             }
         } else {
             row["downloadReceived"] = QVariant::fromValue(quint64(0));
             row["downloadTotal"]    = QVariant::fromValue(quint64(0));
+            row["downloadTransport"] = QString();
         }
 
         // Maintain m_failedByKey in lockstep with the row's status.
@@ -421,12 +425,13 @@ void PackageListModel::applyInstallation(const QString& packageName, int status,
     emit dataChanged(createIndex(firstChanged, 0),
                      createIndex(lastChanged, 0),
                      {InstallStatusRole, ErrorMessageRole, RowActionRole,
-                      DownloadReceivedRole, DownloadTotalRole});
+                      DownloadReceivedRole, DownloadTotalRole, DownloadTransportRole});
     emit hasSelectionChanged();
 }
 
 void PackageListModel::updateDownloadProgress(const QString& packageName,
-                                              quint64 received, quint64 total)
+                                              quint64 received, quint64 total,
+                                              const QString& transport)
 {
     int firstChanged = -1, lastChanged = -1;
     for (int i = 0; i < m_packages.size(); ++i) {
@@ -446,6 +451,8 @@ void PackageListModel::updateDownloadProgress(const QString& packageName,
         // total == 0 means the transport didn't say. Keep whatever the
         // catalog seeded rather than blanking a working denominator.
         if (total > 0) row["downloadTotal"] = QVariant::fromValue(total);
+        // A downloader that predates the transport sends none: keep the last.
+        if (!transport.isEmpty()) row["downloadTransport"] = transport;
 
         if (firstChanged < 0) firstChanged = i;
         lastChanged = i;
@@ -455,7 +462,7 @@ void PackageListModel::updateDownloadProgress(const QString& packageName,
     // wider role set would re-evaluate every binding on the row.
     emit dataChanged(createIndex(firstChanged, 0),
                      createIndex(lastChanged, 0),
-                     {DownloadReceivedRole, DownloadTotalRole});
+                     {DownloadReceivedRole, DownloadTotalRole, DownloadTransportRole});
 }
 
 void PackageListModel::setRowVersion(int index, int versionIndex)
