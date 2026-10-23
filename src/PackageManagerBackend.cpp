@@ -1,6 +1,7 @@
 #include "PackageManagerBackend.h"
 #include "InstallSequence.h"
 #include <algorithm>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QFileInfo>
 #include <QHash>
@@ -1569,10 +1570,25 @@ void PackageManagerBackend::refreshDownloadStatus()
         [self](QVariant result) {
             if (self) self->setDownloadSource(result.toString());
         });
-    client->invokeRemoteMethodAsync(
+    refreshStorageState();
+}
+
+void PackageManagerBackend::refreshStorageState()
+{
+    if (!clientReady("package_downloader")) return;
+
+    QPointer<PackageManagerBackend> self(this);
+    modules().api->getClient("package_downloader")->invokeRemoteMethodAsync(
         "package_downloader", "getStorageState", QVariantList{},
         [self](QVariant result) {
-            if (self) self->setStorageState(result.toMap().value("state").toString());
+            if (!self) return;
+            const QString state = result.toMap().value("state").toString();
+            self->setStorageState(state);
+            if (state == QStringLiteral("waiting") || state == QStringLiteral("starting")) {
+                QTimer::singleShot(2000, self, [self]() {
+                    if (self) self->refreshStorageState();
+                });
+            }
         });
 }
 
@@ -1592,6 +1608,13 @@ void PackageManagerBackend::subscribePackageDownloaderEvents()
     logos.package_downloader.on("storageStateChanged", [self](const QVariantList& data) {
         if (!self) return;
         self->setStorageState(data.value(0).toString());
+    });
+    // Can arrive off the GUI thread.
+    logos.package_downloader.onSubscriptionStatus([self](logos::SubStatus status, std::uint64_t) {
+        if (status != logos::SubStatus::Armed) return;
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self]() {
+            if (self) self->refreshStorageState();
+        }, Qt::QueuedConnection);
     });
 
     // Live byte progress for whatever is currently downloading. Payload is
