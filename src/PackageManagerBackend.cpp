@@ -1531,6 +1531,13 @@ void PackageManagerBackend::subscribePackageManagerRefreshEvents()
 
 void PackageManagerBackend::watchNetwork()
 {
+    // Basecamp's test switch: 1 offline, 0 online (a sandbox has no network).
+    const QByteArray forced = qgetenv("BASECAMP_FORCE_OFFLINE");
+    if (forced == "1" || forced == "0") {
+        setOnline(forced == "0");
+        return;
+    }
+
     // The platform's own backend first. By features alone Qt may take glib,
     // which outside Linux never sees the connection go.
     const bool loaded = QNetworkInformation::loadDefaultBackend()

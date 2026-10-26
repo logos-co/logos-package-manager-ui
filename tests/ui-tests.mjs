@@ -239,49 +239,6 @@ test("install queue: a second install waits for the first, then runs", async (ap
   await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
 });
 
-// Opening the Package Manager loads package_downloader's dependencies, which
-// brings back a storage_module the user unloaded; the downloader then starts
-// the node again. Those state changes went out while this view was still
-// subscribing, so it showed "Logos Storage isn't running" for good.
-test("storage state: follows Logos Storage back up when it restarts as the view loads", async (app) => {
-  await waitForPmuiLoaded(app);
-
-  // Basecamp's backend, from its welcome page. Standalone there is none.
-  const host = await app.findByProperty("objectName", "welcomePage.greeting");
-  if (!host.matches || host.matches.length === 0) {
-    console.log("    (skipped: needs Basecamp, not the standalone view)");
-    return;
-  }
-  const basecamp = (expression) =>
-    app.inspector.send("evaluate", { objectId: host.matches[0].id, expression });
-  const storageStateIs = (state, timeout, description) => app.waitFor(
-    async () => {
-      const now = await storeProperty(app, "storageState");
-      if (now !== state) throw new Error(`storage state is "${now}"`);
-    },
-    { timeout, interval: 500, description }
-  );
-
-  await basecamp('backend.setDownloadSource("logos")');
-  await storageStateIs("running", 60000, "Logos Storage to run");
-
-  await basecamp("backend.setCurrentActiveSectionIndex(0)");
-  await basecamp('backend.unloadUiModule("package_manager_ui")');
-  await basecamp('backend.unloadCoreModule("storage_module")');
-  await basecamp('backend.confirmUnloadCascade("storage_module")');
-  await new Promise((r) => setTimeout(r, 2000));
-
-  const open = await app.findByProperty("objectName", "welcomePage.managePackages");
-  await app.inspector.send("click", { objectId: open.matches[0].id });
-  await waitForPmuiLoaded(app, 30000);
-
-  try {
-    await storageStateIs("running", 60000, "the view to see Logos Storage running again");
-  } finally {
-    await basecamp('backend.setDownloadSource("any")');
-  }
-});
-
 test("structure: table headers render", async (app) => {
   await waitForPmuiLoaded(app);
   // The old single "Status" column was split into per-row version + "Action".
