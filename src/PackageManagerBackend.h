@@ -192,6 +192,7 @@ private:
     void watchNetwork();
     // downloadSource and storageState, read from package_downloader.
     void refreshDownloadStatus();
+    void refreshStorageState();
 
     // Second half of an approved upgrade: old version gone, download+install
     // the new one. Catalog `name` resolved from moduleName via PackageListModel.
