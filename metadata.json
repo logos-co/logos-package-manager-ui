@@ -7,6 +7,7 @@
   "category": "ui",
   "description": "Package Manager UI plugin for managing plugins and packages",
   "main": "package_manager_ui_plugin",
+  "backend": "module",
   "icon": "src/icons/modules.png",
   "view": "qml/PackageManager.qml",
   "dependencies": [

@@ -7,8 +7,13 @@ else()
     message(FATAL_ERROR "LogosModule.cmake not found. Set LOGOS_MODULE_BUILDER_ROOT.")
 endif()
 
+# The name comes from metadata.json: the backend is built from it as the core
+# module `package_manager_ui_backend`.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/metadata.json" METADATA_JSON)
+string(JSON MODULE_NAME GET ${METADATA_JSON} name)
+
 logos_module(
-    NAME package_manager_ui
+    NAME ${MODULE_NAME}
     REP_FILE src/package_manager_ui.rep
     SOURCES
         src/PackageManagerBackend.h
