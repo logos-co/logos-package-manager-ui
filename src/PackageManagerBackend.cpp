@@ -1569,14 +1569,11 @@ void PackageManagerBackend::watchNetwork()
 void PackageManagerBackend::refreshDownloadStatus()
 {
     if (!clientReady("package_downloader")) return;
-    LogosAPIClient* client = modules().api->getClient("package_downloader");
 
     QPointer<PackageManagerBackend> self(this);
-    client->invokeRemoteMethodAsync(
-        "package_downloader", "getDownloadSource", QVariantList{},
-        [self](QVariant result) {
-            if (self) self->setDownloadSource(result.toString());
-        });
+    modules().package_downloader.getDownloadSourceAsync([self](QString source) {
+        if (self) self->setDownloadSource(source);
+    });
     refreshStorageState();
 }
 
@@ -1585,18 +1582,16 @@ void PackageManagerBackend::refreshStorageState()
     if (!clientReady("package_downloader")) return;
 
     QPointer<PackageManagerBackend> self(this);
-    modules().api->getClient("package_downloader")->invokeRemoteMethodAsync(
-        "package_downloader", "getStorageState", QVariantList{},
-        [self](QVariant result) {
-            if (!self) return;
-            const QString state = result.toMap().value("state").toString();
-            self->setStorageState(state);
-            if (state == QStringLiteral("waiting") || state == QStringLiteral("starting")) {
-                QTimer::singleShot(2000, self, [self]() {
-                    if (self) self->refreshStorageState();
-                });
-            }
-        });
+    modules().package_downloader.getStorageStateAsync([self](QVariantMap result) {
+        if (!self) return;
+        const QString state = result.value("state").toString();
+        self->setStorageState(state);
+        if (state == QStringLiteral("waiting") || state == QStringLiteral("starting")) {
+            QTimer::singleShot(2000, self, [self]() {
+                if (self) self->refreshStorageState();
+            });
+        }
+    });
 }
 
 void PackageManagerBackend::subscribePackageDownloaderEvents()
