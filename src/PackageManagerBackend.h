@@ -8,7 +8,7 @@
 #include <QStringList>
 #include "logos_api.h"
 #include "logos_api_client.h"
-#include "logos_ui_plugin_context.h"
+#include "logos_module_context.h"
 #include "PackageListModel.h"
 #include "PackagesFilterProxy.h"
 #include "PackagesPagingProxy.h"
@@ -17,16 +17,17 @@
 
 // Source-side implementation of the PackageManagerUi .rep interface.
 // The `packages` Q_PROPERTY exposes a model proxy stack (raw → filter →
-// paging) that ui-host remotes separately because QAbstractItemModel*
-// can't flow through a .rep; QML reaches it via logos.model(...).
+// paging), published separately because QAbstractItemModel* can't flow
+// through a .rep; QML reaches it via logos.model(...).
 //
-// LogosUiPluginContext supplies `modules()` — the Qt-typed wrappers for the
-// two declared dependencies (package_manager, package_downloader) — plus the
-// onContextReady() hook. The generated view-plugin glue
-// (generated_code/package_manager_ui_ui_glue.cpp) owns the LogosAPI and wires
-// it in; this class never receives one directly.
+// Runs as the core module `package_manager_ui_backend`. LogosModuleContext
+// (what every C++ core module derives) supplies `modules()` — the Qt-typed
+// wrappers for the two declared dependencies (package_manager,
+// package_downloader) — the onContextReady() hook, and the module's data
+// folder. The generated glue (`logos-view-generator --backend ui-module`) owns
+// the LogosAPI and wires it in; this class never receives one directly.
 class PackageManagerBackend : public PackageManagerUiSimpleSource,
-                              public LogosUiPluginContext {
+                              public LogosModuleContext {
     Q_OBJECT
     Q_PROPERTY(QAbstractItemModel* packages READ packages CONSTANT)
 
