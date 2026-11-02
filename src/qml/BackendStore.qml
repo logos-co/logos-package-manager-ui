@@ -128,7 +128,8 @@ QtObject {
         function confirmInstall(r) {
             if (!r.name) return
             confirm("basecamp.packages.confirm_install", [r.name],
-                { name: r.name, version: r.version, repositoryUrl: r.repositoryUrl },
+                { name: r.name, version: r.version, repositoryUrl: r.repositoryUrl,
+                  localPath: r.localPath || "" },
                 function (data) {
                     store.backend.performInstall(r.name, r.version, r.repositoryUrl,
                                                  data.optionalPackages || [])
@@ -139,7 +140,7 @@ QtObject {
             if (!r.moduleName) return
             confirm("basecamp.packages.confirm_upgrade", [r.moduleName],
                 { name: r.moduleName, version: r.version, mode: mode,
-                  repositoryUrl: r.repositoryUrl },
+                  repositoryUrl: r.repositoryUrl, localPath: r.localPath || "" },
                 function (data) {
                     store.backend.performUpgrade(r.moduleName, r.version, mode,
                                                  r.repositoryUrl, data.optionalPackages || [])
@@ -196,11 +197,11 @@ QtObject {
             // A local .lgx, once the backend has read its manifest — the one
             // action whose identity QML cannot determine for itself. No repo
             // url: the file is already on disk.
-            function onLocalPackageInspected(name, version, mode, isUpgrade) {
+            function onLocalPackageInspected(name, version, mode, isUpgrade, filePath) {
                 // Reuse the row-shaped payload the confirm helpers expect; a
                 // local file has no repository to pin against.
                 var r = { name: name, moduleName: name, version: version,
-                          repositoryUrl: "" }
+                          repositoryUrl: "", localPath: filePath }
                 if (isUpgrade) d.confirmUpgrade(r, mode)
                 else           d.confirmInstall(r)
             }
