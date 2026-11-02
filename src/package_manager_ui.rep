@@ -183,6 +183,7 @@ class PackageManagerUi
     // whether it is already installed live inside the file — so this is the
     // only action that still needs a backend round trip before confirmation.
     // `mode` is a valid UpgradeMode when isUpgrade, otherwise ignored.
+    // `filePath` is the file, for the host to check who signed it.
     SIGNAL(localPackageInspected(QString name, QString version,
-                                 int mode, bool isUpgrade))
+                                 int mode, bool isUpgrade, QString filePath))
 }
