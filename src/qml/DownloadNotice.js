@@ -9,14 +9,15 @@
 // internet.
 //
 // `source` is the download source ("any", "logos", "http"); `storageState`
-// package_downloader's ("off", "waiting", "starting", "running", "failed", or
-// "" not known).
+// package_downloader's ("off", "waiting", "idle", "starting", "running",
+// "failed", or "" not known). "idle" is no news: the node starts for the next
+// download.
 function notice(online, source, storageState) {
     if (!online)
         return null
 
     const storageDown = storageState === "failed" || storageState === "off"
-    const storageStarting = storageState === "waiting" || storageState === "starting"
+    const storageStarting = storageState === "starting"
 
     if (source === "logos" && storageDown)
         return { severity: "error", title: qsTr("Logos Storage isn't running"),
@@ -31,7 +32,7 @@ function notice(online, source, storageState) {
     if (source === "any" && storageDown)
         return { severity: "info", title: qsTr("Logos Storage isn't running"),
                  message: qsTr("Apps download from GitHub meanwhile. Basecamp tries Logos "
-                               + "Storage again each time it starts.") }
+                               + "Storage again with the next download.") }
 
     return null
 }
