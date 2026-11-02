@@ -10,14 +10,14 @@
 //
 // `source` is the download source ("any", "logos", "http"); `storageState`
 // package_downloader's ("off", "waiting", "idle", "starting", "running",
-// "failed", or "" not known). "idle" is no news: the node starts for the next
-// download.
+// "failed", or "" not known). "idle" says nothing: the next download starts
+// the node.
 function notice(online, source, storageState) {
     if (!online)
         return null
 
     const storageDown = storageState === "failed" || storageState === "off"
-    const storageStarting = storageState === "starting"
+    const storageStarting = storageState === "waiting" || storageState === "starting"
 
     if (source === "logos" && storageDown)
         return { severity: "error", title: qsTr("Logos Storage isn't running"),
