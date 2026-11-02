@@ -386,7 +386,7 @@ void PackageManagerBackend::installLocalPackage(QUrl fileUrl)
             self->m_pendingLocalInstalls.insert(name, filePath);
 
             if (!alreadyInstalled) {
-                emit self->localPackageInspected(name, version, 0, /*isUpgrade=*/false);
+                emit self->localPackageInspected(name, version, 0, /*isUpgrade=*/false, filePath);
                 return;
             }
 
@@ -397,7 +397,7 @@ void PackageManagerBackend::installLocalPackage(QUrl fileUrl)
             const int cmp  = rowaction::versionCmp(version, installedVersion);
             const int mode = (cmp > 0) ? 0 : (cmp < 0) ? 1 : 2;
 
-            emit self->localPackageInspected(name, version, mode, /*isUpgrade=*/true);
+            emit self->localPackageInspected(name, version, mode, /*isUpgrade=*/true, filePath);
         });
 }
 
