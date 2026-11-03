@@ -32,6 +32,11 @@ Source sourceOf(const QVariantMap& approval, bool fileWaiting);
 // was approved with.
 QVariantList approvedRequests(const QVariantList& plan);
 
+// Why `plan` does not say exactly what to install -- a row without its
+// name, version, root hash and repository, or no row for `name`, the package
+// asked for -- or empty when it does.
+QString malformedPlan(const QVariantList& plan, const QString& name);
+
 // `plan` without what is installed already as approved (name, version and
 // root hash, against getInstalledPackages() rows), except `name`, the package
 // asked for: an install queued behind another must not fetch again what that
@@ -40,8 +45,14 @@ QVariantList stillToInstall(const QVariantList& plan, const QVariantList& instal
                             const QString& name);
 
 // Why `rows` -- the resolver's, or what it downloaded -- hold a release `plan`
-// does not, or empty when they hold none. A failed row is not looked at.
+// does not (name, version, root hash and repository), or empty when they
+// hold none. A failed row is not looked at.
 QString outsidePlan(const QVariantList& rows, const QVariantList& plan);
+
+// Why `rows` fall short of `requested` (stillToInstall()): the error of a
+// required row that failed, or a required release that is not among them --
+// or empty. An optional one may fail or be gone.
+QString incomplete(const QVariantList& rows, const QVariantList& requested);
 
 // One failed row for `name` saying `why`, so that nothing is installed.
 QVariantList failedRow(const QString& name, const QVariantList& plan, const QString& why);
@@ -54,9 +65,13 @@ QVariantList heldToPlan(const QVariantList& rows, const QVariantList& plan, cons
 // when it is.
 QString signerChanged(const QVariantMap& verified, const QVariantList& plan, const QVariantMap& row);
 
-// Why the file inspectPackage() describes as `inspected` is not the one the
-// host approved ({rootHash, signer}) as `name` at `version`, or empty when it is.
+// Why the file inspectPackage() describes as `inspected`, whose SHA-256 is
+// `sha256`, is not the one the host approved ({rootHash, signer, sha256}) as
+// `name` at `version`, or empty when it is.
 QString fileChanged(const QVariantMap& inspected, const QVariantMap& approved,
-                    const QString& name, const QString& version);
+                    const QString& name, const QString& version, const QString& sha256);
+
+// The SHA-256 of the file at `path`, in hex; empty if it can't be read.
+QString sha256Of(const QString& path);
 
 } // namespace install_sequence

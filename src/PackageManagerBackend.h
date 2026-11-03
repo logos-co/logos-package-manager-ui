@@ -1,7 +1,9 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <QObject>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
@@ -118,13 +120,26 @@ private:
     void installLocalFile(const QString& name, const QString& topLevelName, const QString& version,
                           const QString& path, const QVariantMap& approval);
 
-    // What a download brought, held to the plan the host approved: nothing
-    // outside it, and every file signed as approved. `then` gets `rows`, or
-    // one failed row for `name` saying why.
-    void holdToApproval(const QVariantList& rows, const QVariantMap& approval, const QString& name,
-                        std::function<void(QVariantList)> then);
-    void checkSigners(const QVariantList& rows, const QVariantList& plan, const QString& name,
-                      std::function<void(QVariantList)> then, int index = 0);
+    // What a download brought, held to the plan the host approved: every
+    // required package of `requested` (requestedRows()), nothing outside the
+    // plan, and every file signed as approved. `then` gets why not, or empty.
+    void holdToApproval(const QVariantList& rows, const QVariantMap& approval,
+                        const QVariantList& requested,
+                        std::function<void(const QString& refused)> then);
+    void checkSigners(const QVariantList& rows, const QVariantList& plan,
+                      std::function<void(const QString& refused)> then, int index = 0);
+    // Whether the local file at `path` is still the one the host approved
+    // (`approval`'s {file}) as `name` at `version`: `then` gets why not, or empty.
+    void checkLocalFile(const QString& path, const QVariantMap& approval, const QString& name,
+                        const QString& version, std::function<void(const QString& changed)> then);
+
+    // A copy of a picked file in a directory only this user can write, or
+    // empty; it is checked and installed in the file's place.
+    QString stageLocalFile(const QString& path);
+    void dropStaged(const QString& path);
+    // Drops the local file waiting under `name`, and its staged copy.
+    void forgetLocal(const QString& name);
+    std::unique_ptr<QTemporaryDir> m_stagingDir;
 
     // A file approval with no file waiting for it.
     static QString fileGone();
@@ -255,11 +270,13 @@ private:
     // entirely so the resolver falls back to its default behaviour for
     // unpinned entries.
     static QString buildDepsJson(const QList<PackageInstallSpec>& specs, const QVariantList& optionalPackages = {});
-    // The download request for `spec` once the host approved it: the plan it
-    // approved, pinned, less what is installed already apart from `subject`,
-    // or (from a host that names none) `spec` and the optional packages chosen.
-    QString requestsJson(const PackageInstallSpec& spec, const QVariantMap& approval,
-                         const QString& subject) const;
+    // What of the approved plan to fetch: less what is installed already as
+    // approved, apart from `subject`, the package asked for.
+    QVariantList requestedRows(const QVariantMap& approval, const QString& subject) const;
+    // The download request once the host approved it: `requested` pinned, or
+    // (from a host that names no plan) `spec` and the optional packages chosen.
+    static QString requestsJson(const PackageInstallSpec& spec, const QVariantMap& approval,
+                                const QVariantList& requested);
 
     // Proxy stack: raw rows → filter (search/state/sort) → paging (page slice;
     // exposed via the `packages` Q_PROPERTY).
@@ -295,15 +312,18 @@ private:
     struct PendingUpgradeMeta {
         QString repositoryUrl;
         QVariantMap approval;
+        // The approved replacement, fetched and checked before removing anything.
+        QVariantList downloaded;
     };
     QHash<QString, PendingUpgradeMeta> m_pendingUpgradeByModule;
 
-    // Before an upgrade removes anything: why its replacement is not the one
-    // the host approved, or empty when it is (or the host approved no file or
-    // plan to check).
-    void checkReplacement(const QString& moduleName, const QString& displayName,
-                          const QString& version, const PendingUpgradeMeta& meta,
-                          std::function<void(const QString& refused)> then);
+    // Before an upgrade removes anything: an approved plan's replacement is
+    // fetched and checked, a local file checked. `then` gets why it may not go
+    // ahead, or empty and what was fetched.
+    void prepareReplacement(const QString& moduleName, const QString& displayName,
+                            const QString& version, const PendingUpgradeMeta& meta,
+                            std::function<void(const QString& refused,
+                                               const QVariantList& downloaded)> then);
     void removeForUpgrade(const QString& moduleName, const QString& version, int mode,
                           const QString& displayName);
 

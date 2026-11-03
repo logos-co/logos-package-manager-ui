@@ -68,21 +68,22 @@ Every install, upgrade, downgrade and reinstall asks the host first
 (`basecamp.packages.confirm_install` / `confirm_upgrade`). `performInstall` /
 `performUpgrade` act on its answer, `approval`:
 
-- `plan`: the releases the host showed the user and judged. PMU asks the
-  downloader for exactly those, each pinned to its version, root hash,
-  repository and signer, leaving out what is installed already as approved.
-  It installs nothing if the download brings anything else, or a file not
-  signed as approved: the download picks among a release's catalogue entries
-  by root hash, which covers neither the manifest nor its signature.
-- `file`: a local `.lgx`'s root hash and signer as the host read them. PMU
-  reads the file again right before installing it, and refuses it if its root
-  hash, signer, name or version changed. A file approval installs that file or
-  nothing, never a catalogue release in its place.
+- `plan`: the releases the host showed the user and judged, each pinned to
+  its version, root hash, repository and signer. PMU downloads exactly those,
+  leaving out what is installed already as approved, and installs nothing
+  unless all of them came, nothing else did, and each file is signed as
+  approved: the download picks among a release's catalogue entries by root
+  hash, which covers neither the manifest nor its signature.
+- `file`: a picked `.lgx` is copied into a directory only this user can
+  write, and that copy is what the host checks and what is installed. The
+  answer carries the copy's SHA-256, root hash and signer as the host read
+  them; PMU checks them again right before installing. A file approval
+  installs that file or nothing, never a catalogue release in its place.
 - `optionalPackages`: the optional packages chosen.
 
-An upgrade checks its replacement this way before it removes the installed
-copy. From a host that names no plan or file, the package and the optional
-packages chosen are resolved anew, as before.
+An upgrade fetches and checks its replacement before it removes the
+installed copy. From a host that names no plan or file, the package and the
+optional packages chosen are resolved anew, as before.
 
 When upgrading an embedded package, PMU leaves the embedded copy in place and
 installs the replacement in the user directory. Package scans select the user
