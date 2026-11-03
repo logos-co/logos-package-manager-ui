@@ -18,7 +18,7 @@
     logos-module-builder.url = "github:logos-co/logos-module-builder";
 
     package_manager.url = "github:logos-co/logos-package-manager-module";
-    package_downloader.url = "github:logos-co/logos-package-downloader-module?ref=132aae3e62d6b82ed44b0ad49849f82c6546a19d";
+    package_downloader.url = "github:logos-co/logos-package-downloader-module?ref=84f7970d94509e32ce6616b96345fbea11f254f6";
 
     # Header-only: supplies the shared semver implementation
     # (include/logos/semver.hpp), which RowActionResolver.h uses to decide
