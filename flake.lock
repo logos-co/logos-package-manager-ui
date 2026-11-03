@@ -7739,16 +7739,16 @@
         "storage_module": "storage_module"
       },
       "locked": {
-        "lastModified": 1793692858,
-        "narHash": "sha256-W+uZGSaztq41o5ppwEaVMZ6vYDugkdsJEQCjLV2RuAo=",
+        "lastModified": 1793699317,
+        "narHash": "sha256-Tb3w0RrOUp5huqC2aH4YASG/IJl5UZ1z6rxG4RtEVHk=",
         "owner": "logos-co",
         "repo": "logos-package-downloader-module",
-        "rev": "84f7970d94509e32ce6616b96345fbea11f254f6",
+        "rev": "9cae076b647019f5654fa127c805e5a4e1f53ee7",
         "type": "github"
       },
       "original": {
         "owner": "logos-co",
-        "ref": "84f7970d94509e32ce6616b96345fbea11f254f6",
+        "ref": "9cae076b647019f5654fa127c805e5a4e1f53ee7",
         "repo": "logos-package-downloader-module",
         "type": "github"
       }
