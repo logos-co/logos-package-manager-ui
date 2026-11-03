@@ -45,6 +45,60 @@ QString PackageManagerBackend::buildDepsJson(const QList<PackageInstallSpec>& sp
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 }
 
+QString PackageManagerBackend::requestsJson(const PackageInstallSpec& spec, const QVariantMap& approval,
+                                           const QString& subject) const
+{
+    if (approval.contains(QStringLiteral("plan")))
+        return buildDepsJson({}, install_sequence::approvedRequests(install_sequence::stillToInstall(
+                                     approval.value(QStringLiteral("plan")).toList(),
+                                     m_installedPackagesCache, subject)));
+    return buildDepsJson({spec}, approval.value(QStringLiteral("optionalPackages")).toList());
+}
+
+void PackageManagerBackend::holdToApproval(const QVariantList& rows, const QVariantMap& approval,
+                                           const QString& name, std::function<void(QVariantList)> then)
+{
+    if (!approval.contains(QStringLiteral("plan"))) {
+        then(rows);
+        return;
+    }
+    const QVariantList plan = approval.value(QStringLiteral("plan")).toList();
+    const QString outside = install_sequence::outsidePlan(rows, plan);
+    if (!outside.isEmpty()) {
+        then(install_sequence::failedRow(name, plan, outside));
+        return;
+    }
+    checkSigners(rows, plan, name, std::move(then));
+}
+
+void PackageManagerBackend::checkSigners(const QVariantList& rows, const QVariantList& plan,
+                                         const QString& name, std::function<void(QVariantList)> then,
+                                         int index)
+{
+    while (index < rows.size()
+           && rows.at(index).toMap().value(QStringLiteral("path")).toString().isEmpty())
+        ++index;
+    if (index >= rows.size()) {
+        then(rows);
+        return;
+    }
+    // The download picks among a release's catalogue entries by root hash
+    // alone, and the root hash does not cover the manifest or its signature.
+    constexpr int kVerifyIpcDeadlineMs = 2 * 60 * 1000;
+    const QVariantMap row = rows.at(index).toMap();
+    QPointer<PackageManagerBackend> self(this);
+    modules().package_manager.verifyPackageAsync(row.value(QStringLiteral("path")).toString(),
+        [self, rows, plan, name, then, index, row](QVariantMap verified) {
+            if (!self) return;
+            const QString why = install_sequence::signerChanged(verified, plan, row);
+            if (!why.isEmpty()) {
+                then(install_sequence::failedRow(name, plan, why));
+                return;
+            }
+            self->checkSigners(rows, plan, name, then, index + 1);
+        }, Timeout(kVerifyIpcDeadlineMs));
+}
+
 PackageManagerBackend::PackageManagerBackend(QObject* parent)
     : PackageManagerUiSimpleSource(parent)
     , m_packageModel(new PackageListModel(this))
@@ -1016,7 +1070,7 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
                                                        const QString& repoUrl,
                                                        const QString& version,
                                                        bool includeDeps,
-                                                       const QVariantList& optionalPackages)
+                                                       const QVariantMap& approval)
 {
     if (!bothClientsReady()) {
         emit errorOccurred(static_cast<int>(PackageTypes::PackageManagerNotConnected));
@@ -1055,45 +1109,50 @@ void PackageManagerBackend::installSinglePackageAsync(const QString& packageName
     // restricted to a safe charset), but repo URLs are user-provided.
     PackageInstallSpec spec; spec.name = packageName;
     spec.repositoryUrl = repoUrl; spec.version = version;
-    const QString depsJson = buildDepsJson({spec}, optionalPackages);
+    const QString depsJson = requestsJson(spec, approval, packageName);
     LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
-        [self, packageName, includeDeps, optionalPackages](QVariantList results) {
+        [self, packageName, includeDeps, approval](QVariantList downloaded) {
             if (!self) return;
-            results = install_sequence::tagOptionalRows(results, optionalPackages);
-            // Filter to top-level entries when the caller asked for
-            // "just the package". The resolver may still have
-            // downloaded transitives (the request goes out before this
-            // filter), but we don't install them — matches the
-            // user's explicit choice from the dep-confirm dialog.
-            QVariantList toInstall;
-            QVariantMap fallbackMatch;
-            for (const QVariant& v : results) {
-                const QVariantMap m = v.toMap();
-                const bool isTop = m.value("topLevel").toBool();
-                if (isTop || includeDeps) toInstall.append(m);
-                if (m.value("name").toString() == packageName) fallbackMatch = m;
-            }
-            if (toInstall.isEmpty()) {
-                // No usable entries — surface the resolver's error row
-                // (or fabricate one named for the requested package so
-                // the model's Failed-by-name update finds the row).
-                QVariantMap dlResult = fallbackMatch.isEmpty()
-                    ? (results.isEmpty() ? QVariantMap{} : results.last().toMap())
-                    : fallbackMatch;
-                if (dlResult.value("name").toString().isEmpty())
-                    dlResult["name"] = packageName;
-                toInstall.append(dlResult);
-            }
-            // Flip every dep row's status to Installing up front so the
-            // user sees them as "in flight" the moment the dep-confirm
-            // dialog closes, not one-by-one as the sequential install
-            // loop reaches each. Skip error rows — those didn't make it
-            // to the install step and need to surface as failures, not
-            // hang in Installing.
-            self->markEntriesInstalling(toInstall);
-            self->installResultsSequential(toInstall, packageName, 0);
+            downloaded = install_sequence::tagOptionalRows(
+                downloaded, approval.value(QStringLiteral("optionalPackages")).toList());
+            self->holdToApproval(downloaded, approval, packageName,
+                [self, packageName, includeDeps](QVariantList results) {
+                    if (!self) return;
+                    // Filter to top-level entries when the caller asked for
+                    // "just the package". The resolver may still have
+                    // downloaded transitives (the request goes out before this
+                    // filter), but we don't install them — matches the
+                    // user's explicit choice from the dep-confirm dialog.
+                    QVariantList toInstall;
+                    QVariantMap fallbackMatch;
+                    for (const QVariant& v : results) {
+                        const QVariantMap m = v.toMap();
+                        const bool isTop = m.value("topLevel").toBool();
+                        if (isTop || includeDeps) toInstall.append(m);
+                        if (m.value("name").toString() == packageName) fallbackMatch = m;
+                    }
+                    if (toInstall.isEmpty()) {
+                        // No usable entries — surface the resolver's error row
+                        // (or fabricate one named for the requested package so
+                        // the model's Failed-by-name update finds the row).
+                        QVariantMap dlResult = fallbackMatch.isEmpty()
+                            ? (results.isEmpty() ? QVariantMap{} : results.last().toMap())
+                            : fallbackMatch;
+                        if (dlResult.value("name").toString().isEmpty())
+                            dlResult["name"] = packageName;
+                        toInstall.append(dlResult);
+                    }
+                    // Flip every dep row's status to Installing up front so the
+                    // user sees them as "in flight" the moment the dep-confirm
+                    // dialog closes, not one-by-one as the sequential install
+                    // loop reaches each. Skip error rows — those didn't make it
+                    // to the install step and need to surface as failures, not
+                    // hang in Installing.
+                    self->markEntriesInstalling(toInstall);
+                    self->installResultsSequential(toInstall, packageName, 0);
+                });
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
 
@@ -1300,7 +1359,7 @@ QString PackageManagerBackend::buildInstalledPackagesJson() const
 
 
 void PackageManagerBackend::performInstall(QString name, QString version,
-                                           QString repositoryUrl, QVariantList optionalPackages)
+                                           QString repositoryUrl, QVariantMap approval)
 {
     // Local .lgx: the file is already on disk, nothing to download.
     // Behind the install that is running, in the order asked; the row says
@@ -1308,9 +1367,9 @@ void PackageManagerBackend::performInstall(QString name, QString version,
     if (isInstalling()) {
         m_packageModel->queueRowInstallation(name, repositoryUrl);
         QPointer<PackageManagerBackend> self(this);
-        m_queuedInstalls.append([self, name, version, repositoryUrl, optionalPackages]() {
+        m_queuedInstalls.append([self, name, version, repositoryUrl, approval]() {
             if (!self) return;
-            self->performInstall(name, version, repositoryUrl, optionalPackages);
+            self->performInstall(name, version, repositoryUrl, approval);
             // Still queued: it stopped before it started (a module not
             // connected). The disk says what the row really is.
             if (self && self->m_packageModel->isRowQueued(name, repositoryUrl))
@@ -1319,32 +1378,70 @@ void PackageManagerBackend::performInstall(QString name, QString version,
         return;
     }
 
-    if (m_pendingLocalInstalls.contains(name)) {
+    switch (install_sequence::sourceOf(approval, m_pendingLocalInstalls.contains(name))) {
+    case install_sequence::Source::File:
         setIsInstalling(true);
-        const QString path = m_pendingLocalInstalls.take(name);
-        const QVariantMap entry{
-            {QStringLiteral("name"), name},
-            {QStringLiteral("path"), path},
-            {QStringLiteral("source"), QUrl::fromLocalFile(path).toString()},
-        };
-        markEntriesInstalling({entry});
-        installResultsSequential({entry}, name, 0);
+        installLocalFile(name, name, version, m_pendingLocalInstalls.take(name), approval);
         return;
+    case install_sequence::Source::Refused:
+        m_packageModel->updateRowInstallation(name, repositoryUrl,
+                                              static_cast<int>(PackageTypes::Failed), fileGone());
+        emit installationProgressUpdated(static_cast<int>(PackageTypes::ProgressFailed),
+                                         name, 0, 0, false, fileGone());
+        return;
+    case install_sequence::Source::Catalog:
+        break;
     }
 
     // Deps are always included — the host dialog is confirm-or-cancel, with no
     // "just the package" split.
-    installSinglePackageAsync(name, repositoryUrl, version, /*includeDeps=*/true, optionalPackages);
+    installSinglePackageAsync(name, repositoryUrl, version, /*includeDeps=*/true, approval);
+}
+
+QString PackageManagerBackend::fileGone()
+{
+    return QStringLiteral("The file you approved is no longer the one waiting to install, "
+                          "so nothing was installed. Open it again to review it.");
+}
+
+void PackageManagerBackend::installLocalFile(const QString& name, const QString& topLevelName,
+                                             const QString& version, const QString& path,
+                                             const QVariantMap& approval)
+{
+    QVariantMap entry{
+        {QStringLiteral("name"), name},
+        {QStringLiteral("path"), path},
+        {QStringLiteral("source"), QUrl::fromLocalFile(path).toString()},
+    };
+    markEntriesInstalling({entry});
+    if (!approval.contains(QStringLiteral("file"))) {
+        installResultsSequential({entry}, topLevelName, 0);
+        return;
+    }
+    // Read again right before installing: what the host approved is what it
+    // read, not the path.
+    QPointer<PackageManagerBackend> self(this);
+    modules().package_manager.inspectPackageAsync(path,
+        [self, entry, name, version, topLevelName, approved = approval.value(QStringLiteral("file")).toMap()]
+        (QVariantMap inspected) mutable {
+            if (!self) return;
+            const QString changed = install_sequence::fileChanged(inspected, approved, name, version);
+            if (!changed.isEmpty()) {
+                entry.remove(QStringLiteral("path"));
+                entry.insert(QStringLiteral("error"), changed);
+            }
+            self->installResultsSequential({entry}, topLevelName, 0);
+        });
 }
 
 void PackageManagerBackend::performUpgrade(QString moduleName, QString version, int mode,
-                                           QString repositoryUrl, QVariantList optionalPackages)
+                                           QString repositoryUrl, QVariantMap approval)
 {
     // The repo url used to be stashed during the dep preview; QML carries it
     // through the confirmation now, so there is nothing to look up.
     PendingUpgradeMeta meta;
     meta.repositoryUrl = repositoryUrl;
-    meta.optionalPackages = optionalPackages;
+    meta.approval = approval;
     m_pendingUpgradeByModule.insert(moduleName, meta);
 
     if (!packageManagerReady()) {
@@ -1354,8 +1451,8 @@ void PackageManagerBackend::performUpgrade(QString moduleName, QString version, 
     // Queued before anything is removed: the old copy stays until its turn.
     if (isInstalling()) {
         QPointer<PackageManagerBackend> self(this);
-        m_queuedInstalls.append([self, moduleName, version, mode, repositoryUrl, optionalPackages]() {
-            if (self) self->performUpgrade(moduleName, version, mode, repositoryUrl, optionalPackages);
+        m_queuedInstalls.append([self, moduleName, version, mode, repositoryUrl, approval]() {
+            if (self) self->performUpgrade(moduleName, version, mode, repositoryUrl, approval);
         });
         return;
     }
@@ -1365,6 +1462,81 @@ void PackageManagerBackend::performUpgrade(QString moduleName, QString version, 
         ? m_packageModel->displayNameForModule(moduleName) : QString();
     const QString displayName = mapped.isEmpty() ? moduleName : mapped;
 
+    // Nothing is removed until its replacement is known to be the approved one.
+    QPointer<PackageManagerBackend> self(this);
+    checkReplacement(moduleName, displayName, version, meta,
+        [self, moduleName, version, mode, displayName](const QString& refused) {
+            if (!self) return;
+            if (!refused.isEmpty()) {
+                self->installEnded();
+                self->m_pendingUpgradeByModule.remove(moduleName);
+                self->m_pendingLocalInstalls.remove(moduleName);
+                emit self->cancellationOccurred(displayName,
+                    QStringLiteral("Upgrade of '%1' failed: %2").arg(displayName, refused));
+                return;
+            }
+            self->removeForUpgrade(moduleName, version, mode, displayName);
+        });
+}
+
+void PackageManagerBackend::checkReplacement(const QString& moduleName, const QString& displayName,
+                                             const QString& version, const PendingUpgradeMeta& meta,
+                                             std::function<void(const QString& refused)> then)
+{
+    const QVariantMap& approval = meta.approval;
+    const bool fileWaiting = m_pendingLocalInstalls.contains(moduleName);
+    switch (install_sequence::sourceOf(approval, fileWaiting)) {
+    case install_sequence::Source::Refused:
+        then(fileGone());
+        return;
+    case install_sequence::Source::File: {
+        if (!approval.contains(QStringLiteral("file"))) {
+            then({});
+            return;
+        }
+        modules().package_manager.inspectPackageAsync(m_pendingLocalInstalls.value(moduleName),
+            [then, moduleName, version, approved = approval.value(QStringLiteral("file")).toMap()]
+            (QVariantMap inspected) {
+                then(install_sequence::fileChanged(inspected, approved, moduleName, version));
+            });
+        return;
+    }
+    case install_sequence::Source::Catalog: {
+        if (!approval.contains(QStringLiteral("plan"))) {
+            then({});
+            return;
+        }
+        PackageInstallSpec spec;
+        spec.name = displayName;
+        spec.repositoryUrl = meta.repositoryUrl;
+        spec.version = version;
+        const QVariantList plan = approval.value(QStringLiteral("plan")).toList();
+        modules().package_downloader.resolveDependenciesAsync(
+            requestsJson(spec, approval, moduleName), buildInstalledPackagesJson(),
+            [then, plan](QVariantList resolved) {
+                // Here a release that can't be found is a refusal too: once the
+                // old copy is gone, nothing could take its place.
+                for (const QVariant& v : resolved) {
+                    const QString error = v.toMap().value(QStringLiteral("error")).toString();
+                    if (!error.isEmpty()) {
+                        then(error);
+                        return;
+                    }
+                }
+                if (resolved.isEmpty()) {
+                    then(QStringLiteral("package_downloader did not answer"));
+                    return;
+                }
+                then(install_sequence::outsidePlan(resolved, plan));
+            }, Timeout(DOWNLOAD_TIMEOUT_MS));
+        return;
+    }
+    }
+}
+
+void PackageManagerBackend::removeForUpgrade(const QString& moduleName, const QString& version,
+                                             int mode, const QString& displayName)
+{
     // The host has unloaded the old version. An embedded copy stays in the
     // application directory and the new user-directory copy takes priority.
     // Remove only a user-installed copy before downloading its replacement.
@@ -1677,17 +1849,21 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     // Local .lgx: the host has unloaded the old copy. A user-installed copy
     // was removed; an embedded copy remains as the fallback. The replacement
     // is already on disk — install it directly, with no download round-trip.
-    if (m_pendingLocalInstalls.contains(moduleName)) {
+    const QVariantMap approval = m_pendingUpgradeByModule.value(moduleName).approval;
+    switch (install_sequence::sourceOf(approval, m_pendingLocalInstalls.contains(moduleName))) {
+    case install_sequence::Source::File:
         m_pendingUpgradeByModule.remove(moduleName);
-        const QString path = m_pendingLocalInstalls.take(moduleName);
-        const QVariantMap entry{
-            {QStringLiteral("name"), moduleName},
-            {QStringLiteral("path"), path},
-            {QStringLiteral("source"), QUrl::fromLocalFile(path).toString()},
-        };
-        markEntriesInstalling({entry});
-        installResultsSequential({entry}, displayName, 0);
+        installLocalFile(moduleName, displayName, releaseTag,
+                         m_pendingLocalInstalls.take(moduleName), approval);
         return;
+    case install_sequence::Source::Refused:
+        m_pendingUpgradeByModule.remove(moduleName);
+        installResultsSequential(
+            {QVariantMap{{QStringLiteral("name"), moduleName}, {QStringLiteral("error"), fileGone()}}},
+            displayName, 0);
+        return;
+    case install_sequence::Source::Catalog:
+        break;
     }
 
     // Download the new version via the dependency-resolving channel.
@@ -1713,32 +1889,37 @@ void PackageManagerBackend::onUpgradeUninstallDone(const QString& moduleName,
     spec.name          = displayName;
     spec.repositoryUrl = meta.repositoryUrl;  // empty = no pin (bare upgrade)
     spec.version       = releaseTag;          // empty = newest matching
-    const QString depsJson = buildDepsJson({spec}, meta.optionalPackages);
+    const QString depsJson = requestsJson(spec, meta.approval, moduleName);
 
     LogosModules& logos = modules();
     QPointer<PackageManagerBackend> self(this);
     logos.package_downloader.downloadResolvedDependenciesAsync(depsJson, buildInstalledPackagesJson(),
-        [self, displayName, mode, optionalPackages = meta.optionalPackages](QVariantList results) {
+        [self, displayName, mode, approval = meta.approval](QVariantList downloaded) {
             if (!self) return;
-            results = install_sequence::tagOptionalRows(results, optionalPackages);
-            // Deps are always included — the host dialog is confirm-or-cancel,
-            // with no "just the package" split to honour.
-            QVariantList toInstall = results;
-            if (toInstall.isEmpty() && !results.isEmpty())
-                toInstall.append(results.last().toMap());
+            downloaded = install_sequence::tagOptionalRows(
+                downloaded, approval.value(QStringLiteral("optionalPackages")).toList());
+            self->holdToApproval(downloaded, approval, displayName,
+                [self, displayName, mode](QVariantList results) {
+                    if (!self) return;
+                    // Deps are always included — the host dialog is confirm-or-cancel,
+                    // with no "just the package" split to honour.
+                    QVariantList toInstall = results;
+                    if (toInstall.isEmpty() && !results.isEmpty())
+                        toInstall.append(results.last().toMap());
 
-            // Up-front Installing for every dep row, same rationale as
-            // the install path: visible state during the sequential
-            // loop, not lazy per-entry transitions the user might
-            // miss if any one finishes too fast to register.
-            self->markEntriesInstalling(toInstall);
-            self->installResultsSequential(toInstall, displayName, 0);
-            // Refresh is driven by the corePluginFileInstalled event
-            // package_manager emits per file, which arms the debounce
-            // timer — same path the install flow uses. No explicit
-            // refreshPackages() here so we don't race the sequential
-            // loop's mid-flight model writes.
-            Q_UNUSED(mode);
+                    // Up-front Installing for every dep row, same rationale as
+                    // the install path: visible state during the sequential
+                    // loop, not lazy per-entry transitions the user might
+                    // miss if any one finishes too fast to register.
+                    self->markEntriesInstalling(toInstall);
+                    self->installResultsSequential(toInstall, displayName, 0);
+                    // Refresh is driven by the corePluginFileInstalled event
+                    // package_manager emits per file, which arms the debounce
+                    // timer — same path the install flow uses. No explicit
+                    // refreshPackages() here so we don't race the sequential
+                    // loop's mid-flight model writes.
+                    Q_UNUSED(mode);
+                });
         }, Timeout(DOWNLOAD_TIMEOUT_MS));
 }
 
