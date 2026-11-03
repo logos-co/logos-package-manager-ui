@@ -4,6 +4,7 @@
 #include <logos_test.h>
 
 #include <QStringList>
+#include <QTemporaryFile>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -78,10 +79,11 @@ QVariantMap approvedRow(const QString& name, const QString& version, const QStri
             {"repositoryUrl", "https://repo.example"}};
 }
 
+// As package_downloader reports a download: the release, from its repository.
 QVariantMap downloaded(const QString& name, const QString& version, const QString& rootHash)
 {
     return {{"name", name}, {"version", version}, {"rootHash", rootHash},
-            {"path", "/tmp/" + name + ".lgx"}};
+            {"repositoryUrl", "https://repo.example"}, {"path", "/tmp/" + name + ".lgx"}};
 }
 
 } // namespace
@@ -113,8 +115,11 @@ LOGOS_TEST(an_approved_download_installs) {
 // after the dialog: nothing is installed, and the row says why.
 LOGOS_TEST(a_download_outside_the_plan_installs_nothing) {
     const QVariantList plan{approvedRow("app", "2.0.0", "a")};
-    for (const QVariantMap& extra : {downloaded("rln", "0.1.0", "r"),       // a new dependency
-                                     downloaded("app", "2.0.0", "other")}) { // the same version, rebuilt
+    QVariantMap elsewhere = downloaded("app", "2.0.0", "a");
+    elsewhere["repositoryUrl"] = "https://other.example";
+    for (const QVariantMap& extra : {downloaded("rln", "0.1.0", "r"),        // a new dependency
+                                     downloaded("app", "2.0.0", "other"),    // the same version, rebuilt
+                                     elsewhere}) {                           // the same build, another repository
         const QVariantList held = install_sequence::heldToPlan(
             {extra, downloaded("app", "2.0.0", "a")}, plan, "app");
         LOGOS_ASSERT_EQ(held.size(), 1);
@@ -144,6 +149,51 @@ LOGOS_TEST(what_would_be_fetched_is_held_to_the_plan_too) {
 LOGOS_TEST(a_failed_download_keeps_its_own_error) {
     const QVariantList rows{QVariantMap{{"name", "app"}, {"error", "no candidate matches 'app'"}}};
     LOGOS_ASSERT_EQ(install_sequence::heldToPlan(rows, {approvedRow("app", "2.0.0", "a")}, "app"), rows);
+}
+
+// All or nothing: a required package that failed, or never came, stops the
+// install before anything is installed -- dependencies downloaded ahead of it
+// included. An optional one may fail or be gone.
+LOGOS_TEST(an_install_short_of_a_required_package_installs_nothing) {
+    QVariantMap opt = approvedRow("opt", "1.1.0", "o");
+    opt["optional"] = true;
+    const QVariantList requested{approvedRow("dep", "1.0.0", "d"), opt, approvedRow("app", "2.0.0", "a")};
+    const QVariantMap dep = downloaded("dep", "1.0.0", "d");
+    const QVariantMap app = downloaded("app", "2.0.0", "a");
+    LOGOS_ASSERT_EQ(install_sequence::incomplete({dep, app}, requested), QString());
+
+    const QVariantMap appFailed{{"name", "app"}, {"error", "download failed for 'app' — timed out"}};
+    LOGOS_ASSERT_EQ(install_sequence::incomplete({dep, appFailed}, requested),
+                    QString("download failed for 'app' — timed out"));
+    LOGOS_ASSERT_TRUE(install_sequence::incomplete({dep}, requested).contains("app v2.0.0"));
+
+    const QVariantMap optFailed{{"name", "opt"}, {"error", "download failed for 'opt'"}};
+    LOGOS_ASSERT_EQ(install_sequence::incomplete({dep, optFailed, app}, requested), QString());
+}
+
+// An approval names each release exactly, and the package asked for among
+// them; anything less would let the download choose.
+LOGOS_TEST(an_approval_must_name_each_release_exactly) {
+    const QVariantList plan{approvedRow("dep", "1.0.0", "d"), approvedRow("app", "2.0.0", "a")};
+    LOGOS_ASSERT_EQ(install_sequence::malformedPlan(plan, "app"), QString());
+    for (const char* key : {"version", "rootHash", "repositoryUrl"}) {
+        QVariantMap partial = approvedRow("dep", "1.0.0", "d");
+        partial.remove(key);
+        LOGOS_ASSERT_TRUE(install_sequence::malformedPlan({partial, approvedRow("app", "2.0.0", "a")}, "app")
+                              .contains("dep"));
+    }
+    LOGOS_ASSERT_TRUE(install_sequence::malformedPlan({approvedRow("dep", "1.0.0", "d")}, "app").contains("app"));
+    LOGOS_ASSERT_TRUE(!install_sequence::malformedPlan({}, "app").isEmpty());
+}
+
+LOGOS_TEST(a_file_is_identified_by_the_sha256_of_all_of_it) {
+    QTemporaryFile file;
+    LOGOS_ASSERT_TRUE(file.open());
+    file.write("abc");
+    file.close();
+    LOGOS_ASSERT_EQ(install_sequence::sha256Of(file.fileName()),
+                    QString("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+    LOGOS_ASSERT_EQ(install_sequence::sha256Of(file.fileName() + ".gone"), QString());
 }
 
 // Queued behind an install that brought `dep`, the next one does not fetch
@@ -215,8 +265,9 @@ LOGOS_TEST(a_local_file_must_still_be_the_one_approved) {
     const QVariantMap approved{{"rootHash", "h1"}, {"signer", "did:jwk:a"}};
     const QVariantMap same{{"name", "app"}, {"version", "1.0.0"}, {"rootHash", "h1"},
                            {"signatureStatus", "signed"}, {"signerDid", "did:jwk:a"}};
-    const auto changed = [](const QVariantMap& inspected, const QVariantMap& approval) {
-        return !install_sequence::fileChanged(inspected, approval, "app", "1.0.0").isEmpty();
+    const auto changed = [](const QVariantMap& inspected, const QVariantMap& approval,
+                            const QString& sha256 = QString("f1")) {
+        return !install_sequence::fileChanged(inspected, approval, "app", "1.0.0", sha256).isEmpty();
     };
     LOGOS_ASSERT_TRUE(!changed(same, approved));
 
@@ -243,4 +294,14 @@ LOGOS_TEST(a_local_file_must_still_be_the_one_approved) {
     LOGOS_ASSERT_TRUE(changed(with("signatureStatus", "error"), unsignedApproval));
     // An approval naming no file holds it to nothing that could match.
     LOGOS_ASSERT_TRUE(changed(plain, {}));
+
+    // The root hash covers neither the manifest nor the signature: with the
+    // digest of the whole file, any byte that changed is caught. A host that
+    // sends no digest is held to the parts alone.
+    QVariantMap whole = unsignedApproval;
+    whole["sha256"] = "f1";
+    LOGOS_ASSERT_TRUE(!changed(plain, whole, "f1"));
+    LOGOS_ASSERT_TRUE(changed(plain, whole, "f2"));
+    LOGOS_ASSERT_TRUE(changed(plain, whole, ""));
+    LOGOS_ASSERT_TRUE(!changed(plain, unsignedApproval, "anything"));
 }

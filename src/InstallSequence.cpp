@@ -1,5 +1,7 @@
 #include "InstallSequence.h"
 
+#include <QCryptographicHash>
+#include <QFile>
 #include <QSet>
 #include <QStringList>
 
@@ -53,17 +55,44 @@ QVariantList approvedRequests(const QVariantList& plan)
 
 namespace {
 
-QString release(const QString& name, const QVariantMap& m, const QString& rootHash)
-{
-    return QStringList{name, m.value("version").toString(), rootHash}.join(QChar(0x1f));
-}
-
+// A release as approved: which package, which build, from which repository.
 QString release(const QVariantMap& m)
 {
-    return release(m.value("name").toString(), m, m.value("rootHash").toString());
+    return QStringList{m.value("name").toString(), m.value("version").toString(),
+                       m.value("rootHash").toString(), m.value("repositoryUrl").toString()}
+        .join(QChar(0x1f));
+}
+
+// An installed copy carries no repository: name, version and root hash.
+QString build(const QString& name, const QString& version, const QString& rootHash)
+{
+    return QStringList{name, version, rootHash}.join(QChar(0x1f));
+}
+
+QVariantMap planRow(const QVariantList& plan, const QString& name)
+{
+    for (const QVariant& v : plan)
+        if (v.toMap().value("name").toString() == name) return v.toMap();
+    return {};
 }
 
 } // namespace
+
+QString malformedPlan(const QVariantList& plan, const QString& name)
+{
+    bool holdsName = false;
+    for (const QVariant& v : plan) {
+        const QVariantMap row = v.toMap();
+        for (const char* key : {"name", "version", "rootHash", "repositoryUrl"})
+            if (row.value(key).toString().isEmpty())
+                return QStringLiteral("The approval does not say exactly which release of %1 to "
+                                      "install, so nothing was installed.")
+                    .arg(row.value("name").toString().isEmpty() ? name : row.value("name").toString());
+        holdsName = holdsName || row.value("name").toString() == name;
+    }
+    if (holdsName) return {};
+    return QStringLiteral("The approval does not include %1, so nothing was installed.").arg(name);
+}
 
 QVariantList stillToInstall(const QVariantList& plan, const QVariantList& installed,
                             const QString& name)
@@ -73,13 +102,16 @@ QVariantList stillToInstall(const QVariantList& plan, const QVariantList& instal
         const QVariantMap m = v.toMap();
         // Keyed as buildInstalledPackagesJson() keys the resolver's installed set.
         const QString module = m.value("moduleName").toString();
-        onDisk.insert(release(module.isEmpty() ? m.value("name").toString() : module, m,
-                              m.value("hashes").toMap().value("root").toString()));
+        onDisk.insert(build(module.isEmpty() ? m.value("name").toString() : module,
+                            m.value("version").toString(),
+                            m.value("hashes").toMap().value("root").toString()));
     }
     QVariantList rows;
     for (const QVariant& v : plan) {
         const QVariantMap row = v.toMap();
-        if (row.value("name").toString() == name || !onDisk.contains(release(row)))
+        const QString key = build(row.value("name").toString(), row.value("version").toString(),
+                                  row.value("rootHash").toString());
+        if (row.value("name").toString() == name || !onDisk.contains(key))
             rows.append(row);
     }
     return rows;
@@ -99,13 +131,30 @@ QString outsidePlan(const QVariantList& rows, const QVariantList& plan)
     return {};
 }
 
+QString incomplete(const QVariantList& rows, const QVariantList& requested)
+{
+    QSet<QString> arrived;
+    for (const QVariant& v : rows) {
+        const QVariantMap row = v.toMap();
+        const bool optional = planRow(requested, row.value("name").toString()).value("optional").toBool();
+        if (!row.contains("error")) arrived.insert(release(row));
+        else if (!optional) return row.value("error").toString();
+    }
+    for (const QVariant& v : requested) {
+        const QVariantMap row = v.toMap();
+        if (row.value("optional").toBool() || arrived.contains(release(row))) continue;
+        return QStringLiteral("%1 v%2 could not be fetched as approved, so nothing was installed. "
+                              "Try again to review it.")
+            .arg(row.value("name").toString(), row.value("version").toString());
+    }
+    return {};
+}
+
 QVariantList failedRow(const QString& name, const QVariantList& plan, const QString& why)
 {
-    QString repositoryUrl;
-    for (const QVariant& p : plan)
-        if (p.toMap().value("name").toString() == name)
-            repositoryUrl = p.toMap().value("repositoryUrl").toString();
-    return {QVariantMap{{"name", name}, {"repositoryUrl", repositoryUrl}, {"error", why}}};
+    return {QVariantMap{{"name", name},
+                        {"repositoryUrl", planRow(plan, name).value("repositoryUrl")},
+                        {"error", why}}};
 }
 
 QVariantList heldToPlan(const QVariantList& rows, const QVariantList& plan, const QString& name)
@@ -133,12 +182,15 @@ QString signerChanged(const QVariantMap& verified, const QVariantList& plan, con
 }
 
 QString fileChanged(const QVariantMap& inspected, const QVariantMap& approved,
-                    const QString& name, const QString& version)
+                    const QString& name, const QString& version, const QString& sha256)
 {
     const QString signer = approved.value("signer").toString();
     const QString status = inspected.value("signatureStatus").toString();
+    // From a host that sends no digest of the whole file, its parts alone.
+    const QString digest = approved.value("sha256").toString();
     const bool same = !inspected.contains("error")
         && !approved.value("rootHash").toString().isEmpty()
+        && (digest.isEmpty() || digest == sha256)
         && inspected.value("name").toString() == name
         && inspected.value("version").toString() == version
         && inspected.value("rootHash").toString() == approved.value("rootHash").toString()
@@ -148,6 +200,14 @@ QString fileChanged(const QVariantMap& inspected, const QVariantMap& approved,
     if (same) return {};
     return QStringLiteral("The file changed after you approved it, so it was not installed. "
                           "Open it again to review it.");
+}
+
+QString sha256Of(const QString& path)
+{
+    QFile file(path);
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!file.open(QIODevice::ReadOnly) || !hash.addData(&file)) return {};
+    return QString::fromLatin1(hash.result().toHex());
 }
 
 } // namespace install_sequence
