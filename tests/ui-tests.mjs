@@ -175,7 +175,7 @@ test("install queue: a second install waits for the first, then runs", async (ap
   }
   const storeId = store.matches[0].id;
   const refused = "An installation is already in progress.";
-  const install = (name) => `backend.performInstall("${name}", "", "", [])`;
+  const install = (name) => `backend.performInstall("${name}", "", "", ({}))`;
   const idle = async (description) => app.waitFor(
     async () => {
       if (await storeProperty(app, "isInstalling")) throw new Error("an install is still running");

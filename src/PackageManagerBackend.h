@@ -62,9 +62,9 @@ public slots:
 
     // Run an action the host approved. QML calls these from the intent
     // callback; the backend itself knows nothing about intents.
-    void performInstall(QString name, QString version, QString repositoryUrl, QVariantList optionalPackages) override;
+    void performInstall(QString name, QString version, QString repositoryUrl, QVariantMap approval) override;
     void performUpgrade(QString moduleName, QString version, int mode,
-                        QString repositoryUrl, QVariantList optionalPackages) override;
+                        QString repositoryUrl, QVariantMap approval) override;
     void performUninstall(QStringList names) override;
     void reportActionFailed(QStringList names, QString error) override;
 
@@ -111,7 +111,23 @@ private:
                                    const QString& repoUrl = QString(),
                                    const QString& version = QString(),
                                    bool includeDeps = true,
-                                   const QVariantList& optionalPackages = {});
+                                   const QVariantMap& approval = {});
+
+    // A local .lgx the host approved: installed only if it is still the file
+    // the host read (`approval`'s {file}), as `name` at `version`.
+    void installLocalFile(const QString& name, const QString& topLevelName, const QString& version,
+                          const QString& path, const QVariantMap& approval);
+
+    // What a download brought, held to the plan the host approved: nothing
+    // outside it, and every file signed as approved. `then` gets `rows`, or
+    // one failed row for `name` saying why.
+    void holdToApproval(const QVariantList& rows, const QVariantMap& approval, const QString& name,
+                        std::function<void(QVariantList)> then);
+    void checkSigners(const QVariantList& rows, const QVariantList& plan, const QString& name,
+                      std::function<void(QVariantList)> then, int index = 0);
+
+    // A file approval with no file waiting for it.
+    static QString fileGone();
 
     // Sequential per-row install. Bulk path uses installNextPackage,
     // which locks isInstalling — per-row stays unlocked so concurrent
@@ -239,6 +255,11 @@ private:
     // entirely so the resolver falls back to its default behaviour for
     // unpinned entries.
     static QString buildDepsJson(const QList<PackageInstallSpec>& specs, const QVariantList& optionalPackages = {});
+    // The download request for `spec` once the host approved it: the plan it
+    // approved, pinned, less what is installed already apart from `subject`,
+    // or (from a host that names none) `spec` and the optional packages chosen.
+    QString requestsJson(const PackageInstallSpec& spec, const QVariantMap& approval,
+                         const QString& subject) const;
 
     // Proxy stack: raw rows → filter (search/state/sort) → paging (page slice;
     // exposed via the `packages` Q_PROPERTY).
@@ -273,9 +294,18 @@ private:
     // Drained on use in onUpgradeUninstallDone, keyed by moduleName.
     struct PendingUpgradeMeta {
         QString repositoryUrl;
-        QVariantList optionalPackages;
+        QVariantMap approval;
     };
     QHash<QString, PendingUpgradeMeta> m_pendingUpgradeByModule;
+
+    // Before an upgrade removes anything: why its replacement is not the one
+    // the host approved, or empty when it is (or the host approved no file or
+    // plan to check).
+    void checkReplacement(const QString& moduleName, const QString& displayName,
+                          const QString& version, const PendingUpgradeMeta& meta,
+                          std::function<void(const QString& refused)> then);
+    void removeForUpgrade(const QString& moduleName, const QString& version, int mode,
+                          const QString& displayName);
 
     // Local .lgx files awaiting host approval, keyed by the package name
     // inspectPackage reported (the same name carried in the confirm_install /

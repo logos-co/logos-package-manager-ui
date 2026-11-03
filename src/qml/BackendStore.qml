@@ -131,8 +131,7 @@ QtObject {
                 { name: r.name, version: r.version, repositoryUrl: r.repositoryUrl,
                   localPath: r.localPath || "" },
                 function (data) {
-                    store.backend.performInstall(r.name, r.version, r.repositoryUrl,
-                                                 data.optionalPackages || [])
+                    store.backend.performInstall(r.name, r.version, r.repositoryUrl, data)
                 })
         }
 
@@ -142,8 +141,7 @@ QtObject {
                 { name: r.moduleName, version: r.version, mode: mode,
                   repositoryUrl: r.repositoryUrl, localPath: r.localPath || "" },
                 function (data) {
-                    store.backend.performUpgrade(r.moduleName, r.version, mode,
-                                                 r.repositoryUrl, data.optionalPackages || [])
+                    store.backend.performUpgrade(r.moduleName, r.version, mode, r.repositoryUrl, data)
                 })
         }
 
