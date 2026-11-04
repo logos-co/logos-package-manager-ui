@@ -200,36 +200,14 @@ QVariantMap buildPackageRow(const QVariantMap& obj,
         entry["publisherRef"] = vm.value("publisherRef").toString();
         entry["url"]          = vm.value("url").toString();
 
-        QStringList urls = vm.value("urls").toStringList();
-
-        if (urls.isEmpty()) {
-            // Fall back to the single `url` if `urls` is empty.
-            urls.append(vm.value("url").toString());
-        }
-
-        bool onStorage = false;
-        bool onGitHub = false;
-
-        for (const QString& url : urls) {
-            if (url.startsWith(QStringLiteral("logos:"))) {
-                onStorage = true;
-            } else if (!url.isEmpty()) {
-                onGitHub = true;
-            }
-        }
-
-        // Only the transports the download source allows. A downloader that
-        // predates the setting sends no `allowedSources`: all are allowed.
-        const bool hasAllowed = vm.contains(QStringLiteral("allowedSources"));
-        const QStringList allowed = vm.value(QStringLiteral("allowedSources")).toStringList();
-
+        const QStringList usable = vm.value("usableSources").toStringList();
         QVariantList sources;
 
-        if (onStorage && (!hasAllowed || allowed.contains(QStringLiteral("logos")))) {
+        if (usable.contains(QStringLiteral("logos"))) {
             sources.append(static_cast<int>(PackageTypes::Storage));
         }
 
-        if (onGitHub && (!hasAllowed || allowed.contains(QStringLiteral("http")))) {
+        if (usable.contains(QStringLiteral("http"))) {
             sources.append(static_cast<int>(PackageTypes::GitHub));
         }
 
