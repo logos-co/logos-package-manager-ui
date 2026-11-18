@@ -42,6 +42,61 @@ async function storeProperty(app, propName) {
   return propertyOf(app, res.matches[0].id, propName);
 }
 
+// An approval as Basecamp answers one: a plan naming the exact release. The
+// resolver only filters the loaded catalogue by repositoryUrl; nothing fetches it.
+function approvedPlan(name) {
+  return `({ plan: [{ name: "${name}", version: "1.0.0", rootHash: "0", ` +
+         `repositoryUrl: "https://example.invalid" }] })`;
+}
+
+// Evaluates an expression on the BackendStore; a QML error throws.
+async function storeEvaluator(app) {
+  const store = await app.findByProperty("objectName", "pmui.BackendStore");
+  if (!store.matches || store.matches.length === 0) {
+    throw new Error('No object found with objectName "pmui.BackendStore"');
+  }
+  const storeId = store.matches[0].id;
+  return async (expression) => {
+    const res = await app.inspector.send("evaluate", { objectId: storeId, expression });
+    if (res.error) throw new Error(`${expression}: ${res.error}`);
+    return res.result;
+  };
+}
+
+function waitForIdle(app, description) {
+  return app.waitFor(
+    async () => {
+      if (await storeProperty(app, "isInstalling")) throw new Error("an install is still running");
+    },
+    { timeout: 30000, interval: 500, description }
+  );
+}
+
+// Records, from now on, whether the install lock was ever taken and every
+// message in order: polling would miss what ends this fast. A Connections, so
+// the watch goes with the probe; null until retargeted, or it would watch d.
+async function storeProbe(app, evaluate, objectName) {
+  await evaluate(`(function () {
+    var probe = Qt.createQmlObject('import QtQuick; Connections { objectName: "${objectName}"; ' +
+      'target: null; property bool locked: false; property var messages: []; ' +
+      'function onIsInstallingChanged() { if (target.isInstalling) locked = true } ' +
+      'function onLastMessageChanged() { if (target.lastMessage) ' +
+      'messages = messages.concat([target.lastMessage]) } }', d);
+    probe.target = store;
+  })()`);
+  const found = await app.findByProperty("objectName", objectName);
+  if (!found.matches || found.matches.length === 0) throw new Error(`${objectName} was not created`);
+  const id = found.matches[0].id;
+  const read = async (expression) =>
+    (await app.inspector.send("evaluate", { objectId: id, expression })).result;
+  return {
+    locked: async () => (await read("locked")) === true,
+    // Arrays come back from getProperties as an opaque "<QJSValue>".
+    messages: async () => JSON.parse(await read("JSON.stringify(messages)")).map(String),
+    destroy: () => read("destroy()"),
+  };
+}
+
 async function propertyOf(app, objectId, propName) {
   const res = await app.getProperties(objectId);
   if (res.error) throw new Error(`getProperties failed: ${res.error}`);
@@ -175,7 +230,7 @@ test("install queue: a second install waits for the first, then runs", async (ap
   }
   const storeId = store.matches[0].id;
   const refused = "An installation is already in progress.";
-  const install = (name) => `backend.performInstall("${name}", "", "", ({}))`;
+  const install = (name) => `backend.performInstall("${name}", "", "", ${approvedPlan(name)})`;
   const idle = async (description) => app.waitFor(
     async () => {
       if (await storeProperty(app, "isInstalling")) throw new Error("an install is still running");
@@ -184,21 +239,7 @@ test("install queue: a second install waits for the first, then runs", async (ap
   );
 
   await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
-
-  // Records every isInstalling change and every message, so the run can be
-  // read afterwards: polling would miss installs that fail this fast.
-  await app.inspector.send("evaluate", {
-    objectId: storeId,
-    expression: `(function () {
-      var probe = Qt.createQmlObject('import QtQuick; QtObject { objectName: "pmui.installProbe"; ' +
-                                     'property var installing: []; property var messages: [] }', d);
-      isInstallingChanged.connect(function () { probe.installing = probe.installing.concat([isInstalling]); });
-      lastMessageChanged.connect(function () { if (lastMessage) probe.messages = probe.messages.concat([lastMessage]); });
-    })()`,
-  });
-  const probe = await app.findByProperty("objectName", "pmui.installProbe");
-  if (!probe.matches || probe.matches.length === 0) throw new Error("the install probe was not created");
-  const probeId = probe.matches[0].id;
+  const probe = await storeProbe(app, await storeEvaluator(app), "pmui.installProbe");
 
   // Back to back: the second arrives while the first runs, and must wait for
   // it rather than be refused or run beside it.
@@ -209,24 +250,16 @@ test("install queue: a second install waits for the first, then runs", async (ap
   await idle("both installs to end");
   await new Promise((r) => setTimeout(r, 500));
 
-  // Arrays come back from getProperties as an opaque "<QJSValue>": read them
-  // through JSON instead.
-  const recorded = JSON.parse((await app.inspector.send("evaluate", {
-    objectId: probeId,
-    expression: "JSON.stringify({ installing: installing, messages: messages })",
-  })).result);
-  const installing = recorded.installing;
-  const messages = recorded.messages.map(String);
+  const locked = await probe.locked();
+  const messages = await probe.messages();
+  await probe.destroy();
   // Run side by side, these installs never took the lock at all.
-  if (!Array.isArray(installing) || !installing.includes(true)) {
-    throw new Error(`the installs never took the install lock: ${JSON.stringify(installing)}`);
-  }
+  if (!locked) throw new Error("the installs never took the install lock");
   if (messages.includes(refused)) throw new Error("the second install was refused instead of queued");
   const last = messages[messages.length - 1] || "";
   if (!last.includes("pmui_queue_probe_b")) {
     throw new Error(`the second install did not run last: ${JSON.stringify(messages)}`);
   }
-  await app.inspector.send("evaluate", { objectId: probeId, expression: "destroy()" });
 
   // Nothing left holding the lock: a later install runs at once.
   await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
@@ -237,6 +270,86 @@ test("install queue: a second install waits for the first, then runs", async (ap
     throw new Error(`a later install did not run, message ${JSON.stringify(after)}`);
   }
   await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
+});
+
+// An approval naming neither a plan nor a file approves nothing. Without one,
+// an install resolved the name in the catalogue on its own, or took the file
+// waiting under it; installSelected installed the ticked rows asking no one.
+test("install: nothing Basecamp did not approve is installed", async (app) => {
+  await waitForPmuiLoaded(app);
+  await waitForCatalogLoaded(app);
+  const evaluate = await storeEvaluator(app);
+  const refused = (what) => app.waitFor(
+    async () => {
+      const message = String(await storeProperty(app, "lastMessage"));
+      if (!message.includes("did not approve")) {
+        throw new Error(`${what} was not refused, message ${JSON.stringify(message)}`);
+      }
+    },
+    { timeout: 30000, interval: 250, description: `${what} to be refused` }
+  );
+
+  await waitForIdle(app, "earlier installs to end");
+  await evaluate("dismissMessage()");
+  const probe = await storeProbe(app, evaluate, "pmui.unapprovedProbe");
+
+  await evaluate('backend.performInstall("pmui_unapproved_probe", "", "", ({}))');
+  await refused("an install with an empty approval");
+  // Refused before anything is fetched, removed or locked.
+  await evaluate("dismissMessage()");
+  await evaluate('backend.performUpgrade("pmui_unapproved_probe", "", 0, "", ({}))');
+  await refused("an upgrade with an empty approval");
+  const locked = await probe.locked();
+  await probe.destroy();
+  await evaluate("dismissMessage()");
+  if (locked) throw new Error("a request with an empty approval took the install lock");
+
+  if (await evaluate("typeof backend.installSelected") !== "undefined") {
+    throw new Error("backend.installSelected is back: it installs what no one approved");
+  }
+});
+
+// Checked when the request arrives: one whose approval holds nothing is
+// refused at once, never queued behind the install or upgrade that is running
+// (where it once overwrote that upgrade's approval).
+test("install queue: a request Basecamp did not approve is refused at once, not queued", async (app) => {
+  await waitForPmuiLoaded(app);
+  await waitForCatalogLoaded(app);
+  const evaluate = await storeEvaluator(app);
+
+  await waitForIdle(app, "earlier installs to end");
+  await evaluate("dismissMessage()");
+  const probe = await storeProbe(app, evaluate, "pmui.turnProbe");
+
+  // Each pair back to back: the first takes the lock, the second arrives
+  // while it runs. Names no catalog has, so nothing is fetched.
+  await evaluate(`backend.performInstall("pmui_turn_a", "", "", ${approvedPlan("pmui_turn_a")}); ` +
+                 'backend.performInstall("pmui_turn_b", "", "", ({}))');
+  await waitForIdle(app, "the approved install to end");
+  await evaluate(`backend.performUpgrade("pmui_turn_c", "1.0.0", 0, "https://example.invalid", ` +
+                 `${approvedPlan("pmui_turn_c")}); ` +
+                 'backend.performUpgrade("pmui_turn_c", "", 0, "", ({}))');
+  await waitForIdle(app, "the approved upgrade to end");
+  await new Promise((r) => setTimeout(r, 500));
+
+  const messages = await probe.messages();
+  await probe.destroy();
+  await evaluate("dismissMessage()");
+  const at = (pred) => messages.findIndex(pred);
+  const notApproved = (m) => m.includes("did not approve");
+  for (const [refusedName, runningName] of [["pmui_turn_b", "pmui_turn_a"],
+                                            ["pmui_turn_c", "pmui_turn_c"]]) {
+    const refusedAt = at((m) => m.includes(refusedName) && notApproved(m));
+    const ranAt = at((m) => m.includes(runningName) && !notApproved(m));
+    if (refusedAt < 0 || ranAt < 0) {
+      throw new Error(`expected a refusal for ${refusedName} and an end for ${runningName}: ` +
+                      JSON.stringify(messages));
+    }
+    if (refusedAt > ranAt) {
+      throw new Error(`${refusedName} waited for ${runningName} before being refused: ` +
+                      JSON.stringify(messages));
+    }
+  }
 });
 
 test("structure: table headers render", async (app) => {

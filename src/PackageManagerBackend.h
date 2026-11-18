@@ -52,11 +52,8 @@ public slots:
     void refreshCatalog() override;
     // Install a .lgx the user picked off disk.
     void installLocalPackage(QUrl fileUrl) override;
-    // Bulk: run each selected row's resolved primary action (the new
-    // "Run Actions" header button). Subsumes the old installSelected
-    // path AND adds upgrade / downgrade / reinstall to the bulk surface.
+    // Bulk actions: not wired (see the .rep).
     void runSelectedActions() override;
-    void installSelected() override;   // kept for back-compat, unwired from UI
     void uninstallSelected() override; // kept for back-compat, unwired from UI
     void togglePackage(int index, bool checked) override;
     void reloadPackage(int index) override;
@@ -87,33 +84,11 @@ private:
 
     void refreshPackages();
 
-    // Bulk install pipeline — sequential download+install of N packages,
-    // gated by the global isInstalling flag (so the bulk Install button can
-    // disable itself during a batch). Each spec pins the row's repo +
-    // dropdown-selected version so the dep resolver doesn't pick the
-    // wrong package when two repos publish the same `name`. `includeDeps`
-    // controls whether transitive deps returned by the resolver are
-    // installed alongside the top-level entries (true) or filtered out
-    // (false — "just the requested package(s)").
-    void installSpecs(const QList<PackageInstallSpec>& specs,
-                      bool includeDeps = true);
-    // Legacy name-only wrapper kept for the unwired-but-still-present
-    // installSelected() .rep slot. Builds specs with empty repo/version
-    // — same loose semantics as before (resolver picks across repos +
-    // newest version).
-    void installNamed(const QStringList& packageNames);
-
-    // Per-row install — runs independently of the global isInstalling
-    // flag so multiple per-row clicks can run in parallel. `repoUrl` /
-    // `version` empty = no pin (resolver chooses); set = scope the
-    // download to exactly that repo/version (the per-row click path
-    // always sets both). `includeDeps` is the same gate installSpecs
-    // uses — false skips transitive deps entirely.
+    // Per-row install of the releases `approval`'s plan names; `repoUrl`
+    // picks the row to mark. Holds the install lock.
     void installSinglePackageAsync(const QString& packageName,
-                                   const QString& repoUrl = QString(),
-                                   const QString& version = QString(),
-                                   bool includeDeps = true,
-                                   const QVariantMap& approval = {});
+                                   const QString& repoUrl,
+                                   const QVariantMap& approval);
 
     // A local .lgx the host approved: installed only if it is still the file
     // the host read (`approval`'s {file}), as `name` at `version`.
@@ -141,16 +116,10 @@ private:
     void forgetLocal(const QString& name);
     std::unique_ptr<QTemporaryDir> m_stagingDir;
 
-    // A file approval with no file waiting for it.
-    static QString fileGone();
-
-    // Sequential per-row install. Bulk path uses installNextPackage,
-    // which locks isInstalling — per-row stays unlocked so concurrent
-    // per-row clicks don't deadlock each other. Each entry runs
-    // through installOnePackage, the loop chains to the next on success.
-    // Progress signals carry `topLevelName` so the UI banner stays
-    // anchored to the row the user clicked, even while transitive deps
-    // are mid-install.
+    // Sequential per-row install. Each entry runs through installOnePackage,
+    // the loop chains to the next on success. Progress signals carry
+    // `topLevelName` so the UI banner stays anchored to the row the user
+    // clicked, even while transitive deps are mid-install.
     void installResultsSequential(const QVariantList& results,
                                   const QString& topLevelName,
                                   int index);
@@ -194,10 +163,6 @@ private:
     // (index 0 / out-of-range / "All" → empty filter).
     void applyTypeFilter();
 
-    void processDownloadResults(const QVariantList& results);
-    void installNextPackage(const QVariantList& results, int index, int completed, int totalPackages);
-    void finishInstallation(int completed);
-
     // Publish the model's per-selection action plan into the .rep PROPs
     // (`runnableActionCount`, `actionSummary`). Driven by
     // PackageListModel::hasSelectionChanged on every selection toggle;
@@ -225,12 +190,6 @@ private:
     // downloadSource and storageState, read from package_downloader.
     void refreshDownloadStatus();
     void refreshStorageState();
-
-    // Second half of an approved upgrade: old version gone, download+install
-    // the new one. Catalog `name` resolved from moduleName via PackageListModel.
-    void onUpgradeUninstallDone(const QString& moduleName,
-                                const QString& releaseTag,
-                                int mode);
 
     // onDone invoked with (success, errorMsg) regardless of outcome.
     void installOnePackage(const QVariantMap& dl,
@@ -262,21 +221,12 @@ private:
     // dropdown, which is why the comparator can't stay file-local here
     // anymore.)
 
-    // Build the JSON array passed to
-    // package_downloader.downloadResolvedDependencies. Uses QJsonDocument
-    // (not plain concat) so a repo URL with special characters can't
-    // desynchronise the payload — names are safe, but URLs are
-    // user-provided. Empty repositoryUrl / version fields are omitted
-    // entirely so the resolver falls back to its default behaviour for
-    // unpinned entries.
-    static QString buildDepsJson(const QList<PackageInstallSpec>& specs, const QVariantList& optionalPackages = {});
     // What of the approved plan to fetch: less what is installed already as
     // approved, apart from `subject`, the package asked for.
     QVariantList requestedRows(const QVariantMap& approval, const QString& subject) const;
-    // The download request once the host approved it: `requested` pinned, or
-    // (from a host that names no plan) `spec` and the optional packages chosen.
-    static QString requestsJson(const PackageInstallSpec& spec, const QVariantMap& approval,
-                                const QVariantList& requested);
+    // The package_downloader.downloadResolvedDependencies request for
+    // `requested`, each pinned as approved.
+    static QString requestsJson(const QVariantList& requested);
 
     // Proxy stack: raw rows → filter (search/state/sort) → paging (page slice;
     // exposed via the `packages` Q_PROPERTY).
@@ -304,18 +254,17 @@ private:
     QVariantList m_installedPackagesCache;
     QStringList  m_validVariantsCache;
 
-    // Per-module upgrade meta captured at requestVersionChange time.
-    //   repositoryUrl: scopes the post-uninstall download to the row's
-    //     source repo, so a same-named package in another repo doesn't
-    //     win the resolver's date-tiebreak.
-    // Drained on use in onUpgradeUninstallDone, keyed by moduleName.
+    // One upgrade, carried from performUpgrade to its install by value — never
+    // kept where anything else could change it midway.
     struct PendingUpgradeMeta {
+        // The row's repository, so another repo's copy isn't badged.
         QString repositoryUrl;
         QVariantMap approval;
+        // The staged local file, taken out of m_pendingLocalInstalls.
+        QString stagedPath;
         // The approved replacement, fetched and checked before removing anything.
         QVariantList downloaded;
     };
-    QHash<QString, PendingUpgradeMeta> m_pendingUpgradeByModule;
 
     // Before an upgrade removes anything: an approved plan's replacement is
     // fetched and checked, a local file checked. `then` gets why it may not go
@@ -325,7 +274,11 @@ private:
                             std::function<void(const QString& refused,
                                                const QVariantList& downloaded)> then);
     void removeForUpgrade(const QString& moduleName, const QString& version, int mode,
-                          const QString& displayName);
+                          const QString& displayName, const PendingUpgradeMeta& upgrade);
+    // Second half of an approved upgrade: the old copy is gone; install the
+    // replacement prepareReplacement checked.
+    void onUpgradeUninstallDone(const QString& moduleName, const QString& releaseTag,
+                                int mode, const PendingUpgradeMeta& upgrade);
 
     // Local .lgx files awaiting host approval, keyed by the package name
     // inspectPackage reported (the same name carried in the confirm_install /

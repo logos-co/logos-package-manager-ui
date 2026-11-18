@@ -253,9 +253,36 @@ LOGOS_TEST(the_approval_says_where_the_package_comes_from) {
     LOGOS_ASSERT_TRUE(install_sequence::sourceOf(file, false) == Source::Refused);
     LOGOS_ASSERT_TRUE(install_sequence::sourceOf(plan, true) == Source::Catalog);
     LOGOS_ASSERT_TRUE(install_sequence::sourceOf(plan, false) == Source::Catalog);
-    // From a host that says neither, as before.
-    LOGOS_ASSERT_TRUE(install_sequence::sourceOf({}, true) == Source::File);
-    LOGOS_ASSERT_TRUE(install_sequence::sourceOf({}, false) == Source::Catalog);
+}
+
+// An approval that names neither a plan nor a file approves nothing: not the
+// file waiting under the name, and not whatever the catalogue resolves.
+LOGOS_TEST(an_approval_naming_nothing_installs_nothing) {
+    using install_sequence::Source;
+    LOGOS_ASSERT_TRUE(install_sequence::sourceOf({}, true) == Source::Unapproved);
+    LOGOS_ASSERT_TRUE(install_sequence::sourceOf({}, false) == Source::Unapproved);
+    const QVariantMap optionalOnly{
+        {"optionalPackages", QVariantList{QVariantMap{{"name", "extra"}}}}};
+    LOGOS_ASSERT_TRUE(install_sequence::sourceOf(optionalOnly, true) == Source::Unapproved);
+    LOGOS_ASSERT_TRUE(install_sequence::sourceOf(optionalOnly, false) == Source::Unapproved);
+}
+
+// The one answer each slot asks before it queues or changes anything: why an
+// approval lets nothing be installed, or nothing when it holds what is asked.
+LOGOS_TEST(an_approval_is_refused_unless_it_holds_what_is_asked) {
+    const QVariantMap plan{{"plan", QVariantList{approvedRow("app", "2.0.0", "a")}}};
+    const QVariantMap file{{"file", QVariantMap{{"rootHash", "h1"}, {"signer", ""}}}};
+    LOGOS_ASSERT_EQ(install_sequence::refusal(plan, false, "app"), QString());
+    LOGOS_ASSERT_EQ(install_sequence::refusal(file, true, "app"), QString());
+
+    LOGOS_ASSERT_TRUE(install_sequence::refusal({}, true, "app").contains("did not approve"));
+    const QVariantMap optionalOnly{
+        {"optionalPackages", QVariantList{QVariantMap{{"name", "extra"}}}}};
+    LOGOS_ASSERT_TRUE(install_sequence::refusal(optionalOnly, false, "app").contains("did not approve"));
+    LOGOS_ASSERT_TRUE(install_sequence::refusal(file, false, "app").contains("no longer the one waiting"));
+    LOGOS_ASSERT_TRUE(install_sequence::refusal(plan, false, "other").contains("does not include other"));
+    const QVariantMap emptyPlan{{"plan", QVariantList{}}};
+    LOGOS_ASSERT_TRUE(!install_sequence::refusal(emptyPlan, false, "app").isEmpty());
 }
 
 // A local file is installed only while it is the one the host read: the same

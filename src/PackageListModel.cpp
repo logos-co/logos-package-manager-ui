@@ -199,21 +199,6 @@ static int countSelectedMatching(const QList<QVariantMap>& rows, RowPredicate pr
     return n;
 }
 
-// Project selected rows that satisfy `pred` to their `field` value (skipping empties).
-static QStringList collectSelectedField(const QList<QVariantMap>& rows,
-                                        RowPredicate pred,
-                                        const char* field)
-{
-    QStringList out;
-    for (const QVariantMap& pkg : rows) {
-        if (!pkg.value("isSelected").toBool()) continue;
-        if (!pred(pkg)) continue;
-        const QString v = pkg.value(field).toString();
-        if (!v.isEmpty()) out.append(v);
-    }
-    return out;
-}
-
 // Apply `mutate` to every row matching `pred`; return the [first, last] indices
 // of mutated rows (or {-1,-1} if none). Callers emit dataChanged over the span.
 template<typename Pred, typename Mut>
@@ -568,14 +553,6 @@ QStringList PackageListModel::getSelectedPackageNames() const
     return names;
 }
 
-int PackageListModel::getSelectedCount() const
-{
-    int n = 0;
-    for (const QVariantMap& pkg : m_packages)
-        if (pkg.value("isSelected").toBool()) ++n;
-    return n;
-}
-
 int PackageListModel::getInstallableSelectedCount() const
 {
     return countSelectedMatching(m_packages, isInstallableRow);
@@ -584,11 +561,6 @@ int PackageListModel::getInstallableSelectedCount() const
 int PackageListModel::getUninstallableSelectedCount() const
 {
     return countSelectedMatching(m_packages, isUninstallableRow);
-}
-
-QStringList PackageListModel::getInstallableSelectedPackageNames() const
-{
-    return collectSelectedField(m_packages, isInstallableRow, "name");
 }
 
 
@@ -633,11 +605,6 @@ QString PackageListModel::moduleNameForPackage(const QString& packageName) const
 }
 
 // ──────────────────────────── selection clears ────────────────────────────
-
-void PackageListModel::clearSelectionsByPackageNames(const QStringList& names)
-{
-    clearSelectionsBy(names, "name");
-}
 
 void PackageListModel::clearSelectionsByModuleNames(const QStringList& moduleNames)
 {

@@ -10,17 +10,7 @@
 #include <QVariantMap>
 #include <QStringList>
 
-// Per-install pin. Carries the row's repo + selected version into the
-// downloader so the dep-resolver doesn't pick the wrong package when
-// two repos publish the same `name` (the "I clicked Install on the
-// Logos Official wallet_module v1.0.0 and got Dario's Modules v1.0.1"
-// bug). Name alone is ambiguous in a multi-repo catalog; the dep
-// resolver previously chose by newest releasedAt across all matching
-// repos and took the latest version regardless of the user's dropdown.
-//
-// Empty `repositoryUrl` / `version` mean "don't pin" — the resolver
-// falls back to its old cross-repo "best" pick, which is what the
-// legacy CLI and the unwired installSelected() path still want.
+// One selected row's install target, for the bulk plan to count.
 struct PackageInstallSpec {
     QString name;
     QString repositoryUrl;   // empty = any repo
@@ -64,7 +54,7 @@ struct PackageActionPlan {
     // category counts and the user couldn't see which specific
     // packages were being acted on.
     struct Item {
-        QString name;            // catalog name (input to installNamed / dep resolver)
+        QString name;            // catalog name
         QString displayName;     // friendlier label (moduleName fallback to name)
         QString action;          // "install" / "upgrade" / "downgrade" / "reinstall" / "retry"
         QString repository;      // repositoryDisplayName (already user-facing)
@@ -202,12 +192,9 @@ public:
     void setRowVersion(int index, int versionIndex);
 
     QStringList getSelectedPackageNames() const;
-    int getSelectedCount() const;
 
     int getInstallableSelectedCount() const;
     int getUninstallableSelectedCount() const;
-    QStringList getInstallableSelectedPackageNames() const;
-    void clearSelectionsByPackageNames(const QStringList& names);
     void clearSelectionsByModuleNames(const QStringList& moduleNames);
 
     // Build the bulk "Run Actions" plan from the current selection.

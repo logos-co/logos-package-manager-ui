@@ -34,7 +34,23 @@ Source sourceOf(const QVariantMap& approval, bool fileWaiting)
 {
     if (approval.contains("file")) return fileWaiting ? Source::File : Source::Refused;
     if (approval.contains("plan")) return Source::Catalog;
-    return fileWaiting ? Source::File : Source::Catalog;
+    return Source::Unapproved;
+}
+
+QString refusal(const QVariantMap& approval, bool fileWaiting, const QString& name)
+{
+    switch (sourceOf(approval, fileWaiting)) {
+    case Source::Unapproved:
+        return QStringLiteral("Basecamp did not approve this, so nothing was installed.");
+    case Source::Refused:
+        return QStringLiteral("The file you approved is no longer the one waiting to install, "
+                              "so nothing was installed. Open it again to review it.");
+    case Source::Catalog:
+        return malformedPlan(approval.value(QStringLiteral("plan")).toList(), name);
+    case Source::File:
+        break;
+    }
+    return {};
 }
 
 QVariantList approvedRequests(const QVariantList& plan)
