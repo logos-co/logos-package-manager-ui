@@ -19,7 +19,6 @@ public:
 
     enum ErrorType {
         NoError = 0,
-        InstallationAlreadyInProgress = 2,
         NoPackagesSelected = 3,
         PackageManagerNotConnected = 4,
         UninstallFailed = 5,

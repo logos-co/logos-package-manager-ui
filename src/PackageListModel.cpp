@@ -165,40 +165,6 @@ static void recomputeRowAction(QVariantMap& row)
         instV, instH, selV, selH);
 }
 
-// Centralised row predicates — read by the legacy eligibility-aware
-// getters (kept for back-compat) and mirrored by the per-row gating in
-// PackageList.qml's kebab menu (Reload / Uninstall enable state) +
-// ActionPill.qml's `_runnable` check.
-using RowPredicate = bool (*)(const QVariantMap&);
-
-static bool isInstallableRow(const QVariantMap& pkg)
-{
-    if (!pkg.value("isVariantAvailable", false).toBool()) return false;
-    if (!pkg.value("isSourceAvailable", true).toBool()) return false;
-    const int status = pkg.value("installStatus", 0).toInt();
-    return status == static_cast<int>(PackageTypes::NotInstalled)
-        || status == static_cast<int>(PackageTypes::Failed);
-}
-
-static bool isUninstallableRow(const QVariantMap& pkg)
-{
-    if (pkg.value("installType").toString() != QStringLiteral("user")) return false;
-    const int status = pkg.value("installStatus", 0).toInt();
-    return status == static_cast<int>(PackageTypes::Installed)
-        || status == static_cast<int>(PackageTypes::UpgradeAvailable)
-        || status == static_cast<int>(PackageTypes::DowngradeAvailable)
-        || status == static_cast<int>(PackageTypes::DifferentHash);
-}
-
-// Count selected rows that also satisfy `pred`.
-static int countSelectedMatching(const QList<QVariantMap>& rows, RowPredicate pred)
-{
-    int n = 0;
-    for (const QVariantMap& pkg : rows)
-        if (pkg.value("isSelected").toBool() && pred(pkg)) ++n;
-    return n;
-}
-
 // Apply `mutate` to every row matching `pred`; return the [first, last] indices
 // of mutated rows (or {-1,-1} if none). Callers emit dataChanged over the span.
 template<typename Pred, typename Mut>
@@ -542,27 +508,6 @@ void PackageListModel::setRowVersion(int index, int versionIndex)
          InstallStatusRole, RowActionRole, NotAvailableReasonRole});
 }
 
-// ─────────────────────────────── selectors ───────────────────────────────
-
-QStringList PackageListModel::getSelectedPackageNames() const
-{
-    QStringList names;
-    for (const QVariantMap& pkg : m_packages)
-        if (pkg.value("isSelected").toBool())
-            names.append(pkg.value("name").toString());
-    return names;
-}
-
-int PackageListModel::getInstallableSelectedCount() const
-{
-    return countSelectedMatching(m_packages, isInstallableRow);
-}
-
-int PackageListModel::getUninstallableSelectedCount() const
-{
-    return countSelectedMatching(m_packages, isUninstallableRow);
-}
-
 
 QVariantMap PackageListModel::packageAt(int index) const
 {
@@ -621,17 +566,6 @@ void PackageListModel::clearSelectionsBy(const QStringList& keys, const char* fi
             return p.value("isSelected").toBool()
                 && keySet.contains(p.value(field).toString());
         },
-        [](QVariantMap& p) { p["isSelected"] = false; });
-
-    if (first < 0) return;
-    emit dataChanged(createIndex(first, 0), createIndex(last, 0), {IsSelectedRole});
-    emit hasSelectionChanged();
-}
-
-void PackageListModel::clearAllSelections()
-{
-    auto [first, last] = mutateMatchingRows(m_packages,
-        [](const QVariantMap& p) { return p.value("isSelected").toBool(); },
         [](QVariantMap& p) { p["isSelected"] = false; });
 
     if (first < 0) return;

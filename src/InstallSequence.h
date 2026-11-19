@@ -62,9 +62,6 @@ QString incomplete(const QVariantList& rows, const QVariantList& requested);
 // One failed row for `name` saying `why`, so that nothing is installed.
 QVariantList failedRow(const QString& name, const QVariantList& plan, const QString& why);
 
-// `rows`, or failedRow() when outsidePlan() finds something.
-QVariantList heldToPlan(const QVariantList& rows, const QVariantList& plan, const QString& name);
-
 // Why the downloaded `row`, as verifyPackage() describes it in `verified`, is
 // not signed as `plan` approved it -- by its signer, or by nobody -- or empty
 // when it is.

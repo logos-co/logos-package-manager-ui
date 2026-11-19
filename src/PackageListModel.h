@@ -18,26 +18,19 @@ struct PackageInstallSpec {
 };
 
 // Bulk "Run Actions" plan. Built from the model's selected-row state by
-// buildActionPlanForSelected(); consumed by
-// PackageManagerBackend::runSelectedActions() — installs (+ retries)
-// batch through downloadResolvedDependencies, version changes dispatch
-// per-row through the host's confirm_upgrade intent.
+// buildActionPlanForSelected() and only summarised today: runSelectedActions()
+// is a stub, and running a batch needs one host confirmation for all of it.
 //
 // Per-action counts are tracked explicitly (rather than derived) so the
 // confirm-summary popup can label retries separately from fresh
 // installs, and upgrade/downgrade/reinstall separately within the
 // versionChanges list (whose entries only carry (index, mode)).
 struct PackageActionPlan {
-    // Per-row install pins for downloadResolvedDependencies — both
-    // Install and Retry rows go here, since they share the same
-    // execution path. Each entry carries name + the row's
-    // repositoryUrl + the dropdown-selected version, so the resolver
-    // scopes the download to exactly the row the user clicked.
+    // Install and Retry rows: name, the row's repositoryUrl and the
+    // dropdown-selected version.
     QList<PackageInstallSpec> installSpecs;
     // (modelRowIndex, UpgradeMode-as-int) for each Upgrade / Downgrade /
-    // Reinstall row. Mode is the same int the per-row backend slot
-    // already uses, so each entry forwards straight to
-    // PackageManagerBackend::requestVersionChange.
+    // Reinstall row, the mode performUpgrade takes.
     QList<QPair<int, int>> versionChanges;
 
     // Counts (zero by default). install + retry == installSpecs.size().
@@ -191,15 +184,11 @@ public:
     // the selected release version moves relative to the installed one).
     void setRowVersion(int index, int versionIndex);
 
-    QStringList getSelectedPackageNames() const;
-
-    int getInstallableSelectedCount() const;
-    int getUninstallableSelectedCount() const;
     void clearSelectionsByModuleNames(const QStringList& moduleNames);
 
     // Build the bulk "Run Actions" plan from the current selection.
     // Walks every selected row, reads its rowAction, and projects:
-    //   - Install / Retry      → installNames (single batched download)
+    //   - Install / Retry      → installSpecs
     //   - Upgrade / Downgrade  → versionChanges with the matching mode
     //   - Reinstall            → versionChanges with mode = Sidegrade
     //   - NoOp / NotAvailable  → ignored (the pill is non-clickable for
@@ -214,7 +203,6 @@ public:
 
     QString displayNameForModule(const QString& moduleName) const;
     QString moduleNameForPackage(const QString& packageName) const;
-    void clearAllSelections();
     void clearFailedRows();
 
 signals:

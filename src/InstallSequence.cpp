@@ -173,12 +173,6 @@ QVariantList failedRow(const QString& name, const QVariantList& plan, const QStr
                         {"error", why}}};
 }
 
-QVariantList heldToPlan(const QVariantList& rows, const QVariantList& plan, const QString& name)
-{
-    const QString why = outsidePlan(rows, plan);
-    return why.isEmpty() ? rows : failedRow(name, plan, why);
-}
-
 QString signerChanged(const QVariantMap& verified, const QVariantList& plan, const QVariantMap& row)
 {
     QString signer;

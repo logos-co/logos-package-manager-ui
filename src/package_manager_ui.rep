@@ -16,7 +16,6 @@ class PackageManagerUi
 
     ENUM ErrorType {
         NoError                       = 0,
-        InstallationAlreadyInProgress = 2,
         NoPackagesSelected            = 3,
         PackageManagerNotConnected    = 4,
         UninstallFailed               = 5,
@@ -165,9 +164,6 @@ class PackageManagerUi
     SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
     // Reply to requestPackageDetails.
     SIGNAL(packageDetailsLoaded(QVariantMap details))
-    // Backend cleared model selection programmatically (e.g. release switch);
-    // QML should mirror by clearing LogosTable.selectedIndices.
-    SIGNAL(selectionsCleared())
     // System-originated cancel of an in-flight install/uninstall/upgrade.
     // `message` is pre-formatted for verbatim toast display.
     SIGNAL(cancellationOccurred(QString name, QString message))

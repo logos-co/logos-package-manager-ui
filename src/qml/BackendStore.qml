@@ -154,8 +154,6 @@ QtObject {
 
         function errorText(code) {
             switch (code) {
-            case PackageManagerUi.InstallationAlreadyInProgress:
-                return qsTr("An installation is already in progress.")
             case PackageManagerUi.NoPackagesSelected:
                 return qsTr("No packages selected.")
             case PackageManagerUi.PackageManagerNotConnected:

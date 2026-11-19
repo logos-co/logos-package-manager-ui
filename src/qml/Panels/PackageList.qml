@@ -45,11 +45,6 @@ LogosTable {
 
     onRowClicked: function(idx, row) { root.detailsRequested(idx) }
 
-    function clearSelections() {
-        root.selectedIndices = []
-        d.previousSelection = []
-    }
-
     QtObject {
         id: d
         property var previousSelection: []
@@ -138,9 +133,8 @@ LogosTable {
             return date.toLocaleDateString(Qt.locale(), Locale.ShortFormat)
         }
 
-        // Gate the kebab's Uninstall item. Mirrors PackageListModel's
-        // isUninstallableRow predicate: must be user-installed AND in a
-        // state where uninstall is meaningful.
+        // Gate the kebab's Uninstall item: user-installed, and in a state
+        // where uninstall is meaningful.
         function canUninstall(r) {
             if (!r) return false
             if (r.installType !== "user") return false

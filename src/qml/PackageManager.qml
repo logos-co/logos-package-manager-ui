@@ -16,8 +16,7 @@ Rectangle {
 
 
     BackendStore {
-        id: store 
-        function onSelectionsCleared() { packageList.clearSelections() }
+        id: store
     }
 
     color: Theme.palette.background
@@ -307,10 +306,9 @@ Rectangle {
     // The bulk-action surface (checkbox column + "Run Actions (N)"
     // header button + this confirm popup) is disabled. Per-row
     // ActionPill is the single way to act on a package right now.
-    // Backend plumbing (actionSummary, actionPlanItems,
-    // runSelectedActions) is kept so the bulk path can be turned
-    // back on without a re-implementation, but no QML opens this
-    // popup today.
+    // The plan's summary (actionSummary, actionPlanItems) is still
+    // published, but runSelectedActions is a stub: bulk needs one host
+    // confirmation for the whole batch before it can come back.
     //
     // RunActionsConfirm {
     //     id: runActionsConfirm
