@@ -213,9 +213,8 @@ GridLayout {
 
         // Single bulk-action button. Currently hidden — the bulk
         // selection / confirm-summary surface is off (see the
-        // RunActionsConfirm comment block in PackageManager.qml).
-        // Kept compiled so re-enabling is a one-line `visible: true`
-        // away once the dep-aware per-row flow stabilises.
+        // RunActionsConfirm comment block in PackageManager.qml), and the
+        // backend's bulk path is a stub.
         LogosButton {
             visible: false
             Layout.fillWidth: true

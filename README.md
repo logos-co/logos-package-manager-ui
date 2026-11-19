@@ -29,38 +29,18 @@ only one, since the table groups by the configured repository. For a catalog
 that draws from nobody the two are equal by definition, and so they are for
 any row from a downloader predating the field.
 
-### Dependency-aware per-row actions (owned by PMU)
+### Basecamp confirms every change
 
-When the user triggers an Install / Upgrade / Downgrade / Reinstall, PMU
-previews the dependency impact **before** anything downloads:
-
-1. `package_downloader.resolveDependencies(deps, installed)` resolves what
-   the action would change, omitting transitive deps already satisfied
-   on-disk.
-2. **No transitive changes** → proceed straight to the download/install.
-3. **Transitive changes** → the backend stashes the pending request
-   (keyed by an opaque `requestKey` = `repositoryUrl` + name, unique
-   across repos) and emits `installDepsConfirmationRequested`; QML shows
-   the `InstallDepsConfirm` dialog offering **Install with dependencies /
-   Install just this / Cancel**. The chosen path routes back through
-   `confirmInstallWith{,out}Deps` / `cancelInstallConfirm` by that key.
-
-So, unlike the uninstall/upgrade *cascade* dialog, PMU **does** own this
-dep-confirm preview state.
-
-### Uninstall / upgrade cascade (owned by Basecamp)
-
-For the destructive cascade confirmation, PackageManagerBackend is a
-stateless view — Basecamp's PluginManager owns the single
-cascade-confirmation dialog and the two-phase ack protocol:
-
-1. User clicks Uninstall / Upgrade in the PMU tab
-2. PMU calls `package_manager.requestUninstallAsync` / `requestUpgradeAsync`
-3. `package_manager` emits `beforeUninstall` / `beforeUpgrade`
-4. Basecamp's PluginManager acks, shows the cascade dialog, confirms/cancels
-5. On completion, `package_manager` emits `corePluginFileInstalled` / `uiPluginFileInstalled` / `corePluginUninstalled` / `uiPluginUninstalled`, which PMU consumes (debounced) to refresh the catalog rows
-
-PMU subscribes to `uninstallCancelled` / `upgradeCancelled` events for error toast display. User-initiated cancels are silent; system-originated cancellations (e.g. the module's ack-timeout when no listener takes over the gated flow) are surfaced via the dedicated `cancellationOccurred(name, message)` signal, which QML renders as a plain toast. The install-progress channel (`installationProgressUpdated`) is reserved for install progress and install failures; routing cancellations through it would render them with a misleading "Failed to install" prefix.
+PMU changes nothing on its own. Install, upgrade, downgrade, reinstall and
+uninstall each raise `basecamp.packages.confirm_install` / `confirm_upgrade` /
+`confirm_uninstall`, and Basecamp shows the one dialog: what the change brings
+or removes, who signed it, and which running apps it stops. A cancel is
+silent. Rows follow what lands on disk through package_manager's
+`corePluginFileInstalled` / `uiPluginFileInstalled` / `corePluginUninstalled` /
+`uiPluginUninstalled` events, read debounced. A change that was refused or
+failed outside an install reaches QML as `cancellationOccurred(name, message)`;
+`installationProgressUpdated` carries install progress and install failures
+only.
 
 ### Installing what the host approved
 
@@ -82,8 +62,8 @@ Every install, upgrade, downgrade and reinstall asks the host first
 - `optionalPackages`: the optional packages chosen.
 
 An upgrade fetches and checks its replacement before it removes the
-installed copy. From a host that names no plan or file, the package and the
-optional packages chosen are resolved anew, as before.
+installed copy. An answer that names neither a plan nor a file installs
+nothing.
 
 When upgrading an embedded package, PMU leaves the embedded copy in place and
 installs the replacement in the user directory. Package scans select the user
@@ -91,8 +71,9 @@ copy for that name. Upgrading a user-installed package still removes its old
 copy before installing the replacement.
 
 > Note: the bulk multi-select "Run Actions" surface is currently hidden
-> (`selectionMode: None`) — per-row actions are the supported path. The
-> backend plumbing for it remains in place behind that flag.
+> (`selectionMode: None`) — per-row actions are the supported path. Its
+> backend slots are stubs: bulk work needs one host confirmation for the
+> whole batch first (see `src/package_manager_ui.rep`).
 
 ## How to Build
 

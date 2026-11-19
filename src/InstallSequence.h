@@ -23,9 +23,14 @@ void installSequentially(QVariantList rows, InstallOne installOne, OnRow onRow, 
 // Where an approved install comes from. A file the host read ({file}) must
 // still be the one waiting under the name, or nothing is installed; a plan
 // ({plan}) is always the catalogue's, whatever file waits under the name.
-// From a host that says neither, the waiting file if there is one.
-enum class Source { File, Catalog, Refused };
+// An approval that names neither approves nothing.
+enum class Source { File, Catalog, Refused, Unapproved };
 Source sourceOf(const QVariantMap& approval, bool fileWaiting);
+
+// Why `approval` lets nothing be installed as `name` now, or empty: it names
+// neither a plan nor a file, its file is no longer the one waiting
+// (`fileWaiting`), or its plan does not say exactly what to install.
+QString refusal(const QVariantMap& approval, bool fileWaiting, const QString& name);
 
 // The resolver requests that hold a download to `plan`, the releases the host
 // approved: each pinned to the version, root hash, repository and signer it
@@ -56,9 +61,6 @@ QString incomplete(const QVariantList& rows, const QVariantList& requested);
 
 // One failed row for `name` saying `why`, so that nothing is installed.
 QVariantList failedRow(const QString& name, const QVariantList& plan, const QString& why);
-
-// `rows`, or failedRow() when outsidePlan() finds something.
-QVariantList heldToPlan(const QVariantList& rows, const QVariantList& plan, const QString& name);
 
 // Why the downloaded `row`, as verifyPackage() describes it in `verified`, is
 // not signed as `plan` approved it -- by its signer, or by nobody -- or empty

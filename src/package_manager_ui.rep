@@ -16,7 +16,6 @@ class PackageManagerUi
 
     ENUM ErrorType {
         NoError                       = 0,
-        InstallationAlreadyInProgress = 2,
         NoPackagesSelected            = 3,
         PackageManagerNotConnected    = 4,
         UninstallFailed               = 5,
@@ -127,11 +126,6 @@ class PackageManagerUi
     // for one. Reviving bulk means building the plan in QML and raising ONE
     // combined confirm intent for the batch.
     SLOT(void runSelectedActions())
-    // Legacy bulk-install slot — kept for backwards compat with any
-    // out-of-tree caller. The UI now drives bulk work through
-    // `runSelectedActions()` (which subsumes installs + version
-    // changes); this slot is unwired from the header button.
-    SLOT(void installSelected())
     // STUB, same as runSelectedActions.
     SLOT(void uninstallSelected())
     // Toggle a row's checkbox state.
@@ -140,9 +134,8 @@ class PackageManagerUi
     SLOT(void reloadPackage(int index))
 
     // Pick a different version for the row at `index`. The QML version
-    // dropdown calls this on user selection; the next install picks up
-    // the row's `selectedVersionIndex` and downloads the corresponding
-    // (version, rootHash) via package_downloader.downloadPinned.
+    // dropdown calls this on user selection; the row's next install asks
+    // the host to confirm that version.
     SLOT(void setRowVersion(int index, int versionIndex))
 
     // Request a row's full details; reply via packageDetailsLoaded.
@@ -160,9 +153,9 @@ class PackageManagerUi
     SLOT(void performUninstall(QStringList names))
 
     // Host refused, was unreachable, cancelled, or never answered. Called for
-    // EVERY non-approval including `cancelled`, because this is the only place
-    // the pending-action stashes are dropped; suppressing the toast for a
-    // user's own cancel is the backend's job, not the caller's.
+    // EVERY non-approval including `cancelled`, because it drops a local file
+    // staged for the request; suppressing the toast for a user's own cancel
+    // is the backend's job, not the caller's.
     SLOT(void reportActionFailed(QStringList names, QString error))
 
     // User-actionable error; errorType maps to the ErrorType enum.
@@ -171,9 +164,6 @@ class PackageManagerUi
     SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
     // Reply to requestPackageDetails.
     SIGNAL(packageDetailsLoaded(QVariantMap details))
-    // Backend cleared model selection programmatically (e.g. release switch);
-    // QML should mirror by clearing LogosTable.selectedIndices.
-    SIGNAL(selectionsCleared())
     // System-originated cancel of an in-flight install/uninstall/upgrade.
     // `message` is pre-formatted for verbatim toast display.
     SIGNAL(cancellationOccurred(QString name, QString message))
