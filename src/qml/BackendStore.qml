@@ -256,7 +256,12 @@ QtObject {
     function selectCategory(i) { if (backend) backend.pushSelectedCategoryIndex(i) }
     function selectType(i) { if (backend) backend.pushSelectedTypeIndex(i) }
     function toggleSelection(i, checked) { if (backend) backend.togglePackage(i, checked) }
-    function requestDetails(i) { if (backend) backend.requestPackageDetails(i) }
+    // Asked for by name and repository, read from the row as the view has it
+    // now: by the time the backend gets a row index, a search may have moved it.
+    function requestDetails(i) {
+        var r = d.row(i)
+        if (backend && r && r.name) backend.requestPackageDetailsFor(r.name, r.repositoryUrl)
+    }
 
     function clearFilters() {
         if (!backend) return

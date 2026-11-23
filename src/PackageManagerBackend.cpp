@@ -1443,11 +1443,13 @@ void PackageManagerBackend::reportActionFailed(QStringList names, QString error)
             .arg(labels.join(QStringLiteral(", ")), error));
 }
 
-void PackageManagerBackend::requestPackageDetails(int index)
+void PackageManagerBackend::requestPackageDetailsFor(QString name, QString repositoryUrl)
 {
-    const QVariantMap pkg = findPackageAtProxyRow(index);
-    if (pkg.isEmpty()) return;
-    emit packageDetailsLoaded(pkg);
+    // A row index would be read against the list as it is when this arrives,
+    // after a search or sort the view had not seen yet.
+    const int row = m_packageModel ? m_packageModel->findPackageRow(name, repositoryUrl) : -1;
+    if (row < 0) return;
+    emit packageDetailsLoaded(m_packageModel->packageAt(row));
 }
 
 void PackageManagerBackend::togglePackage(int index, bool checked)

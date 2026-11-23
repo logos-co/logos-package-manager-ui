@@ -57,7 +57,7 @@ public slots:
     void uninstallSelected() override; // kept for back-compat, unwired from UI
     void togglePackage(int index, bool checked) override;
     void reloadPackage(int index) override;
-    void requestPackageDetails(int index) override;
+    void requestPackageDetailsFor(QString name, QString repositoryUrl) override;
 
     // Run an action the host approved. QML calls these from the intent
     // callback; the backend itself knows nothing about intents.
