@@ -89,10 +89,56 @@
       # directory's modules, so nothing installed there is ever listed.
       unitTests = logos-module-builder.lib.mkLogosModuleTests
         (shared // { testDir = ./tests; });
+
+      # The views' QML tests (tests/qml), from a phone's width to a desktop's:
+      # qmltestrunner, offscreen, on a stand-in for the backend
+      # (tests/qml/stubs), so no host or backend is needed. They run on the
+      # design system Basecamp's master pins, as the views do in it, read from
+      # its lock at run time: an app, like `nix run .#ui-tests`, as the Nix
+      # sandbox cannot fetch Basecamp. LOGOS_BASECAMP names another Basecamp,
+      # LOGOS_DESIGN_SYSTEM a design-system checkout to run on instead;
+      # arguments pass to qmltestrunner.
+      qmlTests = system:
+        let
+          pkgs = import logos-module-builder.inputs.nixpkgs { inherit system; };
+          qml = pkgs.qt6.qtdeclarative;
+          plugins = pkgs.qt6.qtbase.qtPluginPrefix;
+          pinOf = pkgs.writeText "design-system-pin.jq" ''
+            .locks.nodes as $n | $n[$n.root.inputs["logos-design-system"]].locked
+            | "\(.type):\(.owner)/\(.repo)/\(.rev)"
+          '';
+          run = pkgs.writeShellApplication {
+            name = "run-qml-tests";
+            runtimeInputs = [ pkgs.jq ];
+            text = ''
+              ds="''${LOGOS_DESIGN_SYSTEM:-}"
+              if [ -z "$ds" ]; then
+                ref="''${LOGOS_BASECAMP:-github:logos-co/logos-basecamp}"
+                pin=$(nix flake metadata "$ref" --json | jq -r -f ${pinOf})
+                echo "run-qml-tests: on the design system $ref pins, $pin" >&2
+                ds=$(nix flake prefetch "$pin" --json | jq -r .storePath)
+              fi
+              export QT_QPA_PLATFORM=offscreen
+              export QT_QUICK_CONTROLS_STYLE="''${QT_QUICK_CONTROLS_STYLE:-Basic}"
+              export QML_XHR_ALLOW_FILE_READ=1
+              export QT_PLUGIN_PATH="${pkgs.qt6.qtbase}/${plugins}:${pkgs.qt6.qtsvg}/${plugins}"
+              exec ${qml}/bin/qmltestrunner \
+                -input ${./.}/tests/qml \
+                -import ${./.}/src/qml \
+                -import ${./.}/tests/qml/stubs \
+                -import "$ds/src/qml" \
+                -import ${qml}/${pkgs.qt6.qtbase.qtQmlPrefix} "$@"
+            '';
+          };
+        in { type = "app"; program = "${run}/bin/run-qml-tests"; };
     in
     module // {
       checks = builtins.mapAttrs
         (system: tests: ((module.checks or {}).${system} or {}) // tests)
         unitTests;
+      apps = builtins.mapAttrs
+        (system: apps: apps
+          // (if system == "x86_64-windows" then {} else { qml-tests = qmlTests system; }))
+        module.apps;
     };
 }

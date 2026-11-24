@@ -7,14 +7,27 @@ import Logos.Controls
 import Logos.Icons
 import Logos.PackageManagerUi 1.0
 
+import Controls
+
+import "PackageRows.js" as PackageRows
+
 // Right-side details panel
 Rectangle {
     id: root
     objectName: "pmui.DetailsPanel"
 
     property var details: ({})
+    // The package's row in the list, live, and whether the card ends with its
+    // version, action and Uninstall: for when the list beside doesn't show
+    // them, or isn't beside.
+    property var row: null
+    property bool showActions: false
+    property bool showHeader: true
 
     signal closeRequested()
+    signal actionRequested(int action)
+    signal versionPicked(int versionIndex)
+    signal uninstallRequested()
 
     color: Theme.palette.surfaceRaised
     radius: Theme.spacing.radiusXlarge
@@ -112,10 +125,12 @@ Rectangle {
 
         // ─── Header: title + close button ───
         RowLayout {
+            visible: root.showHeader
             Layout.fillWidth: true
             spacing: Theme.spacing.small
 
             LogosText {
+                objectName: "pmui.DetailsPanel.title"
                 Layout.fillWidth: true
                 text: qsTr("Details")
                 font.pixelSize: Theme.typography.panelTitleText
@@ -124,6 +139,7 @@ Rectangle {
             }
 
             LogosIconButton {
+                objectName: "pmui.DetailsPanel.close"
                 iconSource: LogosIcons.close
                 size: 28
                 iconSize: 14
@@ -146,6 +162,60 @@ Rectangle {
                 color: Theme.palette.textSecondary
                 // Wrap (not WordWrap) so a long unbroken hash still wraps.
                 wrapMode: TextEdit.Wrap
+            }
+        }
+
+        // ─── Last, the package's version, action and Uninstall ───
+        Loader {
+            Layout.fillWidth: true
+            active: root.showActions && !!root.row
+            visible: active
+            sourceComponent: ColumnLayout {
+                objectName: "pmui.DetailsPanel.actions"
+                spacing: Theme.spacing.tiny
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.small
+
+                    VersionPicker {
+                        objectName: "pmui.DetailsPanel.version"
+                        visible: versions.length > 0
+                        row: root.row
+                        Accessible.name: qsTr("Version")
+                        onVersionPicked: function(versionIndex) { root.versionPicked(versionIndex) }
+                    }
+
+                    ActionPill {
+                        id: pill
+                        objectName: "pmui.DetailsPanel.action"
+                        Layout.alignment: Qt.AlignVCenter
+                        modelData: root.row
+                        onActionRequested: function(action) { root.actionRequested(action) }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    LogosButton {
+                        objectName: "pmui.DetailsPanel.uninstall"
+                        visible: PackageRows.canUninstall(root.row)
+                        compact: true
+                        text: qsTr("Uninstall")
+                        onClicked: root.uninstallRequested()
+                    }
+                }
+
+                // The action's tooltip, where nothing hovers: what it changes,
+                // or why it can't run.
+                LogosText {
+                    objectName: "pmui.DetailsPanel.actionHelp"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: pill.helpText
+                    color: Theme.palette.textTertiary
+                    font.pixelSize: Theme.typography.secondaryText
+                    wrapMode: Text.Wrap
+                }
             }
         }
     }

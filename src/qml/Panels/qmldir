@@ -1,7 +1,6 @@
 module Panels
 CategorySidebar 1.0 CategorySidebar.qml
 DetailsPanel 1.0 DetailsPanel.qml
-HeaderBar 1.0 HeaderBar.qml
 PackageList 1.0 PackageList.qml
 PackageRevealRequest 1.0 PackageRevealRequest.qml
 RunActionsConfirm 1.0 RunActionsConfirm.qml

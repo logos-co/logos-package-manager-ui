@@ -26,7 +26,7 @@ QtObject {
     // the store owns the filters. Pushing the query from both ends meant two
     // round trips for every retry.
     function apply() {
-        if (root.header) root.header.setSearchText(d.name)
+        if (root.header) root.header.openSearch(d.name)
         if (root.store) root.store.clearFilters()
     }
 

@@ -7,6 +7,8 @@ import Logos.PackageManagerUi 1.0
 
 import Controls
 
+import "PackageRows.js" as PackageRows
+
 // Package list rendered as a LogosTable.
 LogosTable {
     id: root
@@ -44,6 +46,14 @@ LogosTable {
     selectionMode: LogosTable.None
 
     onRowClicked: function(idx, row) { root.detailsRequested(idx) }
+
+    // Narrower, columns drop out before the table scrolls sideways,
+    // Description first: Package, Available, Action and the trash stay, as
+    // Alisher's ADR-064 has the medium table. Phone-wide, a card per package,
+    // which opens its details.
+    phoneCards: true
+    rowsOpen: true
+    cardDelegate: packageCardComponent
 
     QtObject {
         id: d
@@ -133,16 +143,18 @@ LogosTable {
             return date.toLocaleDateString(Qt.locale(), Locale.ShortFormat)
         }
 
-        // Gate the kebab's Uninstall item: user-installed, and in a state
-        // where uninstall is meaningful.
-        function canUninstall(r) {
-            if (!r) return false
-            if (r.installType !== "user") return false
-            const s = r.installStatus | 0
-            return s === PackageManagerUi.Installed
-                || s === PackageManagerUi.UpgradeAvailable
-                || s === PackageManagerUi.DowngradeAvailable
-                || s === PackageManagerUi.DifferentHash
+        // A card's line: type, version, size and release date.
+        function facts(r) {
+            if (!r) return ""
+            const out = []
+            if (r.type) out.push(String(r.type))
+            if (r.installedVersion) out.push(qsTr("v%1 installed").arg(r.installedVersion))
+            else if (r.version) out.push("v" + r.version)
+            const size = formatSize(r.size)
+            if (size !== "—") out.push(size)
+            const date = formatDate(r.dateUpdated)
+            if (date !== "—") out.push(date)
+            return out.join(" · ")
         }
 
     }
@@ -164,6 +176,7 @@ LogosTable {
         // the source label on every row.
         LogosTableColumn {
             title: qsTr("Type")
+            priority: 3
             role: "type"
             minWidth: 80
             preferredWidth: 90
@@ -171,6 +184,7 @@ LogosTable {
         },
         LogosTableColumn {
             title: qsTr("Installed")
+            priority: 2
             role: "installedVersion"
             minWidth: 80
             preferredWidth: 90
@@ -179,6 +193,7 @@ LogosTable {
         },
         LogosTableColumn {
             title: qsTr("Source")
+            priority: 4
             role: "downloadSource"
             minWidth: 60
             preferredWidth: 70
@@ -194,7 +209,8 @@ LogosTable {
             role: "version"
             // Holds a combo wide enough for "1.0.10" plus the chevron; a
             // longer version reads in the dropdown, which sizes to its entries.
-            minWidth: 120
+            // At its least, once columns drop out around it, it still shows one.
+            minWidth: 130
             preferredWidth: 130
             cellDelegate: versionCellComponent
         },
@@ -205,6 +221,7 @@ LogosTable {
         // facts about what's on disk, which they are not.
         LogosTableColumn {
             title: qsTr("Size")
+            priority: 5
             role: "size"
             minWidth: 80
             preferredWidth: 90
@@ -215,6 +232,7 @@ LogosTable {
             // "Released", not "Date Updated": it's the catalog release date
             // of the selected version, not when this install was last touched.
             title: qsTr("Released")
+            priority: 6
             role: "dateUpdated"
             minWidth: 100
             preferredWidth: 110
@@ -234,6 +252,7 @@ LogosTable {
         },
         LogosTableColumn {
             title: qsTr("Description")
+            priority: 7
             role: "description"
             minWidth: 220
             preferredWidth: 240
@@ -499,10 +518,58 @@ LogosTable {
     // come from the remote manifest, and two repos claiming the same one
     // would merge into a single section.
     Component.onCompleted: {
-        if (view) {
-            view.section.property = "sourceKey"
-            view.section.criteria = ViewSection.FullString
-            view.section.delegate = sectionHeaderDelegate
+        for (const list of [view, cardsView]) {
+            if (!list)
+                continue
+            list.section.property = "sourceKey"
+            list.section.criteria = ViewSection.FullString
+            list.section.delegate = sectionHeaderDelegate
+        }
+    }
+
+    // A package on a phone: its name and action, the facts under them, ⋯ for
+    // its menu, as Settings' cards have, and › to its details, which end with
+    // its version and Uninstall.
+    Component {
+        id: packageCardComponent
+        LogosListRow {
+            id: card
+            readonly property var capturedRowItem: rowItem
+            readonly property int capturedRowIndex: rowIndex
+            objectName: "pmui.card." + (capturedRowItem ? capturedRowItem.name : "")
+            title: capturedRowItem ? (capturedRowItem.displayName || capturedRowItem.name || "") : ""
+            subtitle: d.facts(capturedRowItem)
+            showChevron: true
+            accessory: cardAction
+            menu: cardMenu
+            onClicked: root.rowClicked(capturedRowIndex, capturedRowItem)
+
+            property ActionPill cardAction: ActionPill {
+                modelData: card.capturedRowItem
+                onActionRequested: function(action) {
+                    root.actionRequested(card.capturedRowIndex, action)
+                }
+            }
+
+            // Opened by ⋯, a long press or a right-click on the card.
+            property LogosMenu cardMenu: LogosMenu {
+                objectName: "pmui.cardMenu"
+
+                LogosMenuItem {
+                    objectName: "pmui.cardMenu.details"
+                    text: qsTr("Open details")
+                    onTriggered: root.rowClicked(card.capturedRowIndex, card.capturedRowItem)
+                }
+
+                LogosMenuItem {
+                    objectName: "pmui.cardMenu.uninstall"
+                    // A hidden item still takes its height in the menu's list.
+                    visible: PackageRows.canUninstall(card.capturedRowItem)
+                    height: visible ? implicitHeight : 0
+                    text: qsTr("Uninstall")
+                    onTriggered: root.uninstallRequested(card.capturedRowIndex)
+                }
+            }
         }
     }
 
@@ -543,89 +610,20 @@ LogosTable {
     }
 
     Component {
-        // Per-row Version dropdown. Drives the row's
-        // `selectedVersionIndex`, which PackageListModel::setRowVersion
-        // uses to recompute `rowAction` — so the ActionPill two cells over
-        // flips between Upgrade / Downgrade / Reinstall / NoOp as the user
-        // moves it, and Size / Released follow the pick too.
         id: versionCellComponent
         Item {
-            id: versionCell
-
-            // Filter availableVersions to entries that actually carry a
-            // version string. An empty version is useless to surface as
-            // a dropdown choice (and shows up as a blank "..." entry
-            // when the catalog row predates the new schema), so we
-            // treat the cell as "no usable versions" and fall back to
-            // the legacy plain-text VersionRole instead.
-            property var usableVersions: {
-                const raw = rowItem ? (rowItem.availableVersions || []) : []
-                const out = []
-                for (let i = 0; i < raw.length; ++i) {
-                    const v = raw[i]
-                    if (v && v.version && String(v.version).length > 0) out.push(v)
-                }
-                return out
-            }
-            property int selectedIdx: rowItem && rowItem.selectedVersionIndex !== undefined
-                                      ? rowItem.selectedVersionIndex : 0
-            property bool hasDuplicateVersions: {
-                if (!usableVersions || usableVersions.length < 2) return false
-                var seen = {}
-                for (var i = 0; i < usableVersions.length; ++i) {
-                    var v = usableVersions[i].version
-                    if (seen[v]) return true
-                    seen[v] = true
-                }
-                return false
-            }
-            LogosComboBox {
-                id: versionCombo
-                // Spans the cell. It used to be pinned to 92px to leave a
-                // fixed slot for the update marker on its right, so the
-                // combo wouldn't reflow as the marker came and went; with
-                // the marker gone there is nothing to reserve room for.
-                // Long prerelease strings elide, which the displayText
-                // override below already collapses to the bare version.
+            VersionPicker {
+                id: versionPicker
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 6
                 anchors.rightMargin: 6
                 height: Math.min(parent.height - 8, 32)
-                visible: versionCell.usableVersions.length > 0
-                model: versionCell.usableVersions.map(function(v) {
-                    if (!versionCell.hasDuplicateVersions) return v.version || ""
-                    // Disambiguate same-version re-releases by date +
-                    // short hash so the user can pick the right one.
-                    var date = (v.releasedAt || "").substring(0, 10)
-                    var sh = (v.rootHash || "").length > 12
-                             ? (v.rootHash.substring(0, 6) + "…")
-                             : (v.rootHash || "")
-                    return (v.version || "") + " · " + date + " · " + sh
-                })
-                currentIndex: versionCell.selectedIdx
-                // Override the closed-state label so it shows just the
-                // version string even when the dropdown items carry the
-                // verbose "version · date · hash" disambiguator. Without
-                // this the long disambiguator gets elided in the narrow
-                // cell down to a bare "…", which is what makes every
-                // version dropdown look identical at a glance.
-                displayText: {
-                    const v = versionCell.usableVersions[currentIndex]
-                    return v && v.version ? String(v.version) : ""
-                }
-                onActivated: function(idx) {
-                    if (idx !== versionCell.selectedIdx)
-                        root.versionChanged(rowIndex, idx)
-                }
-
-                hoverEnabled: true
-
-                LogosToolTip {
-                    text: versionCombo.displayText
-                    placement: LogosToolTip.Top
-                    visible: versionCombo.hovered && versionCombo.contentLabel.truncated
+                visible: versions.length > 0
+                row: rowItem
+                onVersionPicked: function(versionIndex) {
+                    root.versionChanged(rowIndex, versionIndex)
                 }
             }
 
@@ -638,7 +636,7 @@ LogosTable {
             LogosText {
                 anchors.fill: parent
                 anchors.margins: 8
-                visible: versionCell.usableVersions.length === 0
+                visible: versionPicker.versions.length === 0
                 text: {
                     if (!rowItem) return ""
                     const v = rowItem.version
@@ -660,7 +658,7 @@ LogosTable {
         // about whether the action is reachable.
         id: uninstallButtonComponent
         Item {
-            visible: d.canUninstall(rowItem)
+            visible: PackageRows.canUninstall(rowItem)
             LogosIconButton {
                 anchors.centerIn: parent
                 size: 32

@@ -77,6 +77,9 @@ Control {
         : ""
     readonly property bool indeterminateProgress:
         installing && !downloadDone && (downloadReceived <= 0 || downloadTotal <= 0)
+    // The tooltip's text, for a place that shows it without hovering: what
+    // clicking would change, or why it can't run.
+    readonly property string helpText: d.tooltipText(modelData, action)
 
     QtObject {
         id: d
@@ -280,7 +283,7 @@ Control {
     }
 
     LogosToolTip {
-        text: d.tooltipText(root.modelData, root.action)
+        text: root.helpText
         placement: LogosToolTip.Top
         visible: root.hovered && text !== ""
     }
