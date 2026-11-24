@@ -180,7 +180,10 @@ LogosItemLayout {
                 text: qsTr("Install Local Package")
                 leadingIcon.source: LogosIcons.install
                 leadingIcon.size: 18
-                enabled: !root.isInstalling && !root.isLoading
+                // An install running leaves this, and Manage Repositories: a
+                // local install waits its turn behind it, and the repositories
+                // are Basecamp's Settings. Reload waits for it to end.
+                enabled: !root.isLoading
                 onClicked: root.installLocalClicked()
             }
 
@@ -204,7 +207,6 @@ LogosItemLayout {
                 Layout.preferredHeight: 40
                 radius: Theme.spacing.radiusLarge
                 text: qsTr("Manage Repositories")
-                enabled: !root.isInstalling
                 onClicked: root.repositoriesClicked()
             }
 
@@ -237,7 +239,7 @@ LogosItemLayout {
                 LogosMenuItem {
                     objectName: "pmui.moreInstallLocalItem"
                     text: qsTr("Install Local Package…")
-                    enabled: !root.isInstalling && !root.isLoading
+                    enabled: !root.isLoading
                     onTriggered: root.installLocalClicked()
                 }
 
@@ -251,7 +253,6 @@ LogosItemLayout {
                 LogosMenuItem {
                     objectName: "pmui.moreRepositoriesItem"
                     text: qsTr("Manage Repositories…")
-                    enabled: !root.isInstalling
                     onTriggered: root.repositoriesClicked()
                 }
             }

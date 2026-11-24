@@ -285,6 +285,26 @@ TestCase {
         compare(logos.requests, ["basecamp.repositories.manage"])
     }
 
+    // An install running leaves Install Local Package and Manage
+    // Repositories usable: a local install waits its turn, and the
+    // repositories are Basecamp's Settings. Reload waits for it to end.
+    function test_an_install_running_leaves_the_toolbar_usable() {
+        const view = makeView(1280)
+        backend.isInstalling = true
+        verify(find(view, "pmui.installLocalButton").enabled)
+        verify(find(view, "pmui.repositoriesButton").enabled)
+        verify(!find(view, "pmui.reloadButton").enabled)
+    }
+
+    function test_an_install_running_leaves_more_usable() {
+        const view = makeView(700)
+        backend.isInstalling = true
+        const menu = openMore(view)
+        verify(findChild(menu, "pmui.moreInstallLocalItem").enabled)
+        verify(findChild(menu, "pmui.moreRepositoriesItem").enabled)
+        verify(!findChild(menu, "pmui.moreReloadItem").enabled)
+    }
+
     // ── Phone ──
 
     // A card per package, grouped by repository; a tap opens its details as
