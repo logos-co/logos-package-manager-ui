@@ -592,6 +592,46 @@ test("details panel: hidden by default (no selection)", async (app) => {
   }
 });
 
+// What packages.show does ("Show in Package Manager"): start the search for a
+// package, then ask for its details at once, while the list is still being
+// filtered. The details must be that package's. Asked for by row, they opened
+// nothing, or the package that had moved into that row.
+test("details panel: a package shown by name opens its own details while the list filters", async (app) => {
+  await waitForPmuiLoaded(app);
+  await waitForCatalogLoaded(app);
+  const evaluate = await storeEvaluator(app);
+  await evaluate("clearSelectedDetails()");
+  await evaluate('setSearchText("")');
+  await app.waitFor(async () => {
+    if ((await evaluate("searchText")) !== "") throw new Error("search not cleared yet");
+  }, { timeout: 10000, interval: 250, description: "the search to clear" });
+
+  // The last package on the page: the search moves it to the top.
+  const target = await evaluate(`(function () {
+    var r = packageRoleIds, m = packagesModel;
+    for (var i = m.rowCount() - 1; i > 0; i--) {
+      var n = m.data(m.index(i, 0), r.name);
+      if (n) return n;
+    }
+    return "";
+  })()`);
+  // No catalogue (Basecamp's standalone mode): nothing to search for. The QML
+  // test test_details_open_for_the_package_named_not_its_row covers it there.
+  if (!target) return;
+
+  const name = JSON.stringify(target);
+  await evaluate(`(setSearchText(${name}), showDetailsForName(${name}))`);
+  try {
+    await app.waitFor(async () => {
+      const shown = await evaluate("selectedPackageDetails.name || ''");
+      if (shown !== target) throw new Error(`details show "${shown}"`);
+    }, { timeout: 10000, interval: 250, description: `${target}'s details` });
+  } finally {
+    await evaluate('setSearchText("")');
+    await evaluate("clearSelectedDetails()");
+  }
+});
+
 // The old top-bar bulk Install/Uninstall buttons (gated on
 // hasInstallableSelection / hasUninstallableSelection) were replaced by a
 // single dependency-aware per-row action flow. Those two booleans are gone;

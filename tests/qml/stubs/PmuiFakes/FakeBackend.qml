@@ -419,9 +419,10 @@ QtObject {
     function pushCurrentPage(p) { currentPage = p }
     function pushSortRole(role) { sortRole = role; refilter() }
     function pushSortOrder(order) { sortOrder = order; refilter() }
-    function requestPackageDetails(i) {
-        if (i >= 0 && i < shown.length)
-            packageDetailsLoaded(Object.assign({}, shown[i], { repositoryDisplayName: "Logos Modules" }))
+    function requestPackageDetailsFor(name, repositoryUrl) {
+        const row = shown.find(r => r.name === name && (r.repositoryUrl || "") === (repositoryUrl || ""))
+        if (row)
+            packageDetailsLoaded(Object.assign({}, row, { repositoryDisplayName: "Logos Modules" }))
     }
     function refreshCatalog() { reloads += 1; refilter() }
     function installLocalPackage(url) { localInstalls += 1 }

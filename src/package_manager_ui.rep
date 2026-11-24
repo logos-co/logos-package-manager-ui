@@ -138,8 +138,10 @@ class PackageManagerUi
     // the host to confirm that version.
     SLOT(void setRowVersion(int index, int versionIndex))
 
-    // Request a row's full details; reply via packageDetailsLoaded.
-    SLOT(void requestPackageDetails(int index))
+    // Request a package's full details by name and repository, not by row:
+    // the list can filter or sort before the request arrives. Reply via
+    // packageDetailsLoaded.
+    SLOT(void requestPackageDetailsFor(QString name, QString repositoryUrl))
 
     // Map a backend moduleName back to its user-facing package `name` so
     // the cascade dialog renders dependents with the same label shown in
@@ -162,7 +164,7 @@ class PackageManagerUi
     SIGNAL(errorOccurred(int errorType))
     // Per-package install progress updates.
     SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
-    // Reply to requestPackageDetails.
+    // Reply to requestPackageDetailsFor.
     SIGNAL(packageDetailsLoaded(QVariantMap details))
     // System-originated cancel of an in-flight install/uninstall/upgrade.
     // `message` is pre-formatted for verbatim toast display.
