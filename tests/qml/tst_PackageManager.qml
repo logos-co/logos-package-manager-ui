@@ -427,6 +427,21 @@ TestCase {
         compare(backend.searchText, "Wallet")
     }
 
+    // The details asked for are the named package's even when the backend's
+    // list has moved under the view's (a search or a sort the view hasn't
+    // caught up with). Asked for by row, they were whichever package had
+    // taken that row.
+    function test_details_open_for_the_package_named_not_its_row() {
+        const view = makeView(1280)
+        const store = find(view, "pmui.BackendStore")
+        const target = backend.shown[0].name
+        // The backend's list moves; the view's model stays as it was.
+        backend.shown = backend.shown.slice().reverse()
+        verify(backend.shown[0].name !== target)
+        verify(store.showDetailsForName(target))
+        tryCompare(store.selectedPackageDetails, "name", target)
+    }
+
     // ── A package's own actions, in its details ──
 
     // Where the list shows no table beside them, a package's details end
