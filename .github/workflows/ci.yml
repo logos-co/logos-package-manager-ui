@@ -23,6 +23,22 @@ jobs:
       - uses: logos-co/setup-nix-cache-action@v1
       - run: nix run .#ui-tests
 
+  qml-tests-linux:
+    name: QML tests (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: logos-co/setup-nix-cache-action@v1
+      - run: nix run .#qml-tests
+
+  qml-tests-macos:
+    name: QML tests (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: logos-co/setup-nix-cache-action@v1
+      - run: nix run .#qml-tests
+
   unit-tests-linux:
     name: Unit tests (ubuntu-latest)
     runs-on: ubuntu-latest

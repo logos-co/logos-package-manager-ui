@@ -167,6 +167,21 @@ result/
 
 ## Testing
 
+### View tests (QML)
+
+```bash
+nix run .#qml-tests
+LOGOS_DESIGN_SYSTEM=../logos-design-system nix run .#qml-tests   # a local checkout
+```
+
+`tests/qml` runs the views headless, from a phone's width to a desktop's, on a
+stand-in for the backend (`tests/qml/stubs`): nothing reaches past the sides,
+and the sidebar, toolbar, table and details adapt as the design system's
+layouts measure. They run on the design system Basecamp's master pins, as the
+views do in it (`LOGOS_BASECAMP` names another Basecamp).
+
+### UI integration tests
+
 UI integration tests use [logos-qt-mcp](https://github.com/logos-co/logos-qt-mcp) to drive the plugin UI inside [logos-standalone-app](https://github.com/logos-co/logos-standalone-app) (headless).
 
 ### Hermetic CI test (one command)
