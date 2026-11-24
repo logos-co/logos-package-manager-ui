@@ -383,8 +383,9 @@ Rectangle {
         onAccepted: store.installLocalPackage(selectedFile)
     }
 
-    // Provider side of `packages.show` / `packages.install`. The waiter lives
-    // in Panels — this is just the doorway.
+    // Provider side of `packages.show` / `packages.install`, which intents_module
+    // delivers to the backend. The waiter lives in Panels — this is just the
+    // doorway.
     PackageRevealRequest {
         id: revealRequest
         store: store
@@ -392,14 +393,10 @@ Rectangle {
     }
 
     Connections {
-        target: logos
+        target: store.backend
         ignoreUnknownSignals: true
-        function onIntentRequested(requestId, intent, params, requesterName) {
-            if (intent !== "packages.show" && intent !== "packages.install") {
-                logos.respond(requestId, false, ({}), "failed")
-                return
-            }
-            revealRequest.begin(requestId, params.name, intent)
+        function onRevealRequested(dispatch, intent, name) {
+            revealRequest.begin(dispatch, name)
         }
     }
 }

@@ -843,6 +843,67 @@ test("row click: single click populates selectedPackageDetails", async (app) => 
   );
 });
 
+// `packages.install` has no click in this view behind it, so it only shows
+// the package: the person's click on Install is what asks for the install
+// dialog. Delivered here the way the backend hands it over. An
+// install asked for would put up Basecamp's install gate or, with nobody to
+// ask, end in a "was not changed" message.
+test("reveal: packages.install through intents_module shows the package and asks for nothing",
+  async (app) => {
+    await waitForPmuiLoaded(app);
+    await waitForCatalogLoaded(app);
+    await waitForIdle(app, "earlier installs to end");
+    const evaluate = await storeEvaluator(app);
+    const firstRow = "packagesModel.rowCount() > 0 ? String(packagesModel.data(" +
+                     "packagesModel.index(0, 0), packageRoleIds.name) || '') : ''";
+    const name = await evaluate(firstRow);
+    // No catalogue (Basecamp's standalone mode): nothing to show. The QML
+    // tests cover it there.
+    if (!name) return;
+    await evaluate("dismissMessage()");
+    await evaluate("clearSelectedDetails()");
+    // Filtered first, so the row stays where the reveal finds it.
+    await evaluate(`setSearchText(${JSON.stringify(name)})`);
+    await app.waitFor(async () => {
+      const first = await evaluate(firstRow);
+      if (first !== name || (await storeProperty(app, "searchText")) !== name) {
+        throw new Error(`first row is ${JSON.stringify(first)}`);
+      }
+    }, { timeout: 10000, interval: 250, description: "the list to filter to the package" });
+
+    const reveal = await app.findByProperty("objectName", "pmui.revealRequest");
+    if (!reveal.matches || reveal.matches.length === 0) throw new Error("no pmui.revealRequest");
+    const onReveal = async (expression) => {
+      const res = await app.inspector.send("evaluate", { objectId: reveal.matches[0].id, expression });
+      if (res.error) throw new Error(`${expression}: ${res.error}`);
+      return res.result;
+    };
+    await onReveal(`begin("pmui-test-reveal", ${JSON.stringify(name)})`);
+
+    await app.waitFor(async () => {
+      const shown = await evaluate("selectedPackageDetails.name || ''");
+      if (shown !== name) throw new Error(`the details show ${JSON.stringify(shown)}`);
+    }, { timeout: 10000, interval: 250, description: "the package's details to open" });
+    await new Promise((r) => setTimeout(r, 2000));   // room for a request to show
+
+    const gate = await app.findByProperty("objectName", "confirmationDialog.installGate");
+    const gateUp = !!gate.matches && gate.matches.length > 0
+      && (await propertyOf(app, gate.matches[0].id, "visible")) === true;
+    const message = String(await storeProperty(app, "lastMessage"));
+    const answered = (await onReveal("d.requestId")) === "";
+    if (gateUp) {
+      const cancel = await app.findByProperty("objectName", "confirmationDialog.installGate.cancel");
+      if (cancel.matches && cancel.matches.length > 0) {
+        await app.inspector.send("click", { objectId: cancel.matches[0].id });
+      }
+    }
+    await evaluate("dismissMessage()");
+    await evaluate("setSearchText('')");
+    if (gateUp) throw new Error("the install gate opened with no click behind the request");
+    if (message.includes(name)) throw new Error(`an install was asked for: ${JSON.stringify(message)}`);
+    if (!answered) throw new Error("the request was never answered");
+  });
+
 // A catalog can draw packages from other catalogs; such a row is listed under
 // the repository the user configured, so `repositoryName` alone cannot say
 // whose bytes it carries. `originRepositoryName` is what answers that, and it
