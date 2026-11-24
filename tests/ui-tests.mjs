@@ -350,13 +350,16 @@ test("install queue: a request Basecamp did not approve is refused at once, not 
   }
 });
 
+// The table's columns at any width; the rest drop out as it narrows.
+const KEPT_COLUMNS = ["Package", "Available", "Action"];
+
 test("structure: table headers render", async (app) => {
   await waitForPmuiLoaded(app);
-  // The old single "Status" column was split into per-row version + "Action".
-  // "Installed" is what is on disk; "Available" is the picker for what would
-  // be installed — the pair is what stops the target reading as state. Size
-  // and "Released" describe the Available pick, so they follow it.
-  await app.expectTexts(["Package", "Type", "Installed", "Available", "Size", "Released", "Action", "Description"]);
+  // The old single "Status" column was split into per-row version + "Action":
+  // "Available" is the picker for what would be installed. The other columns
+  // drop out as the table narrows, Description first (at the runner's 1024 px
+  // so do Size and Released); tests/qml checks which go when.
+  await app.expectTexts(KEPT_COLUMNS);
 });
 
 test("store: exposes the documented properties with sane defaults", async (app) => {
@@ -467,7 +470,8 @@ test("search: clearing search resets totalCount to its pre-filter value", async 
 test("search: the shortcut chip shows the platform's text (⌘K on macOS, Ctrl+K elsewhere)", async (app) => {
   await waitForPmuiLoaded(app);
 
-  // The bar's inner text field matches the placeholder too; only the bar has the hint.
+  // The page header's search and its bar both carry the hint; the bar's
+  // inner text field matches the placeholder too, without one.
   const search = await app.findByProperty("placeholderText", "Search packages…");
   const hints = [];
   for (const m of search.matches ?? []) {
@@ -476,8 +480,8 @@ test("search: the shortcut chip shows the platform's text (⌘K on macOS, Ctrl+K
     if (prop) hints.push(prop.value);
   }
   const expected = process.platform === "darwin" ? "⌘K" : "Ctrl+K";
-  if (hints.length !== 1 || hints[0] !== expected) {
-    throw new Error(`shortcutHint=${JSON.stringify(hints)} (expected ["${expected}"])`);
+  if (hints.length === 0 || hints.some((hint) => hint !== expected)) {
+    throw new Error(`shortcutHint=${JSON.stringify(hints)} (expected each "${expected}")`);
   }
 });
 
@@ -662,7 +666,7 @@ test("empty state: keyed on repositoryCount, not filtered totalCount", async (ap
     throw new Error("repositoryCount must stay > 0 when only the package filter is empty");
   }
   // Package list chrome stays mounted (empty state would hide it).
-  await app.expectTexts(["Package", "Type", "Installed", "Available", "Size", "Released", "Action", "Description"]);
+  await app.expectTexts(KEPT_COLUMNS);
 
   // Restore so later tests start from a clean state.
   await app.inspector.send("setProperty", { objectId: searchId, property: "text", value: "" });
@@ -698,7 +702,7 @@ test("empty state: install-state filter switches do not drop repositoryCount", a
       `repositoryCount changed during install-state filter switches: before=${repoBefore} after=${repoAfter}`
     );
   }
-  await app.expectTexts(["Package", "Type", "Installed", "Available", "Size", "Released", "Action", "Description"]);
+  await app.expectTexts(KEPT_COLUMNS);
 }, { skip: ["offscreen"] });
 
 test("reload: clicking the reload button triggers a refresh cycle", async (app) => {

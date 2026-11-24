@@ -58,6 +58,10 @@ QtObject {
     readonly property int selectedTypeIndex: backend ? backend.selectedTypeIndex : 0
 
     readonly property alias selectedPackageDetails: d.selectedPackageDetails
+    // The open package's row in the list as it is now (its action, progress
+    // and picked version follow the model), or null while it isn't on this
+    // page. runSelectedAction and the like act on it.
+    readonly property var selectedRow: d.openRow ? d.openRow.model : null
 
     // Last user-facing failure, "" when there is nothing to show. Every backend
     // failure channel lands here — without this the confirm flow fails silently,
@@ -69,7 +73,8 @@ QtObject {
         id: d
 
         property var selectedPackageDetails: ({})
-        property int selectedPackageIndex: -1
+        // The watch on the open package's row (rowWatches).
+        property QtObject openRow: null
         property string lastMessage: ""
 
         function canRequest() {
@@ -123,6 +128,45 @@ QtObject {
                 if (store.packagesModel.data(idx, nameRole) === name) return i
             }
             return -1
+        }
+
+        function track(watch) {
+            if (watch.open) d.openRow = watch
+            else if (d.openRow === watch) d.openRow = null
+        }
+
+        // Reads the open details again once their row's install state or
+        // picked version has moved. From change handlers, not a binding on the
+        // details: a backend that answers at once would change them mid-binding.
+        function refresh(watch) {
+            var shown = d.selectedPackageDetails
+            if (watch.open && (watch.installStatus !== (shown.installStatus | 0)
+                               || watch.versionIndex !== (shown.selectedVersionIndex | 0)))
+                store.requestDetails(watch.index)
+        }
+
+        // While a package's details are open, a watch per row on the page
+        // looks for its row by name and repository, not by place: a refresh,
+        // a sort or a filter moves rows under an index.
+        property Instantiator rowWatches: Instantiator {
+            model: d.selectedPackageDetails.name ? store.packagesModel : null
+            delegate: QtObject {
+                id: watch
+                required property var model
+                required property int index
+                readonly property bool open: model.name === d.selectedPackageDetails.name
+                    && (model.repositoryUrl || "") === (d.selectedPackageDetails.repositoryUrl || "")
+                readonly property int installStatus: model.installStatus | 0
+                readonly property int versionIndex: model.selectedVersionIndex | 0
+                onOpenChanged: d.track(watch)
+                onInstallStatusChanged: d.refresh(watch)
+                onVersionIndexChanged: d.refresh(watch)
+                Component.onCompleted: {
+                    d.track(watch)
+                    d.refresh(watch)
+                }
+                Component.onDestruction: if (d.openRow === watch) d.openRow = null
+            }
         }
 
         function confirmInstall(r) {
@@ -212,11 +256,7 @@ QtObject {
     function selectCategory(i) { if (backend) backend.pushSelectedCategoryIndex(i) }
     function selectType(i) { if (backend) backend.pushSelectedTypeIndex(i) }
     function toggleSelection(i, checked) { if (backend) backend.togglePackage(i, checked) }
-    function requestDetails(i) {
-        if (!backend) return
-        d.selectedPackageIndex = i
-        backend.requestPackageDetails(i)
-    }
+    function requestDetails(i) { if (backend) backend.requestPackageDetails(i) }
 
     function clearFilters() {
         if (!backend) return
@@ -241,10 +281,7 @@ QtObject {
         return true
     }
 
-    function clearSelectedDetails() {
-        d.selectedPackageDetails = ({})
-        d.selectedPackageIndex = -1
-    }
+    function clearSelectedDetails() { d.selectedPackageDetails = ({}) }
 
     function reloadPackage(i) { if (backend) backend.reloadPackage(i) }
 
@@ -278,6 +315,11 @@ QtObject {
         }
     }
 
+    // The open package's actions, on its row wherever the list has it.
+    function runSelectedAction(action) { if (d.openRow) runRowAction(d.openRow.index, action) }
+    function setSelectedVersion(vi)    { if (d.openRow) setRowVersion(d.openRow.index, vi) }
+    function uninstallSelected()       { if (d.openRow) uninstallPackage(d.openRow.index) }
+
     // Filter / sort / pagination intents — replica-side writers go
     // through QtRO's generated `push*` methods so the source-side
     // setter is invoked and the proxy resliсes the model.
@@ -289,15 +331,9 @@ QtObject {
     function setSortRole(role)           { if (backend) backend.pushSortRole(role) }
     function setSortOrder(order)         { if (backend) backend.pushSortOrder(order) }
 
-    // Per-row version change. Also refetches details when the change is
-    // on the row currently shown in the details panel
-    function setRowVersion(i, vi) {
-        if (!backend) return
-        backend.setRowVersion(i, vi)
-        if (i === d.selectedPackageIndex && d.selectedPackageDetails && d.selectedPackageDetails.name) {
-            backend.requestPackageDetails(i)
-        }
-    }
+    // Per-row version change. The open details follow their row's pick
+    // (d.rowWatches).
+    function setRowVersion(i, vi) { if (backend) backend.setRowVersion(i, vi) }
 
     // Ask the shell to show Settings → Repositories.
     function navigateToRepositories() {

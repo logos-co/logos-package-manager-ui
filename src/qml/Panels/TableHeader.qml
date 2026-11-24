@@ -4,10 +4,14 @@ import QtQuick.Layouts
 import Logos.Theme
 import Logos.Controls
 import Logos.Icons
+import Logos.Layouts
 
 
-// Table header: title "Packages" + install-state tabs on the left,
-// reload icon / Manage Repositories / "Run Actions (N)" on the right.
+// Table header: the install-state tabs, and beside them while they fit,
+// under them when not, the toolbar: the category and type pickers
+// (while the sidebar that holds them is hidden), the filter, Install Local
+// Package, Reload and Manage Repositories, which fold into one ⋯ when they
+// don't fit, as Alisher's ADR-064 has them.
 //
 // The bulk button is now ONE: Install + Uninstall got merged into a
 // single user-chosen-per-row plan that fires from "Run Actions". The
@@ -15,8 +19,9 @@ import Logos.Icons
 // selection (some installed + some not) was active, and each silently
 // acted on its own subset — the original source of the "what's this
 // going to do?" confusion. Uninstall is now per-row only (kebab ⋮).
-GridLayout {
+LogosItemLayout {
     id: root
+    objectName: "pmui.tableHeader"
 
     property bool isInstalling: false
     property bool isLoading: false
@@ -41,6 +46,15 @@ GridLayout {
     property bool showUnavailable: false
     signal showUnavailableRequested(bool show)
 
+    // The sidebar's filters as pickers, while the sidebar is hidden.
+    property bool showFilterPickers: false
+    property var categories: []
+    property int categoryIndex: 0
+    property var types: []
+    property int typeIndex: 0
+    signal categorySelected(int index)
+    signal typeSelected(int index)
+
     signal reloadClicked()
     // Click on "Install Local Package". The parent QML owns the file picker —
     // this signal only says the user asked for one.
@@ -54,26 +68,19 @@ GridLayout {
     // Requests navigation to basecamp Settings → Repositories.
     signal repositoriesClicked()
 
-    columnSpacing: Theme.spacing.large
-    rowSpacing: Theme.spacing.medium
-    columns: (leftHalf.implicitWidth + rightHalf.implicitWidth + columnSpacing) <= width
-             ? 2 : 1
+    spacing: Theme.spacing.large
+    // The tabs keep their line before the toolbar goes under them.
+    minimumContentWidth: tabs.implicitWidth
 
-    // ─── Left half: title + install-state tabs ───
-    RowLayout {
-        id: leftHalf
-        Layout.fillWidth: true
-        spacing: Theme.spacing.large
-
-        LogosText {
-            text: qsTr("Packages")
-            font.pixelSize: Theme.typography.panelTitleText
-            font.weight: Theme.typography.weightMedium
-            color: Theme.palette.text
-        }
+    // ─── Install-state tabs, at their own width: a tab bar given more shares
+    // it out, given less squeezes. The page's title already says what they list.
+    Item {
+        implicitWidth: tabs.implicitWidth
+        implicitHeight: tabs.implicitHeight
 
         LogosTabBar {
             id: tabs
+            width: implicitWidth
             spacing: Theme.spacing.large
 
             currentIndex: root.stateIndex
@@ -86,148 +93,201 @@ GridLayout {
             LogosTabButton { text: qsTr("Installed") }
             LogosTabButton { text: qsTr("Not Installed") }
         }
-
-        Item { Layout.fillWidth: true }
     }
 
-    // ─── Right half: release picker + bulk actions ───
-    RowLayout {
-        id: rightHalf
-        Layout.fillWidth: true
-        spacing: Theme.spacing.medium
+    // ─── Toolbar: the pickers, then the actions, folding into ⋯ ───
+    meta: [
+        LogosComboBox {
+            id: categoryCombo
+            objectName: "pmui.categoryCombo"
+            visible: root.showFilterPickers
+            Layout.fillWidth: true
+            // Its own text at least, so the line keeps it whole and the ⋯
+            // takes only what is left.
+            Layout.minimumWidth: Math.max(Theme.size.touchTarget * 2, Math.min(implicitWidth, Layout.maximumWidth))
+            Layout.maximumWidth: 220
+            model: root.categories
+            currentIndex: root.categoryIndex
+            displayText: currentIndex <= 0 ? qsTr("All categories") : currentText
+            onActivated: function(index) { root.categorySelected(index) }
+        },
 
-        Item { Layout.fillWidth: root.columns === 2 }
+        LogosComboBox {
+            id: typeCombo
+            objectName: "pmui.typeCombo"
+            visible: root.showFilterPickers && root.types.length > 1
+            Layout.fillWidth: true
+            Layout.minimumWidth: Math.max(Theme.size.touchTarget * 2, Math.min(implicitWidth, Layout.maximumWidth))
+            Layout.maximumWidth: 180
+            model: root.types
+            currentIndex: root.typeIndex
+            displayText: currentIndex <= 0 ? qsTr("All types") : currentText
+            onActivated: function(index) { root.typeSelected(index) }
+        },
 
-        LogosIconButton {
-            id: filterButton
-            objectName: "pmui.filterButton"
-            Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: 40
-            Layout.preferredHeight: 40
-            size: 40
-            iconSize: 16
-            iconSource: Qt.resolvedUrl("../images/filter.svg")
-            iconColor: root.showUnavailable
-                       ? Theme.palette.primary
-                       : Theme.palette.text
-            onClicked: filterMenu.popupUnder(filterButton)
+        LogosOverflowRow {
+            id: actions
+            objectName: "pmui.toolbarActions"
+            Layout.fillWidth: true
+            Layout.minimumWidth: Theme.size.touchTarget
 
-            background: Rectangle {
+            LogosIconButton {
+                id: filterButton
+                objectName: "pmui.filterButton"
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: 40
+                Layout.preferredHeight: 40
+                size: 40
+                iconSize: 16
+                iconSource: Qt.resolvedUrl("../images/filter.svg")
+                iconColor: root.showUnavailable
+                           ? Theme.palette.primary
+                           : Theme.palette.text
+                onClicked: filterMenu.popupUnder(filterButton)
+
+                background: Rectangle {
+                    radius: Theme.spacing.radiusLarge
+                    color: (root.showUnavailable || filterButton.hovered
+                            || filterButton.pressed || filterButton.activeFocus)
+                           ? Theme.palette.backgroundMuted
+                           : "transparent"
+                }
+
+                LogosToolTip {
+                    text: root.showUnavailable
+                          ? qsTr("Filters: showing unavailable")
+                          : qsTr("Filter packages")
+                    placement: LogosToolTip.Bottom
+                    visible: filterButton.hovered && !filterMenu.visible
+                }
+            }
+
+            LogosMenu {
+                id: filterMenu
+                objectName: "pmui.filterMenu"
+
+                ShowUnavailableItem {
+                    objectName: "pmui.showUnavailableItem"
+                }
+            }
+
+            LogosButton {
+                id: installLocalBtn
+                objectName: "pmui.installLocalButton"
+                Layout.preferredWidth: 180
+                Layout.preferredHeight: 40
                 radius: Theme.spacing.radiusLarge
-                color: (root.showUnavailable || filterButton.hovered
-                        || filterButton.pressed || filterButton.activeFocus)
-                       ? Theme.palette.backgroundMuted
-                       : "transparent"
+                text: qsTr("Install Local Package")
+                leadingIcon.source: LogosIcons.install
+                leadingIcon.size: 18
+                enabled: !root.isInstalling && !root.isLoading
+                onClicked: root.installLocalClicked()
             }
 
-            LogosToolTip {
-                text: root.showUnavailable
-                      ? qsTr("Filters: showing unavailable")
-                      : qsTr("Filter packages")
-                placement: LogosToolTip.Bottom
-                visible: filterButton.hovered && !filterMenu.visible
+            LogosButton {
+                id: reloadBtn
+                objectName: "pmui.reloadButton"
+                Layout.preferredWidth: 130
+                Layout.preferredHeight: 40
+                radius: Theme.spacing.radiusLarge
+                text: qsTr("Reload")
+                leadingIcon.source: LogosIcons.refresh
+                leadingIcon.size: 18
+                enabled: !root.isInstalling && !root.isLoading
+                onClicked: root.reloadClicked()
             }
-        }
 
-        LogosMenu {
-            id: filterMenu
-            objectName: "pmui.filterMenu"
+            // Multi-repo: open the Manage Repositories popup.
+            LogosButton {
+                objectName: "pmui.repositoriesButton"
+                Layout.preferredWidth: 150
+                Layout.preferredHeight: 40
+                radius: Theme.spacing.radiusLarge
+                text: qsTr("Manage Repositories")
+                enabled: !root.isInstalling
+                onClicked: root.repositoriesClicked()
+            }
 
-            LogosMenuItem {
-                id: showUnavailableItem
-                objectName: "pmui.showUnavailableItem"
-                readonly property int indicatorSize: 14
-                text: qsTr("Show unavailable")
-                checkable: true
-                checked: root.showUnavailable
-                onTriggered: root.showUnavailableRequested(checked)
+            // Single bulk-action button. Currently hidden — the bulk
+            // selection / confirm-summary surface is off (see the
+            // RunActionsConfirm comment block in PackageManager.qml), and the
+            // backend's bulk path is a stub.
+            LogosButton {
+                visible: false
+                Layout.preferredWidth: 160
+                Layout.preferredHeight: 40
+                radius: Theme.spacing.radiusLarge
+                text: root.runnableActionCount > 0
+                      ? qsTr("Run Actions (%1)").arg(root.runnableActionCount)
+                      : qsTr("Run Actions")
+                enabled: root.runnableActionCount > 0 && !root.isInstalling
+                onClicked: root.runActionsClicked()
+            }
 
-                indicator: LogosIcon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: Theme.spacing.medium
-                    width: showUnavailableItem.indicatorSize
-                    height: showUnavailableItem.indicatorSize
-                    visible: showUnavailableItem.checked
-                    source: LogosIcons.check
-                    color: Theme.palette.text
+            // Folded, the same actions in a menu.
+            menu: LogosMenu {
+                objectName: "pmui.moreMenu"
+
+                ShowUnavailableItem {
+                    objectName: "pmui.moreShowUnavailableItem"
                 }
 
-                contentItem: LogosText {
-                    leftPadding: Theme.spacing.medium
-                                 + showUnavailableItem.indicatorSize
-                                 + Theme.spacing.small
-                    rightPadding: Theme.spacing.medium
-                    verticalAlignment: Text.AlignVCenter
-                    text: showUnavailableItem.text
-                    color: showUnavailableItem.enabled
-                           ? Theme.palette.text
-                           : Theme.palette.textMuted
+                LogosMenuSeparator {}
+
+                LogosMenuItem {
+                    objectName: "pmui.moreInstallLocalItem"
+                    text: qsTr("Install Local Package…")
+                    enabled: !root.isInstalling && !root.isLoading
+                    onTriggered: root.installLocalClicked()
+                }
+
+                LogosMenuItem {
+                    objectName: "pmui.moreReloadItem"
+                    text: qsTr("Reload")
+                    enabled: !root.isInstalling && !root.isLoading
+                    onTriggered: root.reloadClicked()
+                }
+
+                LogosMenuItem {
+                    objectName: "pmui.moreRepositoriesItem"
+                    text: qsTr("Manage Repositories…")
+                    enabled: !root.isInstalling
+                    onTriggered: root.repositoriesClicked()
                 }
             }
         }
+    ]
 
-        LogosButton {
-            id: installLocalBtn
-            objectName: "pmui.installLocalButton"
-            Layout.fillWidth: true
-            Layout.minimumWidth: 120
-            Layout.preferredWidth: 180
-            Layout.maximumWidth: 180
-            Layout.preferredHeight: 40
-            radius: Theme.spacing.radiusLarge
-            text: qsTr("Install Local Package")
-            leadingIcon.source: LogosIcons.install
-            leadingIcon.size: 18
-            enabled: !root.isInstalling && !root.isLoading
-            onClicked: root.installLocalClicked()
+    // "Show unavailable", with the design system's check mark: in the filter
+    // menu, and in ⋯ once the toolbar folds.
+    component ShowUnavailableItem: LogosMenuItem {
+        id: showUnavailableItem
+        readonly property int indicatorSize: 14
+        text: qsTr("Show unavailable")
+        checkable: true
+        checked: root.showUnavailable
+        onTriggered: root.showUnavailableRequested(checked)
+
+        indicator: LogosIcon {
+            anchors.verticalCenter: parent.verticalCenter
+            x: Theme.spacing.medium
+            width: showUnavailableItem.indicatorSize
+            height: showUnavailableItem.indicatorSize
+            visible: showUnavailableItem.checked
+            source: LogosIcons.check
+            color: Theme.palette.text
         }
 
-        LogosButton {
-            id: reloadBtn
-            objectName: "pmui.reloadButton"
-            Layout.fillWidth: true
-            Layout.minimumWidth: 80
-            Layout.preferredWidth: 130
-            Layout.maximumWidth: 130
-            Layout.preferredHeight: 40
-            radius: Theme.spacing.radiusLarge
-            text: qsTr("Reload")
-            leadingIcon.source: LogosIcons.refresh
-            leadingIcon.size: 18
-            enabled: !root.isInstalling && !root.isLoading
-            onClicked: root.reloadClicked()
-        }
-
-        // Multi-repo: open the Manage Repositories popup.
-        LogosButton {
-            Layout.fillWidth: true
-            Layout.minimumWidth: 100
-            Layout.preferredWidth: 150
-            Layout.maximumWidth: 150
-            Layout.preferredHeight: 40
-            radius: Theme.spacing.radiusLarge
-            text: qsTr("Manage Repositories")
-            enabled: !root.isInstalling
-            onClicked: root.repositoriesClicked()
-        }
-
-        // Single bulk-action button. Currently hidden — the bulk
-        // selection / confirm-summary surface is off (see the
-        // RunActionsConfirm comment block in PackageManager.qml), and the
-        // backend's bulk path is a stub.
-        LogosButton {
-            visible: false
-            Layout.fillWidth: true
-            Layout.minimumWidth: 130
-            Layout.preferredWidth: 160
-            Layout.maximumWidth: 180
-            Layout.preferredHeight: 40
-            radius: Theme.spacing.radiusLarge
-            text: root.runnableActionCount > 0
-                  ? qsTr("Run Actions (%1)").arg(root.runnableActionCount)
-                  : qsTr("Run Actions")
-            enabled: root.runnableActionCount > 0 && !root.isInstalling
-            onClicked: root.runActionsClicked()
+        contentItem: LogosText {
+            leftPadding: Theme.spacing.medium
+                         + showUnavailableItem.indicatorSize
+                         + Theme.spacing.small
+            rightPadding: Theme.spacing.medium
+            verticalAlignment: Text.AlignVCenter
+            text: showUnavailableItem.text
+            color: showUnavailableItem.enabled
+                   ? Theme.palette.text
+                   : Theme.palette.textMuted
         }
     }
 }
