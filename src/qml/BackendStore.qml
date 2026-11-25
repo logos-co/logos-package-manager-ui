@@ -77,28 +77,6 @@ QtObject {
         property QtObject openRow: null
         property string lastMessage: ""
 
-        function canRequest() {
-            return typeof logos !== "undefined" && typeof logos.request === "function"
-        }
-
-        // Ask the host, then run `onApproved` if it said yes. Every other
-        // outcome — including the user's own cancel — goes to
-        // reportActionFailed, which owns both the cleanup and the decision to
-        // stay quiet.
-        function confirm(intent, names, params, onApproved) {
-            if (!canRequest()) {
-                console.warn("PMUI: no logos.request on this host — cannot confirm", intent)
-                if (store.backend) store.backend.reportActionFailed(names, "unavailable")
-                return
-            }
-            logos.request(intent, params, function (result) {
-                if (!store.backend) return
-                if (result && result.ok) { onApproved(result.data || {}); return }
-                store.backend.reportActionFailed(
-                    names, result ? (result.error || "failed") : "failed")
-            })
-        }
-
         // Read the fields the confirm payloads need out of the paging proxy.
         // Returns null when the row is gone — a refresh can land between render
         // and click.
@@ -169,31 +147,21 @@ QtObject {
             }
         }
 
+        // The backend asks the host, through intents_module, and runs what it
+        // approves.
         function confirmInstall(r) {
-            if (!r.name) return
-            confirm("basecamp.packages.confirm_install", [r.name],
-                { name: r.name, version: r.version, repositoryUrl: r.repositoryUrl,
-                  localPath: r.localPath || "" },
-                function (data) {
-                    store.backend.performInstall(r.name, r.version, r.repositoryUrl, data)
-                })
+            if (store.backend && r.name)
+                store.backend.confirmInstall(r.name, r.version, r.repositoryUrl)
         }
 
         function confirmUpgrade(r, mode) {
-            if (!r.moduleName) return
-            confirm("basecamp.packages.confirm_upgrade", [r.moduleName],
-                { name: r.moduleName, version: r.version, mode: mode,
-                  repositoryUrl: r.repositoryUrl, localPath: r.localPath || "" },
-                function (data) {
-                    store.backend.performUpgrade(r.moduleName, r.version, mode, r.repositoryUrl, data)
-                })
+            if (store.backend && r.moduleName)
+                store.backend.confirmUpgrade(r.moduleName, r.version, mode, r.repositoryUrl)
         }
 
         function confirmUninstall(r) {
-            if (!r.moduleName) return
-            confirm("basecamp.packages.confirm_uninstall", [r.moduleName],
-                { names: [r.moduleName] },
-                function () { store.backend.performUninstall([r.moduleName]) })
+            if (store.backend && r.moduleName)
+                store.backend.confirmUninstall(r.moduleName)
         }
 
         function errorText(code) {
@@ -233,18 +201,6 @@ QtObject {
                 var text = d.errorText(code)
                 if (text.length > 0) d.lastMessage = text
             }
-
-            // A local .lgx, once the backend has read its manifest — the one
-            // action whose identity QML cannot determine for itself. No repo
-            // url: the file is already on disk.
-            function onLocalPackageInspected(name, version, mode, isUpgrade, filePath) {
-                // Reuse the row-shaped payload the confirm helpers expect; a
-                // local file has no repository to pin against.
-                var r = { name: name, moduleName: name, version: version,
-                          repositoryUrl: "", localPath: filePath }
-                if (isUpgrade) d.confirmUpgrade(r, mode)
-                else           d.confirmInstall(r)
-            }
         }
     }
 
@@ -276,13 +232,6 @@ QtObject {
         var i = d.rowIndexForName(name)
         if (i < 0) return false
         requestDetails(i)
-        return true
-    }
-
-    function installPackageByName(name) {
-        var i = d.rowIndexForName(name)
-        if (i < 0) return false
-        installPackage(i)
         return true
     }
 
@@ -341,15 +290,5 @@ QtObject {
     function setRowVersion(i, vi) { if (backend) backend.setRowVersion(i, vi) }
 
     // Ask the shell to show Settings → Repositories.
-    function navigateToRepositories() {
-        if (typeof logos === "undefined" || typeof logos.request !== "function") {
-            console.warn("PMUI: no logos.request on this host — cannot open Repositories")
-            return
-        }
-        logos.request("basecamp.repositories.manage", {}, function (result) {
-            if (!result || !result.ok)
-                console.warn("PMUI: repositories intent failed:",
-                             result ? result.error : "no result")
-        })
-    }
+    function navigateToRepositories() { if (backend) backend.manageRepositories() }
 }

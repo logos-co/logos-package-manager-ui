@@ -5,6 +5,8 @@
 #include <QObject>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QHash>
+#include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
@@ -59,8 +61,19 @@ public slots:
     void reloadPackage(int index) override;
     void requestPackageDetailsFor(QString name, QString repositoryUrl) override;
 
-    // Run an action the host approved. QML calls these from the intent
-    // callback; the backend itself knows nothing about intents.
+    // Ask the host through intents_module, then run what it approves.
+    void confirmInstall(QString name, QString version, QString repositoryUrl) override;
+    void confirmUpgrade(QString moduleName, QString version, int mode, QString repositoryUrl) override;
+    void confirmUninstall(QString moduleName) override;
+    void manageRepositories() override;
+    void answerReveal(QString dispatch, bool ok, QString error) override;
+
+    // intents_module's delivery of packages.show / packages.install, through
+    // the generated glue (which takes it from intents_module only).
+    QString deliver(const QString& dispatch, const QString& intent,
+                    const QString& paramsJson, const QString& requester);
+
+    // Run an action the host approved.
     void performInstall(QString name, QString version, QString repositoryUrl, QVariantMap approval) override;
     void performUpgrade(QString moduleName, QString version, int mode,
                         QString repositoryUrl, QVariantMap approval) override;
@@ -83,6 +96,22 @@ public slots:
 private:
 
     void refreshPackages();
+
+    // ── intents_module ────────────────────────────────────────────────────
+    // Fetches a request's result once intents_module says it settled.
+    void subscribeIntentsModule();
+    // Ask for `intent`; `onApproved` gets the result's data, anything else goes
+    // to reportActionFailed(names, error).
+    void askIntent(const QString& intent, const QVariantMap& params, const QStringList& names,
+                   std::function<void(const QVariantMap& data)> onApproved);
+    void fetchIntentResult(const QString& handle);
+    struct IntentRequest {
+        QString receipt;
+        QStringList names;
+        std::function<void(const QVariantMap& data)> onApproved;
+    };
+    QHash<QString, IntentRequest> m_intentRequests;   // handle -> request
+    QSet<QString> m_revealDispatches;                 // delivered, not answered yet
 
     // Per-row install of the releases `approval`'s plan names; `repoUrl`
     // picks the row to mark. Holds the install lock.

@@ -1,21 +1,22 @@
 import QtQuick
 
 // Provider side of `packages.show` and `packages.install` — the shell asking
-// us to reveal a package, or to install it. Both are the same "find that row"
-// problem and differ only in what they do once it lands, so they share a waiter.
+// us, through intents_module and the backend, to reveal a package or to offer
+// its install. Both only show it: the request had no click in this view behind
+// it, so the person's own click on Install is what asks for the install dialog.
 QtObject {
     id: root
+    objectName: "pmui.revealRequest"
 
     property var store: null
     property var header: null
     property int timeoutMs: 8000
 
-    function begin(requestId, name, intent) {
+    function begin(requestId, name) {
         // Every request gets an answer, including one displaced mid-wait.
         finish(false, "cancelled")
         d.requestId = requestId
         d.name = name || ""
-        d.intent = intent
         deadline.restart()
         apply()
         attempt()
@@ -36,14 +37,9 @@ QtObject {
         // searchText echoing back from the source is what says one landed.
         if (root.store.searchText !== d.name) apply()
 
-        var done = d.intent === "packages.install"
-                 ? root.store.installPackageByName(d.name)
-                 : root.store.showDetailsForName(d.name)
-        // Answered on ARRIVAL. For install that means "the gate is up", never
-        // "it is installed" — a real download runs far past the broker's
-        // deadline, and both intents are handoff, so the user stays here to
-        // watch it either way.
-        if (done) finish(true, "")
+        // Answered on ARRIVAL: the package is shown. Both intents are handoff,
+        // so the user stays here.
+        if (root.store.showDetailsForName(d.name)) finish(true, "")
     }
 
     function finish(ok, error) {
@@ -51,9 +47,8 @@ QtObject {
         if (id === "") return
         d.requestId = ""
         d.name = ""
-        d.intent = ""
         deadline.stop()
-        logos.respond(id, ok, ({}), error)
+        if (root.store && root.store.backend) root.store.backend.answerReveal(id, ok, error)
     }
 
     property QtObject d: QtObject {
@@ -63,7 +58,6 @@ QtObject {
         // enough to hang off every model signal below.
         property string requestId: ""
         property string name: ""
-        property string intent: ""
     }
 
     property Timer deadline: Timer {

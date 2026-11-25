@@ -225,6 +225,7 @@ void PackageManagerBackend::onContextReady()
     // this hook only replaces the constructor's singleShot kick-off, which
     // could otherwise fire before the framework wired the typed deps.
     QTimer::singleShot(0, this, [this]() { finishInitialSetup(0); });
+    subscribeIntentsModule();
 }
 
 void PackageManagerBackend::finishInitialSetup(int attempt)
@@ -444,8 +445,15 @@ void PackageManagerBackend::installLocalPackage(QUrl fileUrl)
             self->forgetLocal(name);
             self->m_pendingLocalInstalls.insert(name, filePath);
 
+            const QVariantMap params{{QStringLiteral("name"), name},
+                                     {QStringLiteral("version"), version},
+                                     {QStringLiteral("repositoryUrl"), QString()},
+                                     {QStringLiteral("localPath"), filePath}};
             if (!alreadyInstalled) {
-                emit self->localPackageInspected(name, version, 0, /*isUpgrade=*/false, filePath);
+                self->askIntent(QStringLiteral("basecamp.packages.confirm_install"), params,
+                    {name}, [self, name, version](const QVariantMap& approval) {
+                        if (self) self->performInstall(name, version, QString(), approval);
+                    });
                 return;
             }
 
@@ -456,7 +464,12 @@ void PackageManagerBackend::installLocalPackage(QUrl fileUrl)
             const int cmp  = rowaction::versionCmp(version, installedVersion);
             const int mode = (cmp > 0) ? 0 : (cmp < 0) ? 1 : 2;
 
-            emit self->localPackageInspected(name, version, mode, /*isUpgrade=*/true, filePath);
+            QVariantMap upgrade = params;
+            upgrade.insert(QStringLiteral("mode"), mode);
+            self->askIntent(QStringLiteral("basecamp.packages.confirm_upgrade"), upgrade,
+                {name}, [self, name, version, mode](const QVariantMap& approval) {
+                    if (self) self->performUpgrade(name, version, mode, QString(), approval);
+                });
         });
 }
 
@@ -982,9 +995,8 @@ void PackageManagerBackend::verifyInstalledArtifact(
 void PackageManagerBackend::runSelectedActions()
 {
     // Unreachable: the bulk surface (checkbox column + "Run Actions") is off in
-    // QML. It also cannot work as written any more — confirmation is raised by
-    // QML now, and a backend slot has no way to ask for one. Reviving bulk
-    // means building the plan in QML and raising ONE combined confirm intent
+    // QML. It also cannot work as written: every change needs the host's
+    // approval first. Reviving bulk means raising ONE combined confirm intent
     // for the batch, not restoring this.
     qWarning() << "runSelectedActions: bulk actions are not wired";
     emit errorOccurred(static_cast<int>(PackageTypes::NoPackagesSelected));
@@ -1441,6 +1453,158 @@ void PackageManagerBackend::reportActionFailed(QStringList names, QString error)
     emit cancellationOccurred(names.first(),
         QStringLiteral("'%1' was not changed: %2")
             .arg(labels.join(QStringLiteral(", ")), error));
+}
+
+// ──────────────────── intents_module ────────────────────
+
+namespace {
+const QString kIntentsModule = QStringLiteral("intents_module");
+constexpr int kIntentsCallMs = 10000;
+
+QJsonObject parseReply(const QString& reply)
+{
+    return QJsonDocument::fromJson(reply.toUtf8()).object();
+}
+
+QString compactJson(const QVariantMap& map)
+{
+    return QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(map)).toJson(QJsonDocument::Compact));
+}
+} // namespace
+
+void PackageManagerBackend::subscribeIntentsModule()
+{
+    QPointer<PackageManagerBackend> self(this);
+    modules().bind_intents(kIntentsModule).onSettled([self](const QString& handle) {
+        if (!self) return;
+        // Out of the event's callback before calling back in.
+        QTimer::singleShot(0, self, [self, handle]() {
+            if (self) self->fetchIntentResult(handle);
+        });
+    });
+}
+
+void PackageManagerBackend::askIntent(const QString& intent, const QVariantMap& params,
+                                      const QStringList& names,
+                                      std::function<void(const QVariantMap& data)> onApproved)
+{
+    if (!isContextReady()) {
+        reportActionFailed(names, QStringLiteral("unavailable"));
+        return;
+    }
+    QPointer<PackageManagerBackend> self(this);
+    modules().bind_intents(kIntentsModule).requestAsyncResult(intent, compactJson(params),
+        [self, intent, names, onApproved](logos::AsyncResult<QString> reply) {
+            if (!self) return;
+            const QJsonObject r = parseReply(reply.value);
+            if (!reply.ok() || !r.value(QStringLiteral("ok")).toBool()) {
+                const QString why = r.value(QStringLiteral("error")).toString();
+                qWarning() << "PMUI:" << intent << "refused:" << (why.isEmpty() ? QStringLiteral("call failed") : why);
+                self->reportActionFailed(names, QStringLiteral("unavailable"));
+                return;
+            }
+            const QString handle = r.value(QStringLiteral("handle")).toString();
+            self->m_intentRequests.insert(handle,
+                IntentRequest{r.value(QStringLiteral("receipt")).toString(), names, onApproved});
+            self->fetchIntentResult(handle);   // it may have settled before this reply
+        },
+        Timeout(kIntentsCallMs));
+}
+
+void PackageManagerBackend::fetchIntentResult(const QString& handle)
+{
+    const auto it = m_intentRequests.constFind(handle);
+    if (it == m_intentRequests.cend() || !isContextReady()) return;
+    QPointer<PackageManagerBackend> self(this);
+    modules().bind_intents(kIntentsModule).resultAsyncResult(handle, it->receipt,
+        [self, handle](logos::AsyncResult<QString> reply) {
+            if (!self) return;
+            const QJsonObject r = parseReply(reply.value);
+            const QString state = r.value(QStringLiteral("state")).toString();
+            if (r.value(QStringLiteral("ok")).toBool() && state != QStringLiteral("settled")) return;
+            // Taken once: a second `settled` or a late reply finds nothing.
+            if (!self->m_intentRequests.contains(handle)) return;
+            const IntentRequest request = self->m_intentRequests.take(handle);
+            const QJsonObject result = r.value(QStringLiteral("result")).toObject();
+            if (r.value(QStringLiteral("ok")).toBool() && result.value(QStringLiteral("ok")).toBool()) {
+                request.onApproved(result.value(QStringLiteral("data")).toObject().toVariantMap());
+                return;
+            }
+            QString why = result.value(QStringLiteral("error")).toString();
+            if (why.isEmpty()) why = r.value(QStringLiteral("error")).toString();
+            self->reportActionFailed(request.names, why.isEmpty() ? QStringLiteral("failed") : why);
+        },
+        Timeout(kIntentsCallMs));
+}
+
+void PackageManagerBackend::confirmInstall(QString name, QString version, QString repositoryUrl)
+{
+    if (name.isEmpty()) return;
+    QPointer<PackageManagerBackend> self(this);
+    askIntent(QStringLiteral("basecamp.packages.confirm_install"),
+        {{QStringLiteral("name"), name}, {QStringLiteral("version"), version},
+         {QStringLiteral("repositoryUrl"), repositoryUrl}, {QStringLiteral("localPath"), QString()}},
+        {name}, [self, name, version, repositoryUrl](const QVariantMap& approval) {
+            if (self) self->performInstall(name, version, repositoryUrl, approval);
+        });
+}
+
+void PackageManagerBackend::confirmUpgrade(QString moduleName, QString version, int mode,
+                                           QString repositoryUrl)
+{
+    if (moduleName.isEmpty()) return;
+    QPointer<PackageManagerBackend> self(this);
+    askIntent(QStringLiteral("basecamp.packages.confirm_upgrade"),
+        {{QStringLiteral("name"), moduleName}, {QStringLiteral("version"), version},
+         {QStringLiteral("mode"), mode}, {QStringLiteral("repositoryUrl"), repositoryUrl},
+         {QStringLiteral("localPath"), QString()}},
+        {moduleName}, [self, moduleName, version, mode, repositoryUrl](const QVariantMap& approval) {
+            if (self) self->performUpgrade(moduleName, version, mode, repositoryUrl, approval);
+        });
+}
+
+void PackageManagerBackend::confirmUninstall(QString moduleName)
+{
+    if (moduleName.isEmpty()) return;
+    QPointer<PackageManagerBackend> self(this);
+    askIntent(QStringLiteral("basecamp.packages.confirm_uninstall"),
+        {{QStringLiteral("names"), QStringList{moduleName}}},
+        {moduleName}, [self, moduleName](const QVariantMap&) {
+            if (self) self->performUninstall({moduleName});
+        });
+}
+
+void PackageManagerBackend::manageRepositories()
+{
+    if (!isContextReady()) return;
+    // Nothing waits on the answer: the shell shows Settings, or doesn't.
+    modules().bind_intents(kIntentsModule).requestAsyncResult(
+        QStringLiteral("basecamp.repositories.manage"), QStringLiteral("{}"),
+        [](logos::AsyncResult<QString> reply) {
+            if (!reply.ok() || !parseReply(reply.value).value(QStringLiteral("ok")).toBool())
+                qWarning() << "PMUI: basecamp.repositories.manage refused:" << reply.value;
+        },
+        Timeout(kIntentsCallMs));
+}
+
+QString PackageManagerBackend::deliver(const QString& dispatch, const QString& intent,
+                                       const QString& paramsJson, const QString&)
+{
+    if (intent != QStringLiteral("packages.show") && intent != QStringLiteral("packages.install"))
+        return QStringLiteral("{\"ok\":false}");
+    const QString name = QJsonDocument::fromJson(paramsJson.toUtf8()).object()
+                             .value(QStringLiteral("name")).toString();
+    m_revealDispatches.insert(dispatch);
+    emit revealRequested(dispatch, intent, name);
+    return QStringLiteral("{\"ok\":true}");
+}
+
+void PackageManagerBackend::answerReveal(QString dispatch, bool ok, QString error)
+{
+    // Only what was delivered here, once each.
+    if (!m_revealDispatches.remove(dispatch) || !isContextReady()) return;
+    modules().bind_intents(kIntentsModule).respondAsync(dispatch, ok, QStringLiteral("{}"),
+        ok ? QString() : error, [](QString) {}, Timeout(kIntentsCallMs));
 }
 
 void PackageManagerBackend::requestPackageDetailsFor(QString name, QString repositoryUrl)

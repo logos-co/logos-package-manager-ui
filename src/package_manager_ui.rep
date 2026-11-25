@@ -121,10 +121,8 @@ class PackageManagerUi
     // the catalog install path. `fileUrl` is a file:// URL straight from the
     // QML FileDialog
     SLOT(void installLocalPackage(QUrl fileUrl))
-    // STUB. Reports failure and does nothing. The bulk surface is off in QML,
-    // and confirmation is raised by QML now — a backend slot has no way to ask
-    // for one. Reviving bulk means building the plan in QML and raising ONE
-    // combined confirm intent for the batch.
+    // STUB. Reports failure and does nothing. The bulk surface is off in QML.
+    // Reviving bulk means raising ONE combined confirm intent for the batch.
     SLOT(void runSelectedActions())
     // STUB, same as runSelectedActions.
     SLOT(void uninstallSelected())
@@ -149,6 +147,18 @@ class PackageManagerUi
     // row matches (e.g. a dependent outside the active category filter).
     SLOT(QString displayNameForModule(QString moduleName))
 
+    // The view's row actions: the backend asks the host for the confirm
+    // intents through intents_module and runs what the host approves.
+    SLOT(void confirmInstall(QString name, QString version, QString repositoryUrl))
+    SLOT(void confirmUpgrade(QString moduleName, QString version, int mode, QString repositoryUrl))
+    SLOT(void confirmUninstall(QString moduleName))
+    SLOT(void manageRepositories())
+
+    // packages.show / packages.install delivered by intents_module: the view
+    // finds the row, then answers with answerReveal.
+    SIGNAL(revealRequested(QString dispatch, QString intent, QString name))
+    SLOT(void answerReveal(QString dispatch, bool ok, QString error))
+
     // ── Confirmed actions ─────────────────────────────────────────────────
     SLOT(void performInstall(QString name, QString version, QString repositoryUrl, QVariantMap approval))
     SLOT(void performUpgrade(QString moduleName, QString version, int mode, QString repositoryUrl, QVariantMap approval))
@@ -169,13 +179,4 @@ class PackageManagerUi
     // System-originated cancel of an in-flight install/uninstall/upgrade.
     // `message` is pre-formatted for verbatim toast display.
     SIGNAL(cancellationOccurred(QString name, QString message))
-
-    // A local .lgx the user picked, after inspectPackage read its manifest.
-    // The ONE thing QML cannot determine for itself — name, version and
-    // whether it is already installed live inside the file — so this is the
-    // only action that still needs a backend round trip before confirmation.
-    // `mode` is a valid UpgradeMode when isUpgrade, otherwise ignored.
-    // `filePath` is the file, for the host to check who signed it.
-    SIGNAL(localPackageInspected(QString name, QString version,
-                                 int mode, bool isUpgrade, QString filePath))
 }

@@ -25,6 +25,11 @@
     # Upgrade / Downgrade / Reinstall. We take the headers only — nothing here
     # links liblgx, so this drags in no ICU/libsodium/zlib.
     logos-package.url = "github:logos-co/logos-package";
+
+    # contracts/intents.lidl, for the backend's modules().bind_intents(): the
+    # file only, so it builds nothing of intents_module.
+    logos-intents-module.url = "github:logos-co/logos-intents-module";
+    logos-intents-module.inputs.logos-module-builder.follows = "logos-module-builder";
   };
 
   outputs = inputs@{ logos-module-builder, ... }:

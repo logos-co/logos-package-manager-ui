@@ -264,6 +264,26 @@
         "type": "github"
       }
     },
+    "logos-intents-module": {
+      "inputs": {
+        "logos-module-builder": [
+          "logos-module-builder"
+        ]
+      },
+      "locked": {
+        "lastModified": 1795615252,
+        "narHash": "sha256-AGkquyPi1dj5hGfl9StubYaxio+hCritz3istl6rimY=",
+        "owner": "logos-co",
+        "repo": "logos-intents-module",
+        "rev": "812533765a9fdf39f61b51e0a5cf51a59ff68d73",
+        "type": "github"
+      },
+      "original": {
+        "owner": "logos-co",
+        "repo": "logos-intents-module",
+        "type": "github"
+      }
+    },
     "logos-lidl": {
       "inputs": {
         "logos-nix": [
@@ -1154,11 +1174,11 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1793110312,
-        "narHash": "sha256-xTGhoNHr4o8OuHTxfB+6A7bDE33Qc6aL3rZGEJ9QL84=",
+        "lastModified": 1795544936,
+        "narHash": "sha256-zK3WzqtUDQD28JaGKVwm5hM7qjeUklGj2SI7VYZomRw=",
         "owner": "logos-co",
         "repo": "logos-module-builder",
-        "rev": "a99b32a4e22692c9f24ce43fa3834fa840b11967",
+        "rev": "c1572d8fab858151e2547c752a856dc96215c290",
         "type": "github"
       },
       "original": {
@@ -4607,11 +4627,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1793105191,
-        "narHash": "sha256-qsVFo9+FVu/VUBtWikUkgOfsXmw1DOzA/1vDkABQ3eA=",
+        "lastModified": 1795537770,
+        "narHash": "sha256-DBpNucma2++hZy0EDaLvu5ISkk/tpwQnbhkIBTjy3qc=",
         "owner": "logos-co",
         "repo": "logos-view-module",
-        "rev": "09b8cf673033c10f49c5a7236a9201dc918e52e5",
+        "rev": "d71c09b6c9f2a484f0d6810251444e304712715c",
         "type": "github"
       },
       "original": {
@@ -7772,6 +7792,7 @@
     },
     "root": {
       "inputs": {
+        "logos-intents-module": "logos-intents-module",
         "logos-module-builder": "logos-module-builder",
         "logos-package": "logos-package_3",
         "package_downloader": "package_downloader",

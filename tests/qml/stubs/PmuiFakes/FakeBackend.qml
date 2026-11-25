@@ -8,6 +8,17 @@ QtObject {
     id: fake
 
     signal packageDetailsLoaded(var details)
+    // intents_module's delivery of packages.show / packages.install, and the answers to it.
+    signal revealRequested(string dispatch, string intent, string name)
+    property var revealAnswers: []
+    function answerReveal(dispatch, ok, error) { revealAnswers = revealAnswers.concat([[dispatch, ok, error]]) }
+    // What the view asked the backend to confirm with the host, in order.
+    property var confirms: []
+    function confirmInstall(name, version, repositoryUrl) { confirms = confirms.concat([["install", name]]) }
+    function confirmUpgrade(name, version, mode, repositoryUrl) { confirms = confirms.concat([["upgrade", name, mode]]) }
+    function confirmUninstall(name) { confirms = confirms.concat([["uninstall", name]]) }
+    property int repositoryRequests: 0
+    function manageRepositories() { repositoryRequests += 1 }
     signal cancellationOccurred(string name, string message)
     signal errorOccurred(int code)
 

@@ -26,20 +26,8 @@ TestCase {
     // The host: `logos` hands the view its backend and model, here a fake.
     property var backend: null
     property var logos: QtObject {
-        signal intentRequested(string requestId, string intent, var params, string requesterName)
-        property var requests: []
-        property var requestParams: []
-        // What the host answers a request with; null leaves it unanswered.
-        property var answer: null
         function module(name) { return testCase.backend }
         function model(name, property, prefetch) { return testCase.backend ? testCase.backend.model : null }
-        function respond(id, ok, data, error) {}
-        function request(intent, params, callback) {
-            requests = requests.concat([intent])
-            requestParams = requestParams.concat([params])
-            if (answer)
-                callback(answer)
-        }
     }
 
     Component { id: fakeComp; FakeBackend {} }
@@ -48,9 +36,6 @@ TestCase {
     function init() {
         failOnWarning(/Binding loop/)
         backend = fakeComp.createObject(testCase)
-        logos.requests = []
-        logos.requestParams = []
-        logos.answer = null
     }
 
     function cleanup() {
@@ -282,7 +267,7 @@ TestCase {
         menu = openMore(view)
         verify(findChild(menu, "pmui.moreShowUnavailableItem").checked)
         mouseClick(findChild(menu, "pmui.moreRepositoriesItem"))
-        compare(logos.requests, ["basecamp.repositories.manage"])
+        compare(backend.repositoryRequests, 1)
     }
 
     // An install running leaves Install Local Package and Manage
@@ -391,7 +376,6 @@ TestCase {
     // can run, which asks Basecamp to uninstall that package.
     function test_a_cards_menu_uninstalls_where_it_can() {
         const view = makeView(390)
-        logos.answer = { ok: true, data: {} }
         let card = cardFor(view, "waku_module")
         mouseClick(card.menuButtonItem)
         tryCompare(card.menu, "opened", true)
@@ -400,8 +384,7 @@ TestCase {
         const uninstall = findChild(card.menu, "pmui.cardMenu.uninstall")
         verify(uninstall.visible)
         mouseClick(uninstall)
-        compare(logos.requests, ["basecamp.packages.confirm_uninstall"])
-        compare(backend.uninstalls, ["waku_module"])
+        compare(backend.confirms, [["uninstall", "waku_module"]])
         tryCompare(card.menu, "visible", false)
         verify(!findChild(cardFor(view, "chat_module").menu, "pmui.cardMenu.uninstall").visible,
                "not installed")
@@ -439,10 +422,10 @@ TestCase {
         compare(backend.shown.length, 2)
     }
 
-    // Another app asking to show a package fills the search with its name.
+    // A request to show a package fills the search with its name.
     function test_showing_a_package_searches_for_it() {
         const view = makeView(1280)
-        logos.intentRequested("r1", "packages.show", { name: "Wallet" }, "chat")
+        backend.revealRequested("d1", "packages.show", "Wallet")
         compare(find(view, "pmui.header").searchText, "Wallet")
         compare(backend.searchText, "Wallet")
     }
@@ -460,6 +443,21 @@ TestCase {
         verify(backend.shown[0].name !== target)
         verify(store.showDetailsForName(target))
         tryCompare(store.selectedPackageDetails, "name", target)
+    }
+
+    // Through intents_module, packages.install only shows the package: the
+    // request had no click in this view behind it, so the click on Install is
+    // what asks for the install dialog.
+    function test_an_install_through_intents_module_only_shows_the_package() {
+        const view = makeView(1280)
+        const store = find(view, "pmui.BackendStore")
+        const target = backend.shown[1].name
+        backend.revealRequested("d1", "packages.install", target)
+        tryCompare(store.selectedPackageDetails, "name", target)
+        tryCompare(backend.revealAnswers, "length", 1)
+        compare(backend.revealAnswers[0][0], "d1")
+        verify(backend.revealAnswers[0][1])
+        compare(backend.confirms.length, 0)
     }
 
     // ── A package's own actions, in its details ──
@@ -515,15 +513,12 @@ TestCase {
     // wherever the list has moved its row since they opened.
     function test_details_uninstall_the_package_they_show() {
         const view = makeView(390)
-        logos.answer = { ok: true, data: {} }
         openDetails(view, "waku_module")
         const opened = backend.shown.findIndex(r => r.name === "waku_module")
         backend.pushSortRole("size")
         verify(backend.shown[opened].name !== "waku_module", "the rows moved")
         mouseClick(find(view, "pmui.DetailsPanel.uninstall"))
-        compare(logos.requests, ["basecamp.packages.confirm_uninstall"])
-        compare(logos.requestParams[0].names, ["waku_module"])
-        compare(backend.uninstalls, ["waku_module"])
+        compare(backend.confirms, [["uninstall", "waku_module"]])
     }
 
     function test_the_details_action_runs_on_their_package() {
@@ -532,8 +527,7 @@ TestCase {
         const pill = find(view, "pmui.DetailsPanel.action")
         compare(pill.action, PackageManagerUi.Install)
         mouseClick(pill)
-        compare(logos.requests, ["basecamp.packages.confirm_install"])
-        compare(logos.requestParams[0].name, "chat_module")
+        compare(backend.confirms, [["install", "chat_module"]])
     }
 
     // A version picked in the details moves the row, and the details, read
