@@ -27,10 +27,6 @@
     {
       "intent": "packages.show",
       "handoff": true
-    },
-    {
-      "intent": "packages.install",
-      "handoff": true
     }
   ],
   "codegen": {

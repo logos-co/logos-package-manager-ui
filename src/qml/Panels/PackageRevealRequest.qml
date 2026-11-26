@@ -1,9 +1,9 @@
 import QtQuick
 
-// Provider side of `packages.show` and `packages.install` — the shell asking
-// us, through intents_module and the backend, to reveal a package or to offer
-// its install. Both only show it: the request had no click in this view behind
-// it, so the person's own click on Install is what asks for the install dialog.
+// Provider side of `packages.show` — the shell asking us, through
+// intents_module and the backend, to reveal a package. It only shows it: the
+// request had no click in this view behind it, so the person's own click on
+// Install is what asks for the install dialog.
 QtObject {
     id: root
     objectName: "pmui.revealRequest"
@@ -37,7 +37,7 @@ QtObject {
         // searchText echoing back from the source is what says one landed.
         if (root.store.searchText !== d.name) apply()
 
-        // Answered on ARRIVAL: the package is shown. Both intents are handoff,
+        // Answered on ARRIVAL: the package is shown. The intent is handoff,
         // so the user stays here.
         if (root.store.showDetailsForName(d.name)) finish(true, "")
     }

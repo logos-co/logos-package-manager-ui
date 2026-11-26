@@ -43,7 +43,7 @@ class PackageManagerUi
     // Per-row primary action — resolved against the row's currently
     // selected dropdown version. Drives the Action column label + the
     // pill's click target. Uninstall lives in the row's overflow menu,
-    // not here. See PackageTypes.h for the long comment.
+    // not here. These enums are basecamp-installer-common's Types.h.
     ENUM RowAction {
         Install      = 0,
         Upgrade      = 1,
@@ -148,35 +148,24 @@ class PackageManagerUi
     SLOT(QString displayNameForModule(QString moduleName))
 
     // The view's row actions: the backend asks the host for the confirm
-    // intents through intents_module and runs what the host approves.
+    // intents through intents_module and runs what the host approves. How
+    // each ends comes as installationProgressUpdated (Completed or
+    // ProgressFailed); the person's own cancel says nothing.
     SLOT(void confirmInstall(QString name, QString version, QString repositoryUrl))
     SLOT(void confirmUpgrade(QString moduleName, QString version, int mode, QString repositoryUrl))
     SLOT(void confirmUninstall(QString moduleName))
     SLOT(void manageRepositories())
 
-    // packages.show / packages.install delivered by intents_module: the view
-    // finds the row, then answers with answerReveal.
+    // packages.show delivered by intents_module: the view finds the row,
+    // then answers with answerReveal.
     SIGNAL(revealRequested(QString dispatch, QString intent, QString name))
     SLOT(void answerReveal(QString dispatch, bool ok, QString error))
 
-    // ── Confirmed actions ─────────────────────────────────────────────────
-    SLOT(void performInstall(QString name, QString version, QString repositoryUrl, QVariantMap approval))
-    SLOT(void performUpgrade(QString moduleName, QString version, int mode, QString repositoryUrl, QVariantMap approval))
-    SLOT(void performUninstall(QStringList names))
-
-    // Host refused, was unreachable, cancelled, or never answered. Called for
-    // EVERY non-approval including `cancelled`, because it drops a local file
-    // staged for the request; suppressing the toast for a user's own cancel
-    // is the backend's job, not the caller's.
-    SLOT(void reportActionFailed(QStringList names, QString error))
-
     // User-actionable error; errorType maps to the ErrorType enum.
     SIGNAL(errorOccurred(int errorType))
-    // Per-package install progress updates.
+    // How a request ended: Completed, or ProgressFailed with why (Basecamp
+    // refused, or the change failed). `packageName` is the package's label.
     SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
     // Reply to requestPackageDetailsFor.
     SIGNAL(packageDetailsLoaded(QVariantMap details))
-    // System-originated cancel of an in-flight install/uninstall/upgrade.
-    // `message` is pre-formatted for verbatim toast display.
-    SIGNAL(cancellationOccurred(QString name, QString message))
 }

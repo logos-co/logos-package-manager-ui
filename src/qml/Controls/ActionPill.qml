@@ -6,19 +6,22 @@ import Logos.Controls
 import Logos.Icons
 import Logos.PackageManagerUi 1.0
 
+import "../Installer/Availability.js" as Availability
+import "../Installer/Downloads.js" as Downloads
+import "../Installer/Stages.js" as Stages
+
 // Per-row primary-action pill. Replaces the read-only StatusBadge: this
 // IS the action button, not a label next to one. Reads `rowAction` from
-// the model (the value PackageListModel computed against the row's
-// SELECTED dropdown version), maps to a label + colour family, and on
-// click emits `actionRequested(rowAction)` so the caller can dispatch
-// the matching backend slot.
+// the model (computed against the row's SELECTED dropdown version), maps
+// to a label + colour family, and on click emits
+// `actionRequested(rowAction)` so the caller can dispatch the matching
+// backend slot. The words are the shared installer words (Installer/).
 //
 // Two states are computed independently of `rowAction`:
-//   * `installStatus === Installing` → the pill names the stage, in the App
-//     Manager's words (Queued, Finding peers…, Downloading…, bytes,
-//     Installing…) and stops being clickable, regardless of what action
-//     would otherwise be runnable. The transient state isn't a RowAction
-//     value (see PackageTypes::RowAction comment).
+//   * `installStatus === Installing` → the pill names the stage (Queued,
+//     Finding peers…, Downloading…, bytes, Installing…) and stops being
+//     clickable, regardless of what action would otherwise be runnable.
+//     The transient state isn't a RowAction value.
 //   * `rowAction === NotAvailable` → not clickable, tooltip carries the
 //     specific notAvailableReason.
 //
@@ -51,30 +54,16 @@ Control {
     readonly property real downloadTotal: modelData ? (modelData.downloadTotal || 0) : 0
     readonly property bool downloadDone: downloadTotal > 0
                                          && downloadReceived >= downloadTotal
-    readonly property bool showProgress: installing && downloadTotal > 0
-                                         && downloadReceived > 0 && !downloadDone
-    // Logos Storage with no byte yet is still finding peers that have the
-    // package: where a slow install spends its time.
-    readonly property bool findingPeers: installing && !downloadDone
-                                         && downloadReceived <= 0
-                                         && modelData && modelData.downloadTransport === "logos"
-    // Over HTTP and no byte yet: the transfer has begun, nothing has arrived.
-    readonly property bool downloadStarted: installing && !downloadDone
-                                            && downloadReceived <= 0
-                                            && !!modelData && modelData.downloadTransport === "http"
-    // Installing, but this package's own download has not begun: another
-    // download is still running, or its dependencies come first. The first
-    // sample of its own download names the transport.
-    readonly property bool waitingToDownload: installing && !downloadDone
-                                              && downloadReceived <= 0
-                                              && !(modelData && modelData.downloadTransport)
+    readonly property bool showProgress: installing
+                                         && Downloads.transferring(downloadReceived, downloadTotal)
+    // "logos", "http", or "" until this package's own download begins.
+    readonly property string transport: installing && modelData
+                                        ? (modelData.downloadTransport || "") : ""
     // Where the bytes come from, at the start of the pill. Only once the
     // downloader has said: while waiting, the Source column shows the one
     // it will try first.
-    readonly property url transportIcon: !installing || !modelData ? ""
-        : modelData.downloadTransport === "logos" ? LogosIcons.logosStorage
-        : modelData.downloadTransport === "http" ? LogosIcons.github
-        : ""
+    readonly property string transportIconName: Downloads.transportIconName(transport)
+    readonly property url transportIcon: transportIconName ? LogosIcons[transportIconName] : ""
     readonly property bool indeterminateProgress:
         installing && !downloadDone && (downloadReceived <= 0 || downloadTotal <= 0)
     // The tooltip's text, for a place that shows it without hovering: what
@@ -84,58 +73,17 @@ Control {
     QtObject {
         id: d
 
-        // Mirrors PackageList's size column formatting so the pill and the
-        // Size cell describe the same bytes the same way.
-        function formatBytes(n) {
-            if (!isFinite(n) || n <= 0) return "0 B"
-            if (n < 1024) return Math.round(n) + " B"
-            if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB"
-            if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB"
-            return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB"
-        }
-
-        // Both sides scaled to the TOTAL's unit, so the unit is printed once
-        // and the two numbers are directly comparable: "12.3 / 45.2 MB", not
-        // "12.3 MB / 45.2 MB". Also the narrower worst case, which is what
-        // the pill's fixed width is sized against.
-        function progressLabel(received, total) {
-            if (!(total > 0)) return d.formatBytes(received)
-            const k = 1024
-            let unit = "B", div = 1
-            if (total >= k * k * k)  { unit = "GB"; div = k * k * k }
-            else if (total >= k * k) { unit = "MB"; div = k * k }
-            else if (total >= k)     { unit = "KB"; div = k }
-            const f = function (n) {
-                return div === 1 ? String(Math.round(n)) : (n / div).toFixed(1)
-            }
-            return f(received) + " / " + f(total) + " " + unit
-        }
-
         function actionText(a, installing) {
-            // Counting bytes only while they're actually moving. Once the
-            // transfer completes the remaining work (verify, install) has no
-            // byte count, so the label goes back to the plain state rather
-            // than parking on "45.2 / 45.2 MB".
-            if (root.showProgress) {
-                return d.progressLabel(root.downloadReceived, root.downloadTotal)
-            }
-            // The words the App Manager's package rows use for the same stages.
-            if (root.queued || root.waitingToDownload) return qsTr("Queued")
-            if (root.findingPeers) return qsTr("Finding peers…")
-            if (root.downloadStarted) return qsTr("Downloading…")
-            if (installing) return qsTr("Installing…")
+            // While installing, the stage: the bytes while they move, then
+            // what comes after them, which has no byte count.
+            if (installing)
+                return Stages.progressWord({ queued: root.queued, transport: root.transport,
+                                             received: root.downloadReceived,
+                                             total: root.downloadTotal })
             // Verb only. The version it would install is one hover away in
             // the tooltip, and the Installed / Available columns carry the
             // pair inline — putting it on the pill too was a third copy.
-            switch (a) {
-            case PackageManagerUi.Install:      return qsTr("Install")
-            case PackageManagerUi.Upgrade:      return qsTr("Upgrade")
-            case PackageManagerUi.Downgrade:    return qsTr("Downgrade")
-            case PackageManagerUi.Reinstall:    return qsTr("Reinstall")
-            case PackageManagerUi.Retry:        return qsTr("Retry")
-            case PackageManagerUi.NotAvailable: return qsTr("Not available")
-            default:                            return qsTr("Installed")  // NoOp
-            }
+            return Stages.actionWord(a)
         }
 
         function baseColor(a, installing) {
@@ -151,48 +99,20 @@ Control {
             }
         }
 
-        function notAvailableTooltip(r) {
-            if (!r) return ""
-            var reason = r.notAvailableReason | 0
-            if (reason === PackageManagerUi.NoVariantsPublished)
-                return qsTr("No installable build is published for this package.")
-            if (reason === PackageManagerUi.BuildFlavorMismatch)
-                return qsTr("Not available for this build flavor (dev / portable / release).")
-            if (reason === PackageManagerUi.PlatformMismatch)
-                return qsTr("Not available for this platform.")
-            if (reason === PackageManagerUi.NotOnLogosStorage)
-                return qsTr("This version is not on Logos Storage, and the download source is set to Logos only.")
-            if (reason === PackageManagerUi.NotOverHttp)
-                return qsTr("This version has no HTTP download, and the download source is set to HTTP only.")
-            return qsTr("Not available")
-        }
-
-        // What clicking would change, in versions: what's on disk now →
-        // what the row's Version dropdown has selected. `version` is
-        // mirrored to the dropdown pick by PackageListModel::setRowVersion,
-        // so this tracks the combo rather than the catalog newest.
-        function transitionText(r) {
-            const from = r.installedVersion ? String(r.installedVersion) : ""
-            const to   = r.version ? String(r.version) : ""
-            if (from === "")
-                return to === "" ? "" : qsTr("Installs v%1").arg(to)
-            if (to === "" || to === from)
-                return qsTr("v%1 installed").arg(from)
-            return qsTr("v%1 → v%2").arg(from).arg(to)
-        }
-
         // Tooltip body. Failed rows show the captured errorMessage; the
         // failed text itself sits in the pill via "Retry", so the
         // tooltip carries the why. NotAvailable rows explain the reason.
         // Everything else spells out the version transition — "Upgrade"
-        // alone never said from what, to what.
+        // alone never said from what, to what. `version` follows the row's
+        // Version dropdown, so this tracks the pick rather than the newest.
         function tooltipText(r, a) {
             if (!r) return ""
             if (a === PackageManagerUi.NotAvailable)
-                return d.notAvailableTooltip(r)
+                return Availability.notAvailableText(r.notAvailableReason | 0)
+            const transition = Stages.transitionText(r.installedVersion, r.version)
             if (a === PackageManagerUi.Retry)
-                return r.errorMessage || d.transitionText(r)
-            return d.transitionText(r)
+                return r.errorMessage || transition
+            return transition
         }
     }
 
@@ -213,7 +133,7 @@ Control {
     TextMetrics {
         id: widestInstallLabel
         font: badge.labelItem.font
-        text: "999.9 / 999.9 MB"
+        text: Downloads.widestProgressLabel
     }
     // The badge's icon is 12px with 4px spacing.
     readonly property int installingWidth:

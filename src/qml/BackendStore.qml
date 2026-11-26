@@ -189,7 +189,6 @@ QtObject {
                 d.selectedPackageDetails = details || ({})
             }
 
-            function onCancellationOccurred(name, message) { d.lastMessage = message }
             function onInstallationProgressUpdated(progressType, packageName,
                                                    completed, total, success, error) {
                 if (success || !error) return
@@ -241,10 +240,9 @@ QtObject {
 
     // ─── Per-row actions ───
     //
-    // Each raises its confirm intent DIRECTLY from the click. Nothing goes to
-    // the backend first: every field the payload needs is already in the model,
-    // and the host resolves the dependency changes itself rather than trusting
-    // ours. The backend is only called once the host has approved.
+    // Each names the row's package to the backend, which asks Basecamp
+    // (basecamp.packages.confirm_*) and does only what it approves. Basecamp
+    // resolves the dependency changes itself rather than trusting ours.
     function installPackage(i)   { var r = d.row(i); if (r) d.confirmInstall(r) }
     function upgradePackage(i)   { var r = d.row(i); if (r) d.confirmUpgrade(r, 0) }
     function downgradePackage(i) { var r = d.row(i); if (r) d.confirmUpgrade(r, 1) }

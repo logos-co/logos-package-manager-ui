@@ -42,13 +42,6 @@ async function storeProperty(app, propName) {
   return propertyOf(app, res.matches[0].id, propName);
 }
 
-// An approval as Basecamp answers one: a plan naming the exact release. The
-// resolver only filters the loaded catalogue by repositoryUrl; nothing fetches it.
-function approvedPlan(name) {
-  return `({ plan: [{ name: "${name}", version: "1.0.0", rootHash: "0", ` +
-         `repositoryUrl: "https://example.invalid" }] })`;
-}
-
 // Evaluates an expression on the BackendStore; a QML error throws.
 async function storeEvaluator(app) {
   const store = await app.findByProperty("objectName", "pmui.BackendStore");
@@ -70,31 +63,6 @@ function waitForIdle(app, description) {
     },
     { timeout: 30000, interval: 500, description }
   );
-}
-
-// Records, from now on, whether the install lock was ever taken and every
-// message in order: polling would miss what ends this fast. A Connections, so
-// the watch goes with the probe; null until retargeted, or it would watch d.
-async function storeProbe(app, evaluate, objectName) {
-  await evaluate(`(function () {
-    var probe = Qt.createQmlObject('import QtQuick; Connections { objectName: "${objectName}"; ' +
-      'target: null; property bool locked: false; property var messages: []; ' +
-      'function onIsInstallingChanged() { if (target.isInstalling) locked = true } ' +
-      'function onLastMessageChanged() { if (target.lastMessage) ' +
-      'messages = messages.concat([target.lastMessage]) } }', d);
-    probe.target = store;
-  })()`);
-  const found = await app.findByProperty("objectName", objectName);
-  if (!found.matches || found.matches.length === 0) throw new Error(`${objectName} was not created`);
-  const id = found.matches[0].id;
-  const read = async (expression) =>
-    (await app.inspector.send("evaluate", { objectId: id, expression })).result;
-  return {
-    locked: async () => (await read("locked")) === true,
-    // Arrays come back from getProperties as an opaque "<QJSValue>".
-    messages: async () => JSON.parse(await read("JSON.stringify(messages)")).map(String),
-    destroy: () => read("destroy()"),
-  };
 }
 
 async function propertyOf(app, objectId, propName) {
@@ -213,140 +181,20 @@ test("failure notice: a message surfaces and can be dismissed", async (app) => {
   await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
 });
 
-// Installing a package, then one that depends on it while the first was still
-// downloading, fetched and installed the dependency twice: it was not on disk
-// yet, so the second install's resolver asked for it again. One install runs
-// at a time now; a second waits its turn, then resolves against the disk.
-//
-// Names no catalog has: each install fails at resolution, which is all this
-// needs, and nothing is downloaded or installed.
-test("install queue: a second install waits for the first, then runs", async (app) => {
+// Every install, upgrade and uninstall asks Basecamp first: the backend has no
+// way in that carries an approval of its own. The pipeline behind the asking
+// (one request at a time, held to what Basecamp approved) is
+// basecamp-installer-common's, tested there and in tests/cpp.
+test("install: the backend has no way to install that skips Basecamp", async (app) => {
   await waitForPmuiLoaded(app);
-  await waitForCatalogLoaded(app);
-
-  const store = await app.findByProperty("objectName", "pmui.BackendStore");
-  if (!store.matches || store.matches.length === 0) {
-    throw new Error('No object found with objectName "pmui.BackendStore"');
-  }
-  const storeId = store.matches[0].id;
-  const install = (name) => `backend.performInstall("${name}", "", "", ${approvedPlan(name)})`;
-  const idle = async (description) => app.waitFor(
-    async () => {
-      if (await storeProperty(app, "isInstalling")) throw new Error("an install is still running");
-    },
-    { timeout: 30000, interval: 500, description }
-  );
-
-  await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
-  const probe = await storeProbe(app, await storeEvaluator(app), "pmui.installProbe");
-
-  // Back to back: the second arrives while the first runs, and must wait for
-  // it rather than be refused or run beside it.
-  await app.inspector.send("evaluate", {
-    objectId: storeId,
-    expression: `${install("pmui_queue_probe_a")}; ${install("pmui_queue_probe_b")}`,
-  });
-  await idle("both installs to end");
-  await new Promise((r) => setTimeout(r, 500));
-
-  const locked = await probe.locked();
-  const messages = await probe.messages();
-  await probe.destroy();
-  // Run side by side, these installs never took the lock at all.
-  if (!locked) throw new Error("the installs never took the install lock");
-  const last = messages[messages.length - 1] || "";
-  if (!last.includes("pmui_queue_probe_b")) {
-    throw new Error(`the second install did not run last: ${JSON.stringify(messages)}`);
-  }
-
-  // Nothing left holding the lock: a later install runs at once.
-  await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
-  await app.inspector.send("evaluate", { objectId: storeId, expression: install("pmui_queue_probe_c") });
-  await idle("a later install to end");
-  const after = await storeProperty(app, "lastMessage");
-  if (!String(after).includes("pmui_queue_probe_c")) {
-    throw new Error(`a later install did not run, message ${JSON.stringify(after)}`);
-  }
-  await app.inspector.send("evaluate", { objectId: storeId, expression: "dismissMessage()" });
-});
-
-// An approval naming neither a plan nor a file approves nothing. Without one,
-// an install resolved the name in the catalogue on its own, or took the file
-// waiting under it; installSelected installed the ticked rows asking no one.
-test("install: nothing Basecamp did not approve is installed", async (app) => {
-  await waitForPmuiLoaded(app);
-  await waitForCatalogLoaded(app);
   const evaluate = await storeEvaluator(app);
-  const refused = (what) => app.waitFor(
-    async () => {
-      const message = String(await storeProperty(app, "lastMessage"));
-      if (!message.includes("did not approve")) {
-        throw new Error(`${what} was not refused, message ${JSON.stringify(message)}`);
-      }
-    },
-    { timeout: 30000, interval: 250, description: `${what} to be refused` }
-  );
-
-  await waitForIdle(app, "earlier installs to end");
-  await evaluate("dismissMessage()");
-  const probe = await storeProbe(app, evaluate, "pmui.unapprovedProbe");
-
-  await evaluate('backend.performInstall("pmui_unapproved_probe", "", "", ({}))');
-  await refused("an install with an empty approval");
-  // Refused before anything is fetched, removed or locked.
-  await evaluate("dismissMessage()");
-  await evaluate('backend.performUpgrade("pmui_unapproved_probe", "", 0, "", ({}))');
-  await refused("an upgrade with an empty approval");
-  const locked = await probe.locked();
-  await probe.destroy();
-  await evaluate("dismissMessage()");
-  if (locked) throw new Error("a request with an empty approval took the install lock");
-
-  if (await evaluate("typeof backend.installSelected") !== "undefined") {
-    throw new Error("backend.installSelected is back: it installs what no one approved");
+  for (const slot of ["performInstall", "performUpgrade", "performUninstall", "installSelected"]) {
+    if (await evaluate(`typeof backend.${slot}`) !== "undefined") {
+      throw new Error(`backend.${slot} is back: it changes what no one approved`);
+    }
   }
-});
-
-// Checked when the request arrives: one whose approval holds nothing is
-// refused at once, never queued behind the install or upgrade that is running
-// (where it once overwrote that upgrade's approval).
-test("install queue: a request Basecamp did not approve is refused at once, not queued", async (app) => {
-  await waitForPmuiLoaded(app);
-  await waitForCatalogLoaded(app);
-  const evaluate = await storeEvaluator(app);
-
-  await waitForIdle(app, "earlier installs to end");
-  await evaluate("dismissMessage()");
-  const probe = await storeProbe(app, evaluate, "pmui.turnProbe");
-
-  // Each pair back to back: the first takes the lock, the second arrives
-  // while it runs. Names no catalog has, so nothing is fetched.
-  await evaluate(`backend.performInstall("pmui_turn_a", "", "", ${approvedPlan("pmui_turn_a")}); ` +
-                 'backend.performInstall("pmui_turn_b", "", "", ({}))');
-  await waitForIdle(app, "the approved install to end");
-  await evaluate(`backend.performUpgrade("pmui_turn_c", "1.0.0", 0, "https://example.invalid", ` +
-                 `${approvedPlan("pmui_turn_c")}); ` +
-                 'backend.performUpgrade("pmui_turn_c", "", 0, "", ({}))');
-  await waitForIdle(app, "the approved upgrade to end");
-  await new Promise((r) => setTimeout(r, 500));
-
-  const messages = await probe.messages();
-  await probe.destroy();
-  await evaluate("dismissMessage()");
-  const at = (pred) => messages.findIndex(pred);
-  const notApproved = (m) => m.includes("did not approve");
-  for (const [refusedName, runningName] of [["pmui_turn_b", "pmui_turn_a"],
-                                            ["pmui_turn_c", "pmui_turn_c"]]) {
-    const refusedAt = at((m) => m.includes(refusedName) && notApproved(m));
-    const ranAt = at((m) => m.includes(runningName) && !notApproved(m));
-    if (refusedAt < 0 || ranAt < 0) {
-      throw new Error(`expected a refusal for ${refusedName} and an end for ${runningName}: ` +
-                      JSON.stringify(messages));
-    }
-    if (refusedAt > ranAt) {
-      throw new Error(`${refusedName} waited for ${runningName} before being refused: ` +
-                      JSON.stringify(messages));
-    }
+  if (await evaluate("typeof backend.confirmInstall") !== "function") {
+    throw new Error("backend.confirmInstall is missing");
   }
 });
 
@@ -843,12 +691,12 @@ test("row click: single click populates selectedPackageDetails", async (app) => 
   );
 });
 
-// `packages.install` has no click in this view behind it, so it only shows
-// the package: the person's click on Install is what asks for the install
-// dialog. Delivered here the way the backend hands it over. An
-// install asked for would put up Basecamp's install gate or, with nobody to
-// ask, end in a "was not changed" message.
-test("reveal: packages.install through intents_module shows the package and asks for nothing",
+// `packages.show` has no click in this view behind it, so it only shows the
+// package: the person's click on Install is what asks for the install dialog.
+// Delivered here the way the backend hands it over. An install asked for
+// would put up Basecamp's install gate or, with nobody to ask, end in a
+// "nothing was changed" message.
+test("reveal: packages.show through intents_module shows the package and asks for nothing",
   async (app) => {
     await waitForPmuiLoaded(app);
     await waitForCatalogLoaded(app);
@@ -1319,7 +1167,7 @@ test("local section: any empty-repositoryUrl row is labelled 'local'", async (ap
 
   // roleNames() isn't Q_INVOKABLE on QAbstractItemModel, so we resolve
   // role IDs via the backend PROP exposed on the store as packageRoleIds
-  // (populated once at backend construction from PackageListModel::roleNames).
+  // (populated once at backend construction from the model's roleNames).
   const roleIds = await fetchPackageRoleIds(app);
   if (!roleIds || typeof roleIds !== "object") {
     throw new Error(`packageRoleIds unavailable on BackendStore: ${JSON.stringify(roleIds)}`);
@@ -1495,7 +1343,7 @@ test("picker: switching version updates size/dateUpdated", async (app) => {
     throw new Error(
       `setRowVersion landed (selectedVersionIndex=1) but size/date didn't ` +
       `update: v0 size=${size0} date=${date0} · v1 read-back size=${size1} date=${date1}. ` +
-      `applyPickedSizeAndDate in PackageListModel::setRowVersion is broken.`);
+      `The picked version's size and date don't reach the row.`);
   }
 });
 
@@ -1512,7 +1360,7 @@ test("installed column: model exposes the installedVersion role", async (app) =>
   const roleIds = await fetchPackageRoleIds(app);
   if (typeof roleIds?.installedVersion !== "number") {
     throw new Error(
-      "PackageListModel must expose an installedVersion role (the Installed " +
+      "The packages model must expose an installedVersion role (the Installed " +
       "column binds to it); got: " + JSON.stringify(roleIds));
   }
 });
@@ -1614,7 +1462,7 @@ test("progress: model exposes downloadReceived/downloadTotal roles", async (app)
   if (typeof roleIds.downloadReceived !== "number" ||
       typeof roleIds.downloadTotal !== "number") {
     throw new Error(
-      "PackageListModel must expose downloadReceived/downloadTotal roles " +
+      "The packages model must expose downloadReceived/downloadTotal roles " +
       "(ActionPill binds to them for the install progress bar); got: " +
       JSON.stringify(roleIds));
   }
@@ -1709,7 +1557,7 @@ test("sections: model exposes the sourceKey role", async (app) => {
   }
   if (typeof roleIds.sourceKey !== "number") {
     throw new Error(
-      "PackageListModel must expose a sourceKey role (PackageList " +
+      "The packages model must expose a sourceKey role (PackageList " +
       "binds ListView.section.property to it); got: " + JSON.stringify(roleIds));
   }
 });
@@ -2027,11 +1875,12 @@ test("filter: showUnavailable adds back the rows the list hides", async (app) =>
 // ── Platform availability ──────────────────────────────────────────────────
 //
 // Catalogs are published per OS/arch AND per build flavor, so on many hosts
-// most of the catalog is packages that host cannot install. PackagesFilterProxy
-// drops them; `hasInstallableVersion` is the whole-row flag it filters on.
+// most of the catalog is packages that host cannot install. The library's
+// PackageFilter drops them; `hasInstallableVersion` is the whole-row flag it
+// filters on.
 //
 // This guards the proxy's role wiring specifically. The rule itself is unit
-// tested against QVariantMaps (tests/test_package_rows.cpp); what can only
+// tested against QVariantMaps (basecamp-installer-common's tst_package_rows); what can only
 // break here is the role-name lookup, which fails silently — an unresolved
 // role filters nothing and every other test still passes.
 test("availability: no listed row is uninstallable on this host", async (app) => {

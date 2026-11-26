@@ -9,7 +9,8 @@ import Logos.Layouts
 
 import Panels
 
-import "DownloadNotice.js" as DownloadNotice
+import "Installer/Availability.js" as Availability
+import "Installer/Downloads.js" as Downloads
 
 Rectangle {
 
@@ -26,6 +27,16 @@ Rectangle {
     readonly property bool detailOpen: !!store.selectedPackageDetails
                                        && !!store.selectedPackageDetails.name
 
+    // Shown, or hidden behind another section or app. Left, it starts afresh
+    // next time: the details closed and the search empty.
+    readonly property bool shown: Window.visibility !== Window.Hidden
+    onShownChanged: {
+        if (shown) return
+        detailsPanel.panelOpen = false
+        header.searchItem.text = ""
+        header.closeSearch()
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.pageMargin(root.width)
@@ -35,7 +46,10 @@ Rectangle {
         LogosPageHeader {
             id: header
             objectName: "pmui.header"
-            visible: !detailsPanel.showingPanel
+            // On a phone the details are the page, under this header: a ‹
+            // before the title closes them.
+            canGoBack: detailsPanel.showingPanel
+            onBackRequested: detailsPanel.panelOpen = false
             Layout.fillWidth: true
             title: qsTr("Package Manager")
             subtitle: qsTr("Manage your plugins and packages.")
@@ -43,7 +57,8 @@ Rectangle {
             // and what its details go back to.
             shortTitle: qsTr("Packages")
             subtitleOnPhone: false
-            searchEnabled: true
+            // Nothing to search over the details on a phone.
+            searchEnabled: !detailsPanel.showingPanel
             searchPlaceholder: qsTr("Search packages…")
             searchShortcutHint: searchShortcut.nativeText
             searchWidth: 605
@@ -60,12 +75,14 @@ Rectangle {
             onActivated: header.openSearch()
         }
 
-        // ─── Download notice ── why downloads may not work right now.
+        // ─── Download notice ── why downloads may not work right now. Logos
+        // Storage being down while GitHub covers for it is said here: this is
+        // where each download's source is shown.
         LogosNotice {
             id: downloadNotice
             objectName: "pmui.downloadNotice"
-            readonly property var notice: DownloadNotice.notice(
-                store.online, store.downloadSource, store.storageState)
+            readonly property var notice: Downloads.downloadNotice(
+                store.online, store.downloadSource, store.storageState, true)
             Layout.fillWidth: true
             shown: notice !== null
             severity: !notice ? LogosNotice.Info
@@ -125,9 +142,8 @@ Rectangle {
                 anchors.fill: parent
                 spacing: Theme.spacing.medium
                 divider: false
-                // On a phone the bar names where back goes, as Alisher's
-                // ADR-054 has it.
-                title: showingPanel ? qsTr("Packages") : ""
+                // The way back is the page header's: no bar of its own.
+                backInHost: true
                 onPanelOpenChanged: if (!panelOpen) store.clearSelectedDetails()
 
                 panel: DetailsPanel {
@@ -244,6 +260,8 @@ Rectangle {
                                      && store.availableHereCount === 0
                                      && !store.showUnavailable
                                      && !store.isLoading
+                            readonly property var words: Availability.nothingForThisPlatform(
+                                store.hostVariant.startsWith("unknown") ? "" : store.hostVariant)
 
                             ColumnLayout {
                                 anchors.centerIn: parent
@@ -252,7 +270,7 @@ Rectangle {
 
                                 LogosText {
                                     Layout.alignment: Qt.AlignHCenter
-                                    text: qsTr("Nothing available for this platform")
+                                    text: nothingForThisHost.words.title
                                     font.pixelSize: Theme.typography.subtitleText
                                     font.weight: Theme.typography.weightMedium
                                     color: Theme.palette.text
@@ -262,11 +280,7 @@ Rectangle {
                                 LogosText {
                                     Layout.alignment: Qt.AlignHCenter
                                     Layout.fillWidth: true
-                                    text: (store.hostVariant.length > 0
-                                           && !store.hostVariant.startsWith("unknown"))
-                                          ? qsTr("No configured repository publishes a build for %1.")
-                                                .arg(store.hostVariant)
-                                          : qsTr("No configured repository publishes a build for this platform.")
+                                    text: nothingForThisHost.words.subtitle
                                     font.pixelSize: Theme.typography.primaryText
                                     color: Theme.palette.textSecondary
                                     horizontalAlignment: Text.AlignHCenter
@@ -383,9 +397,8 @@ Rectangle {
         onAccepted: store.installLocalPackage(selectedFile)
     }
 
-    // Provider side of `packages.show` / `packages.install`, which intents_module
-    // delivers to the backend. The waiter lives in Panels — this is just the
-    // doorway.
+    // Provider side of `packages.show`, which intents_module delivers to the
+    // backend. The waiter lives in Panels — this is just the doorway.
     PackageRevealRequest {
         id: revealRequest
         store: store
