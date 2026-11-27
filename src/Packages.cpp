@@ -116,6 +116,7 @@ void Packages::setModules(PackageModules* packages, InstallModules* installs, Co
             [this](const QString& name, Installer::Outcome outcome, const QString& error) {
                 emit finished(displayNameFor(name), static_cast<int>(outcome), error);
             });
+    connect(m_installer, &Installer::changeEnded, this, &Packages::changeEnded);
 }
 
 void Packages::setDebounceInterval(int ms)
