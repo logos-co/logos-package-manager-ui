@@ -397,8 +397,9 @@ Rectangle {
         onAccepted: store.installLocalPackage(selectedFile)
     }
 
-    // Provider side of `packages.show`, which intents_module delivers to the
-    // backend. The waiter lives in Panels — this is just the doorway.
+    // Provider side of `packages.show` / `packages.install`, which intents_module
+    // delivers to the backend. The waiter lives in Panels — this is just the
+    // doorway.
     PackageRevealRequest {
         id: revealRequest
         store: store

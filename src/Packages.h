@@ -127,6 +127,12 @@ public:
     // The label of the package installed as `moduleName`, or the name itself.
     QString displayNameFor(const QString& moduleName) const;
 
+    // An intent this app provides, delivered through intents_module:
+    // packages.show and packages.install {name}. Both only show the package:
+    // no click here was behind the request, so the person's own click on
+    // Install is what asks Basecamp.
+    static bool provides(const QString& intent);
+
     // What the person asked for. Each asks Basecamp first; how it ended comes
     // as finished(). `mode`: 0 upgrade, 1 downgrade, 2 the same version again.
     void install(const QString& name, const QString& version, const QString& repositoryUrl);

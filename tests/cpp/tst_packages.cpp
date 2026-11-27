@@ -13,6 +13,9 @@
 #include <logos/installer/Types.h>
 
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -494,6 +497,26 @@ TEST(the_download_notice_reads_the_downloader) {
     p.packages.onStorageStateChanged("failed", "no peers");
     CHECK_EQ(p.packages.storageState(), QStringLiteral("failed"));
     CHECK(changed.count() > 0);
+}
+
+// What intents_module delivers here: packages.show and packages.install, as
+// on master, and nothing else, as metadata.json declares them. Building on
+// basecamp-installer-common dropped packages.install.
+TEST(it_provides_packages_show_and_packages_install_as_it_declares) {
+    CHECK(Packages::provides(QStringLiteral("packages.show")));
+    CHECK(Packages::provides(QStringLiteral("packages.install")));
+    CHECK(!Packages::provides(QStringLiteral("apps.search")));
+    CHECK(!Packages::provides(QStringLiteral("basecamp.packages.confirm_install")));
+    CHECK(!Packages::provides(QString()));
+
+    QFile metadata(QStringLiteral(PMUI_SOURCE_DIR "/../metadata.json"));
+    CHECK(metadata.open(QIODevice::ReadOnly));
+    QStringList declared;
+    const QJsonArray provides =
+        QJsonDocument::fromJson(metadata.readAll()).object().value(QStringLiteral("provides")).toArray();
+    for (const QJsonValue& v : provides) declared << v.toObject().value(QStringLiteral("intent")).toString();
+    declared.sort();
+    CHECK_EQ(declared, (QStringList{QStringLiteral("packages.install"), QStringLiteral("packages.show")}));
 }
 
 TEST(download_progress_shows_on_the_row_installing) {

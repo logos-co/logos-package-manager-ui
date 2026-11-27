@@ -420,6 +420,11 @@ QString Packages::displayNameFor(const QString& moduleName) const
     return moduleName;
 }
 
+bool Packages::provides(const QString& intent)
+{
+    return intent == QLatin1String("packages.show") || intent == QLatin1String("packages.install");
+}
+
 void Packages::install(const QString& name, const QString& version, const QString& repositoryUrl)
 {
     if (name.isEmpty()) return;

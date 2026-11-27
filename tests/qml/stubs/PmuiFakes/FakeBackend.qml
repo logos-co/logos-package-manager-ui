@@ -8,7 +8,8 @@ QtObject {
     id: fake
 
     signal packageDetailsLoaded(var details)
-    // intents_module's delivery of packages.show, and the answers to it.
+    // intents_module's delivery of packages.show / packages.install, and the
+    // answers to it.
     signal revealRequested(string dispatch, string intent, string name)
     property var revealAnswers: []
     function answerReveal(dispatch, ok, error) { revealAnswers = revealAnswers.concat([[dispatch, ok, error]]) }

@@ -36,9 +36,9 @@ public:
 
     void onContextReady() override;
 
-    // intents_module's delivery of packages.show; the generated glue lets no
-    // one else call it. The view finds the package, then answers with
-    // answerReveal().
+    // intents_module's delivery of packages.show / packages.install; the
+    // generated glue lets no one else call it. The view finds the package,
+    // then answers with answerReveal().
     QString deliver(const QString& dispatch, const QString& intent, const QString& paramsJson,
                     const QString& requester);
 

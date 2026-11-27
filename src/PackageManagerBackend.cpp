@@ -18,7 +18,6 @@ using pmui::Packages;
 namespace {
 
 const QString kIntentsModule = QStringLiteral("intents_module");
-const QString kPackagesShow = QStringLiteral("packages.show");
 
 // intents_module answers a request or a result at once; the person's answer
 // comes later, as settled.
@@ -208,7 +207,7 @@ void PackageManagerBackend::onContextReady()
 QString PackageManagerBackend::deliver(const QString& dispatch, const QString& intent,
                                        const QString& paramsJson, const QString&)
 {
-    if (intent != kPackagesShow || !m_respond) return QStringLiteral("{\"ok\":false}");
+    if (!Packages::provides(intent) || !m_respond) return QStringLiteral("{\"ok\":false}");
     const QString name = QJsonDocument::fromJson(paramsJson.toUtf8()).object()
                              .value(QStringLiteral("name")).toString();
     m_revealDispatches.insert(dispatch);

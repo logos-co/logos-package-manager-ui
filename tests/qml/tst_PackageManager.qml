@@ -483,13 +483,18 @@ TestCase {
         tryCompare(store.selectedPackageDetails, "name", target)
     }
 
-    // Shown through intents_module, a package's details open and the request
-    // is answered; nothing is asked of Basecamp, as no click here was behind it.
-    function test_showing_a_package_opens_it_and_asks_for_nothing() {
+    // Shown through intents_module, by packages.show or packages.install, a
+    // package's details open and the request is answered; nothing is asked of
+    // Basecamp, as no click here was behind it.
+    function test_showing_a_package_opens_it_and_asks_for_nothing_data() {
+        return [{ tag: "packages.show", intent: "packages.show" },
+                { tag: "packages.install", intent: "packages.install" }]
+    }
+    function test_showing_a_package_opens_it_and_asks_for_nothing(data) {
         const view = makeView(1280)
         const store = find(view, "pmui.BackendStore")
         const target = backend.shown[1].name
-        backend.revealRequested("d1", "packages.show", target)
+        backend.revealRequested("d1", data.intent, target)
         tryCompare(store.selectedPackageDetails, "name", target)
         tryCompare(backend.revealAnswers, "length", 1)
         compare(backend.revealAnswers[0][0], "d1")

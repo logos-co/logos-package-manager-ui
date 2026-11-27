@@ -156,8 +156,8 @@ class PackageManagerUi
     SLOT(void confirmUninstall(QString moduleName))
     SLOT(void manageRepositories())
 
-    // packages.show delivered by intents_module: the view finds the row,
-    // then answers with answerReveal.
+    // packages.show / packages.install delivered by intents_module: the view
+    // finds the row, then answers with answerReveal.
     SIGNAL(revealRequested(QString dispatch, QString intent, QString name))
     SLOT(void answerReveal(QString dispatch, bool ok, QString error))
 

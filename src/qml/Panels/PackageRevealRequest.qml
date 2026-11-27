@@ -1,9 +1,9 @@
 import QtQuick
 
-// Provider side of `packages.show` — the shell asking us, through
-// intents_module and the backend, to reveal a package. It only shows it: the
-// request had no click in this view behind it, so the person's own click on
-// Install is what asks for the install dialog.
+// Provider side of `packages.show` and `packages.install` — the shell asking
+// us, through intents_module and the backend, to reveal a package or to offer
+// its install. Both only show it: the request had no click in this view behind
+// it, so the person's own click on Install is what asks for the install dialog.
 QtObject {
     id: root
     objectName: "pmui.revealRequest"

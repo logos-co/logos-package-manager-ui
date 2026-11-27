@@ -34,5 +34,7 @@ foreach(t packages module_calls)
     add_test(NAME ${t} COMMAND tst_${t})
 endforeach()
 
-# tst_module_calls reads the module's own sources.
-target_compile_definitions(tst_module_calls PRIVATE PMUI_SOURCE_DIR="${PMUI_SRC}")
+# Both read the module's own sources.
+foreach(t packages module_calls)
+    target_compile_definitions(tst_${t} PRIVATE PMUI_SOURCE_DIR="${PMUI_SRC}")
+endforeach()
