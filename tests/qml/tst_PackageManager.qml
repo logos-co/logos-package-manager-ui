@@ -39,6 +39,8 @@ TestCase {
     }
 
     function cleanup() {
+        // A test that hid the window and failed before showing it again.
+        if (!testCase.Window.window.visible) testCase.Window.window.show()
         Theme.viewWidth = 0
         backend.destroy()
         backend = null
@@ -306,24 +308,60 @@ TestCase {
         verify(card.subtitle.indexOf("v0.3.1 installed") >= 0, card.subtitle)
         verify(card.showChevron)
 
+        const pageHeader = find(view, "pmui.header")
+        const titleX = pageHeader.titleItem.mapToItem(view, 0, 0).x
+        const titleY = pageHeader.titleItem.mapToItem(view, 0, 0).y
+        const headerHeight = pageHeader.height
         openDetails(view, "waku_module")
         const panel = find(view, "pmui.detailsPanel")
         verify(panel.showingPanel)
         verify(!panel.contentPaneItem.visible, "the details are the page")
         compare(find(view, "pmui.DetailsPanel").width, panel.width)
-        verify(panel.headerItem.visible, "a bar at the top")
-        compare(panel.headerItem.title, "Packages", "it names where back goes")
-        const back = panel.headerItem.backButtonItem
-        verify(back.visible, "‹")
-        verify(!find(view, "pmui.header").visible, "no page title over the way back")
-        fuzzyCompare(panel.headerItem.mapToItem(view, 0, 0).y, Theme.pageMargin(390), 0.5, "it heads the page")
+        // The page's own header: a ‹ before the title, which moves right for
+        // it but never up or down; no bar of the side panel's, nor its
+        // hairline, and the details where the list was.
+        compare(panel.headerItem.visible, false, "no bar of the side panel's own")
+        const header = find(view, "pmui.header")
+        verify(header.visible, "the page's header stays")
+        compare(header.titleItem.text, "Packages", "what back goes to")
+        compare(header.titleItem.mapToItem(view, 0, 0).y, titleY, "not up or down")
+        verify(header.titleItem.mapToItem(view, 0, 0).x > titleX, "after the ‹")
+        compare(header.height, headerHeight)
+        verify(!header.searchItem.visible)
+        verify(header.backIconItem.visible, "‹")
+        const back = header.backButtonItem
+        fuzzyCompare(panel.panelPaneItem.mapToItem(view, 0, 0).y,
+                     panel.contentPaneItem.mapToItem(view, 0, 0).y, 0.5, "where the list was")
         verify(!find(view, "pmui.DetailsPanel.title").visible, "no \"Details\" under it")
         verify(!find(view, "pmui.DetailsPanel.close").visible, "no ✕")
         mouseClick(back)
         verify(!panel.panelOpen)
         verify(panel.contentPaneItem.visible)
         verify(!view.detailOpen)
-        verify(find(view, "pmui.header").visible, "the page's title is back")
+        verify(!header.backIconItem.visible, "no ‹ over the list")
+        verify(header.searchItem.visible)
+    }
+
+    // Left for another section or app, it starts afresh: the details closed
+    // and the search empty. Hiding stands in for leaving: Basecamp hides the
+    // view of a section it leaves.
+    function test_leaving_closes_the_details_and_clears_the_search() {
+        const view = makeView(1280)
+        openDetails(view, "waku_module")
+        const panel = find(view, "pmui.detailsPanel")
+        verify(panel.panelOpen)
+        find(view, "pmui.header").openSearch("waku")
+        compare(backend.searchText, "waku")
+        const win = view.Window.window
+        win.hide()
+        tryVerify(() => !view.shown)
+        compare(panel.panelOpen, false)
+        verify(!view.detailOpen, "closing clears the pick")
+        compare(backend.searchText, "")
+        win.show()
+        tryVerify(() => view.shown)
+        waitForRendering(view)
+        compare(panel.panelOpen, false)
     }
 
     // Beside cards (a tablet with details open) they are a card you close.
@@ -445,14 +483,18 @@ TestCase {
         tryCompare(store.selectedPackageDetails, "name", target)
     }
 
-    // Through intents_module, packages.install only shows the package: the
-    // request had no click in this view behind it, so the click on Install is
-    // what asks for the install dialog.
-    function test_an_install_through_intents_module_only_shows_the_package() {
+    // Shown through intents_module, by packages.show or packages.install, a
+    // package's details open and the request is answered; nothing is asked of
+    // Basecamp, as no click here was behind it.
+    function test_showing_a_package_opens_it_and_asks_for_nothing_data() {
+        return [{ tag: "packages.show", intent: "packages.show" },
+                { tag: "packages.install", intent: "packages.install" }]
+    }
+    function test_showing_a_package_opens_it_and_asks_for_nothing(data) {
         const view = makeView(1280)
         const store = find(view, "pmui.BackendStore")
         const target = backend.shown[1].name
-        backend.revealRequested("d1", "packages.install", target)
+        backend.revealRequested("d1", data.intent, target)
         tryCompare(store.selectedPackageDetails, "name", target)
         tryCompare(backend.revealAnswers, "length", 1)
         compare(backend.revealAnswers[0][0], "d1")
@@ -502,7 +544,7 @@ TestCase {
         openDetails(view, "chat_module")
         verify(!find(view, "pmui.DetailsPanel.uninstall").visible, "not installed")
         compare(find(view, "pmui.DetailsPanel.actionHelp").text, "Installs v0.4.2")
-        mouseClick(find(view, "pmui.detailsPanel").headerItem.backButtonItem)
+        mouseClick(find(view, "pmui.header").backButtonItem)
         find(view, "pmui.categoryCombo").activated(5)
         tryVerify(() => findChild(view, "pmui.card.accounts_module") !== null, 2000)
         openDetails(view, "accounts_module")
@@ -557,6 +599,43 @@ TestCase {
                                         installedVersion: "0.4.2", rowAction: PackageManagerUi.NoOp })
         compare(card.details.installStatus, PackageManagerUi.Installed)
         verify(find(view, "pmui.DetailsPanel.uninstall").visible, "the user's now: it can go again")
+    }
+
+    // ── Loading ──
+
+    // A first load that failed knows nothing: not "no repositories".
+    function test_a_first_load_that_failed_says_so_and_retries() {
+        const view = makeView(1280)
+        backend.repositoryCount = 0
+        backend.totalCount = 0
+        backend.loaded = false
+        backend.loadError = "the catalog"
+        const failed = find(view, "pmui.loadErrorView")
+        verify(failed.visible)
+        compare(failed.message, "Couldn't read the catalog.")
+        compare(find(view, "pmui.noRepositoriesView").visible, false)
+        mouseClick(find(view, "pmui.loadErrorView.retry"))
+        compare(backend.reloads, 1)
+        backend.totalCount = 0
+        backend.loaded = true
+        backend.loadError = ""
+        compare(failed.visible, false)
+        verify(find(view, "pmui.noRepositoriesView").visible)
+    }
+
+    // A reload that failed keeps the list, and says so.
+    function test_a_reload_that_failed_keeps_the_list_and_says_so() {
+        const view = makeView(1280)
+        const notice = find(view, "pmui.messageNotice")
+        backend.loaded = false
+        backend.loadFailed("the catalog")
+        compare(notice.shown, false, "a first load's failure is the page's to say")
+        backend.loaded = true
+        backend.loadFailed("the catalog")
+        tryVerify(() => notice.shown)
+        compare(notice.message,
+                "Couldn't reload the packages: couldn't read the catalog. The list is the one from before.")
+        verify(find(view, "pmui.packageList").visible)
     }
 
     // ── The test's own stub ──

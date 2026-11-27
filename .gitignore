@@ -6,3 +6,5 @@ generated_code/
 logos-cpp-sdk/
 # Shared semver headers staged from logos-package by the flake's preConfigure.
 vendor/
+# Standalone mode's user dir, made where it starts (ui-dev).
+/.logos-basecamp-dev/

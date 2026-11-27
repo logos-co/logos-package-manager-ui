@@ -20,11 +20,19 @@
     package_manager.url = "github:logos-co/logos-package-manager-module";
     package_downloader.url = "github:logos-co/logos-package-downloader-module";
 
-    # Header-only: supplies the shared semver implementation
-    # (include/logos/semver.hpp), which RowActionResolver.h uses to decide
-    # Upgrade / Downgrade / Reinstall. We take the headers only — nothing here
-    # links liblgx, so this drags in no ICU/libsodium/zlib.
+    # Headers only: <logos/semver.hpp>, the version order the library's row
+    # rules use. Nothing here links liblgx, so this drags in no
+    # ICU/libsodium/zlib.
     logos-package.url = "github:logos-co/logos-package";
+
+    # Compiled in: the rows, filters, catalog client and install pipeline both
+    # installer apps share. src/qml/Installer is a copy of its JavaScript; the
+    # shared-installer-words check keeps it this revision.
+    basecamp-installer-common = {
+      url = "github:logos-co/basecamp-installer-common";
+      inputs.logos-nix.follows = "logos-module-builder/logos-nix";
+      inputs.logos-package.follows = "logos-package";
+    };
 
     # contracts/intents.lidl, for the backend's modules().bind_intents(): the
     # file only, so it builds nothing of intents_module.
@@ -32,7 +40,7 @@
     logos-intents-module.inputs.logos-module-builder.follows = "logos-module-builder";
   };
 
-  outputs = inputs@{ logos-module-builder, ... }:
+  outputs = inputs@{ logos-module-builder, logos-package, basecamp-installer-common, ... }:
     let
       shared = {
         src = ./.;
@@ -42,7 +50,7 @@
         # `headers`, NOT `lib` — because nothing here links lgx.
         #
         # This plugin's only use of logos-package is the header-only
-        # `logos/semver.hpp` (RowActionResolver.h); CMakeLists declares no
+        # `logos/semver.hpp` (the library's row rules); CMakeLists declares no
         # EXTERNAL_LIBS and the built plugin's load commands name lgx zero times.
         # The `lib` output ships liblgx.dylib, which the module builder then
         # stages beside the plugin and into its .lgx — 0.6 MB of library nothing
@@ -61,39 +69,77 @@
         # first reason alone.
         externalLibInputs = {
           lgx = {
-            input = inputs.logos-package;
+            input = logos-package;
             packages.default = "headers";
           };
         };
 
-        # Stage the shared semver headers into the tree so CMake can see them.
+        # The library and the semver headers, staged where CMakeLists.txt looks.
         #
         # The builder's normal external-lib staging flattens `include/*.h` into a
         # single `lib/` directory, which would both drop our `.hpp` files and
         # collapse `logos/semver.hpp` and `semver/semver.hpp` onto the same name.
-        # Copy the directories across intact instead; CMakeLists puts `vendor/` on
-        # the include path. preConfigure gets the per-system resolved derivation.
+        # Copy the directories across intact instead. preConfigure gets the
+        # per-system resolved derivation.
         preConfigure = { externalLibs }: ''
-          # Clear any previously staged headers first, so an incremental/local
-          # build after the logos-package input changes can't leave a stale tree
-          # behind. (Nix sandbox builds start clean, but `nix develop` reuses the
-          # source dir.)
+          # Clear any previously staged tree first, so an incremental/local build
+          # after an input changes can't leave a stale one behind. (Nix sandbox
+          # builds start clean, but `nix develop` reuses the source dir.)
           rm -rf vendor
-          mkdir -p vendor
+          mkdir -p vendor/basecamp-installer-common
           cp -r ${externalLibs.lgx}/include/logos vendor/
           cp -r ${externalLibs.lgx}/include/semver vendor/
+          cp -r ${basecamp-installer-common}/include ${basecamp-installer-common}/src \
+                ${basecamp-installer-common}/cmake vendor/basecamp-installer-common/
           chmod -R u+w vendor
         '';
       };
 
       module = logos-module-builder.lib.mkLogosQmlModule shared;
 
-      # Unit tests for the pure row-building transform. mkLogosQmlModule only
-      # picks up tests/*.mjs (`nix run .#ui-tests`), and that suite can never
-      # reach the Local-row path: Basecamp's standalone mode ignores the user
-      # directory's modules, so nothing installed there is ever listed.
-      unitTests = logos-module-builder.lib.mkLogosModuleTests
-        (shared // { testDir = ./tests; });
+      lib = logos-module-builder.inputs.nixpkgs.lib;
+      systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
+      pkgsFor = system: import logos-module-builder.inputs.nixpkgs { inherit system; };
+
+      checksFor = system:
+        let pkgs = pkgsFor system;
+        in {
+          # The page's logic on the library, with fake package modules and a
+          # fake Basecamp (tests/cpp). mkLogosQmlModule only picks up
+          # tests/*.mjs (`nix run .#ui-tests`), which runs without a catalogue.
+          unit-tests = pkgs.stdenv.mkDerivation {
+            name = "logos-package-manager-ui-unit-tests";
+            src = ./.;
+            cmakeDir = "../tests";
+            nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
+            buildInputs = [ pkgs.qt6.qtbase ];
+            dontWrapQtApps = true;
+            cmakeFlags = [
+              "-DBASECAMP_INSTALLER_COMMON_DIR=${basecamp-installer-common}"
+              "-DLOGOS_PACKAGE_INCLUDE_DIR=${logos-package.packages.${system}.headers}/include"
+            ];
+            QT_QPA_PLATFORM = "offscreen";
+            # The sandbox has no network to ask about.
+            BASECAMP_FORCE_OFFLINE = "0";
+            doCheck = true;
+            checkPhase = "ctest --output-on-failure --verbose";
+            installPhase = "touch $out";
+          };
+
+          # src/qml/Installer is the pinned library's JavaScript, and no view
+          # writes out a phrase it says.
+          shared-installer-words = pkgs.runCommand "logos-package-manager-ui-shared-installer-words" {
+            nativeBuildInputs = [ pkgs.python3 ];
+          } ''
+            cd ${./.}
+            diff -r ${basecamp-installer-common}/qml/Installer src/qml/Installer \
+              || { echo "src/qml/Installer is not the pinned basecamp-installer-common: run scripts/sync-installer-common.sh"; exit 1; }
+            python3 ${basecamp-installer-common}/tools/shared-words-check \
+              ${basecamp-installer-common}/qml/Installer src/qml \
+              --skip src/qml/Installer --allow tests/shared-words-allow.txt
+            touch $out
+          '';
+        };
 
       # The views' QML tests (tests/qml), from a phone's width to a desktop's:
       # qmltestrunner, offscreen, on a stand-in for the backend
@@ -105,7 +151,7 @@
       # arguments pass to qmltestrunner.
       qmlTests = system:
         let
-          pkgs = import logos-module-builder.inputs.nixpkgs { inherit system; };
+          pkgs = pkgsFor system;
           qml = pkgs.qt6.qtdeclarative;
           plugins = pkgs.qt6.qtbase.qtPluginPrefix;
           pinOf = pkgs.writeText "design-system-pin.jq" ''
@@ -138,9 +184,8 @@
         in { type = "app"; program = "${run}/bin/run-qml-tests"; };
     in
     module // {
-      checks = builtins.mapAttrs
-        (system: tests: ((module.checks or {}).${system} or {}) // tests)
-        unitTests;
+      checks = lib.genAttrs systems
+        (system: ((module.checks or { }).${system} or { }) // checksFor system);
       apps = builtins.mapAttrs
         (system: apps: apps
           // (if system == "x86_64-windows" then {} else { qml-tests = qmlTests system; }))

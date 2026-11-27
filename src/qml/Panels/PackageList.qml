@@ -8,6 +8,8 @@ import Logos.PackageManagerUi 1.0
 import Controls
 
 import "PackageRows.js" as PackageRows
+import "../Installer/Downloads.js" as Downloads
+import "../Installer/Stages.js" as Stages
 
 // Package list rendered as a LogosTable.
 LogosTable {
@@ -28,7 +30,7 @@ LogosTable {
     // this signal + a UI affordance for it once the backend implements
     // load/unload via logoscore.
     signal uninstallRequested(int index)
-    // Per-row primary action click. `action` is a PackageTypes::RowAction
+    // Per-row primary action click. `action` is a RowAction
     // value (Install / Upgrade / Downgrade / Reinstall / Retry). Parent
     // routes via `BackendStore.runRowAction(index, action)`.
     signal actionRequested(int index, int action)
@@ -129,11 +131,7 @@ LogosTable {
 
         function formatSize(bytes) {
             const n = Number(bytes)
-            if (!isFinite(n) || n <= 0) return "—"
-            if (n < 1024) return n + " B"
-            if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB"
-            if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB"
-            return (n / (1024 * 1024 * 1024)).toFixed(1) + " GB"
+            return isFinite(n) && n > 0 ? Downloads.bytes(n) : "—"
         }
 
         function formatDate(value) {
@@ -148,7 +146,8 @@ LogosTable {
             if (!r) return ""
             const out = []
             if (r.type) out.push(String(r.type))
-            if (r.installedVersion) out.push(qsTr("v%1 installed").arg(r.installedVersion))
+            // What is installed, with nothing picked to change it to.
+            if (r.installedVersion) out.push(Stages.transitionText(r.installedVersion, ""))
             else if (r.version) out.push("v" + r.version)
             const size = formatSize(r.size)
             if (size !== "—") out.push(size)
@@ -203,8 +202,8 @@ LogosTable {
         LogosTableColumn {
             // Per-row Version dropdown. Populated from
             // rowItem.availableVersions (date-sorted, newest first); the
-            // currently selected entry mirrors into VersionRole on
-            // PackageListModel so status/details bindings reflect the pick.
+            // currently selected entry mirrors into the row's `version` so
+            // status/details bindings reflect the pick.
             title: qsTr("Available")
             role: "version"
             // Holds a combo wide enough for "1.0.10" plus the chevron; a

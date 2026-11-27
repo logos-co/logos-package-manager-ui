@@ -37,7 +37,7 @@ QtObject {
         // searchText echoing back from the source is what says one landed.
         if (root.store.searchText !== d.name) apply()
 
-        // Answered on ARRIVAL: the package is shown. Both intents are handoff,
+        // Answered on ARRIVAL: the package is shown. The intent is handoff,
         // so the user stays here.
         if (root.store.showDetailsForName(d.name)) finish(true, "")
     }

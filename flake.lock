@@ -1,5 +1,34 @@
 {
   "nodes": {
+    "basecamp-installer-common": {
+      "inputs": {
+        "logos-nix": [
+          "logos-module-builder",
+          "logos-nix"
+        ],
+        "logos-package": [
+          "logos-package"
+        ],
+        "nixpkgs": [
+          "basecamp-installer-common",
+          "logos-nix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1795795702,
+        "narHash": "sha256-jJE5mDDWroLCo1T12q58Apr4Wox/IbUH0Oa9AolXVjg=",
+        "owner": "logos-co",
+        "repo": "basecamp-installer-common",
+        "rev": "eafdfb3bdbe515d301babed2bbcad598eb746d68",
+        "type": "github"
+      },
+      "original": {
+        "owner": "logos-co",
+        "repo": "basecamp-installer-common",
+        "type": "github"
+      }
+    },
     "logos-cpp-sdk": {
       "inputs": {
         "logos-lidl": "logos-lidl",
@@ -7792,6 +7821,7 @@
     },
     "root": {
       "inputs": {
+        "basecamp-installer-common": "basecamp-installer-common",
         "logos-intents-module": "logos-intents-module",
         "logos-module-builder": "logos-module-builder",
         "logos-package": "logos-package_3",

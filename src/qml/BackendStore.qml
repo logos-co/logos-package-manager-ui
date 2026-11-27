@@ -24,6 +24,12 @@ QtObject {
     // ─── Properties: reactive state (bind from views) ───
     readonly property bool isInstalling: backend ? backend.isInstalling : false
     readonly property bool isLoading: backend ? backend.isLoading : false
+    // The catalog's first read failed: nothing is known, not "no
+    // repositories". A reload that fails keeps the list and says so in
+    // lastMessage.
+    readonly property bool loadFailed: !!backend && backend.loaded !== true
+                                       && !!backend.loadError && !isLoading
+    readonly property string loadError: backend ? (backend.loadError || "") : ""
     readonly property bool online: backend ? backend.online !== false : true
     readonly property string downloadSource: backend ? (backend.downloadSource || "") : ""
     readonly property string storageState: backend ? (backend.storageState || "") : ""
@@ -189,7 +195,6 @@ QtObject {
                 d.selectedPackageDetails = details || ({})
             }
 
-            function onCancellationOccurred(name, message) { d.lastMessage = message }
             function onInstallationProgressUpdated(progressType, packageName,
                                                    completed, total, success, error) {
                 if (success || !error) return
@@ -200,6 +205,11 @@ QtObject {
             function onErrorOccurred(code) {
                 var text = d.errorText(code)
                 if (text.length > 0) d.lastMessage = text
+            }
+            // A first load's failure is the page's to say.
+            function onLoadFailed(error) {
+                if (store.backend.loaded === true)
+                    d.lastMessage = qsTr("Couldn't reload the packages: couldn't read %1. The list is the one from before.").arg(error)
             }
         }
     }
@@ -241,10 +251,9 @@ QtObject {
 
     // ─── Per-row actions ───
     //
-    // Each raises its confirm intent DIRECTLY from the click. Nothing goes to
-    // the backend first: every field the payload needs is already in the model,
-    // and the host resolves the dependency changes itself rather than trusting
-    // ours. The backend is only called once the host has approved.
+    // Each names the row's package to the backend, which asks Basecamp
+    // (basecamp.packages.confirm_*) and does only what it approves. Basecamp
+    // resolves the dependency changes itself rather than trusting ours.
     function installPackage(i)   { var r = d.row(i); if (r) d.confirmInstall(r) }
     function upgradePackage(i)   { var r = d.row(i); if (r) d.confirmUpgrade(r, 0) }
     function downgradePackage(i) { var r = d.row(i); if (r) d.confirmUpgrade(r, 1) }

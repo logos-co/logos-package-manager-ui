@@ -12,26 +12,23 @@ endif()
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/metadata.json" METADATA_JSON)
 string(JSON MODULE_NAME GET ${METADATA_JSON} name)
 
+# basecamp-installer-common, staged by the flake's preConfigure.
+include(${CMAKE_CURRENT_SOURCE_DIR}/vendor/basecamp-installer-common/cmake/BasecampInstallerCommon.cmake)
+
 logos_module(
     NAME ${MODULE_NAME}
     REP_FILE src/package_manager_ui.rep
     SOURCES
         src/PackageManagerBackend.h
         src/PackageManagerBackend.cpp
-        src/PackageRowBuilder.h
-        src/PackageRowBuilder.cpp
-        src/PackageListModel.h
-        src/PackageListModel.cpp
-        src/PackagesFilterProxy.h
-        src/PackagesFilterProxy.cpp
-        src/PackagesPagingProxy.h
-        src/PackagesPagingProxy.cpp
-        src/PackageTypes.h
-        src/PackageTypes.cpp
-        src/InstallSequence.h
-        src/InstallSequence.cpp
+        src/Packages.h
+        src/Packages.cpp
+        src/ModuleCalls.h
+        src/ModuleCalls.cpp
+        ${BASECAMP_INSTALLER_COMMON_SOURCES}
     INCLUDE_DIRS
-        # Shared semver headers, staged from logos-package by the flake's
-        # preConfigure. Headers only — nothing here links liblgx.
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        # <logos/semver.hpp>, staged from logos-package; headers only.
         ${CMAKE_CURRENT_SOURCE_DIR}/vendor
+        ${BASECAMP_INSTALLER_COMMON_INCLUDE_DIRS}
 )

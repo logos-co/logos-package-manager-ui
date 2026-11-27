@@ -8,7 +8,8 @@ QtObject {
     id: fake
 
     signal packageDetailsLoaded(var details)
-    // intents_module's delivery of packages.show / packages.install, and the answers to it.
+    // intents_module's delivery of packages.show / packages.install, and the
+    // answers to it.
     signal revealRequested(string dispatch, string intent, string name)
     property var revealAnswers: []
     function answerReveal(dispatch, ok, error) { revealAnswers = revealAnswers.concat([[dispatch, ok, error]]) }
@@ -19,8 +20,8 @@ QtObject {
     function confirmUninstall(name) { confirms = confirms.concat([["uninstall", name]]) }
     property int repositoryRequests: 0
     function manageRepositories() { repositoryRequests += 1 }
-    signal cancellationOccurred(string name, string message)
     signal errorOccurred(int code)
+    signal loadFailed(string error)
 
     property ListModel model: ListModel {}
     property var shown: []
@@ -370,6 +371,8 @@ QtObject {
     }
     property bool isInstalling: false
     property bool isLoading: false
+    property bool loaded: true
+    property string loadError: ""
     property bool online: true
     property string downloadSource: "any"
     property string storageState: ""
@@ -395,8 +398,6 @@ QtObject {
 
     property int reloads: 0
     property int localInstalls: 0
-    property var uninstalls: []
-    property var actions: []
     property var versionPicks: []
 
     function refilter() {
@@ -444,10 +445,6 @@ QtObject {
         versionPicks = versionPicks.concat([[i, vi]])
         setRow(shown[i].name, { selectedVersionIndex: vi, version: shown[i].availableVersions[vi].version })
     }
-    function reportActionFailed(names, error) {}
-    function performInstall(name, plan) { actions = actions.concat([name]) }
-    function performUpgrade(name, plan, mode) { actions = actions.concat([name]) }
-    function performUninstall(names) { uninstalls = uninstalls.concat(names) }
 
     // Changes `name`'s package, and its row if listed.
     function setRow(name, fields) {

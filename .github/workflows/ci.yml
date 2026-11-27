@@ -54,3 +54,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: logos-co/setup-nix-cache-action@v1
       - run: nix build -L ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).unit-tests"
+
+  # Reads sources only: once is enough.
+  shared-installer-words:
+    name: Shared installer words (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: logos-co/setup-nix-cache-action@v1
+      - run: nix build -L ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).shared-installer-words"

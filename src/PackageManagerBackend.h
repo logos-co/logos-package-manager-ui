@@ -1,35 +1,28 @@
 #pragma once
 
-#include <functional>
-#include <memory>
-#include <QObject>
-#include <QTemporaryDir>
-#include <QTimer>
-#include <QHash>
-#include <QSet>
-#include <QVariantList>
-#include <QVariantMap>
-#include <QStringList>
-#include "logos_api.h"
-#include "logos_api_client.h"
 #include "logos_module_context.h"
-#include "PackageListModel.h"
-#include "PackagesFilterProxy.h"
-#include "PackagesPagingProxy.h"
-#include "PackageTypes.h"
 #include "rep_package_manager_ui_source.h"
 
-// Source-side implementation of the PackageManagerUi .rep interface.
-// The `packages` Q_PROPERTY exposes a model proxy stack (raw → filter →
-// paging), published separately because QAbstractItemModel* can't flow
-// through a .rep; QML reaches it via logos.model(...).
-//
-// Runs as the core module `package_manager_ui_backend`. LogosModuleContext
-// (what every C++ core module derives) supplies `modules()` — the Qt-typed
-// wrappers for the two declared dependencies (package_manager,
-// package_downloader) — the onContextReady() hook, and the module's data
-// folder. The generated glue (`logos-view-generator --backend ui-module`) owns
-// the LogosAPI and wires it in; this class never receives one directly.
+#include <QAbstractItemModel>
+#include <QSet>
+
+#include <functional>
+#include <memory>
+
+namespace pmui {
+class ModuleCalls;
+class Packages;
+}  // namespace pmui
+
+namespace logos::installer {
+class IntentConsent;
+}  // namespace logos::installer
+
+// Runs as the core module `package_manager_ui_backend`; the generated glue
+// publishes it to the view, and `packages` (the page of rows) beside it.
+// Everything the page shows and does is pmui::Packages': this class hands it
+// the package modules and Basecamp's consent once modules() is live, forwards
+// the modules' events, and mirrors its state into the .rep's properties.
 class PackageManagerBackend : public PackageManagerUiSimpleSource,
                               public LogosModuleContext {
     Q_OBJECT
@@ -37,294 +30,45 @@ class PackageManagerBackend : public PackageManagerUiSimpleSource,
 
 public:
     explicit PackageManagerBackend(QObject* parent = nullptr);
-    ~PackageManagerBackend() = default;
+    ~PackageManagerBackend() override;
 
     QAbstractItemModel* packages() const;
 
-    // Fires once the generated glue has wired modules(); the typed
-    // package_manager / package_downloader surfaces are live, so the initial
-    // catalog load and the event subscriptions start from here. Doing it in
-    // the constructor would run before the framework hands the dependencies
-    // over.
     void onContextReady() override;
 
-public slots:
-    // Overrides of the pure-virtual slots generated from the .rep.
-    // See package_manager_ui.rep for per-slot documentation.
+    // intents_module's delivery of packages.show / packages.install; the
+    // generated glue lets no one else call it. The view finds the package,
+    // then answers with answerReveal().
+    QString deliver(const QString& dispatch, const QString& intent, const QString& paramsJson,
+                    const QString& requester);
+
+    // See package_manager_ui.rep.
     void refreshCatalog() override;
-    // Install a .lgx the user picked off disk.
     void installLocalPackage(QUrl fileUrl) override;
-    // Bulk actions: not wired (see the .rep).
     void runSelectedActions() override;
-    void uninstallSelected() override; // kept for back-compat, unwired from UI
+    void uninstallSelected() override;
     void togglePackage(int index, bool checked) override;
     void reloadPackage(int index) override;
+    void setRowVersion(int index, int versionIndex) override;
     void requestPackageDetailsFor(QString name, QString repositoryUrl) override;
-
-    // Ask the host through intents_module, then run what it approves.
+    QString displayNameForModule(QString moduleName) override;
     void confirmInstall(QString name, QString version, QString repositoryUrl) override;
     void confirmUpgrade(QString moduleName, QString version, int mode, QString repositoryUrl) override;
     void confirmUninstall(QString moduleName) override;
     void manageRepositories() override;
     void answerReveal(QString dispatch, bool ok, QString error) override;
 
-    // intents_module's delivery of packages.show / packages.install, through
-    // the generated glue (which takes it from intents_module only).
-    QString deliver(const QString& dispatch, const QString& intent,
-                    const QString& paramsJson, const QString& requester);
-
-    // Run an action the host approved.
-    void performInstall(QString name, QString version, QString repositoryUrl, QVariantMap approval) override;
-    void performUpgrade(QString moduleName, QString version, int mode,
-                        QString repositoryUrl, QVariantMap approval) override;
-    void performUninstall(QStringList names) override;
-    void reportActionFailed(QStringList names, QString error) override;
-
-    // Forward to PackageListModel::setRowVersion. Pure proxy — the model
-    // owns the clamping, mirror-into-version/hash fields, and dataChanged
-    // emission so the QML view repaints without any extra backend logic.
-    void setRowVersion(int index, int versionIndex) override;
-
-    // Generated from the .rep as a pure-virtual slot (returns QString).
-    // Delegates to the model's lookup; declared on the backend so the Repc
-    // replica proxies it — the PackageListModel replica (QAbstractItemModel)
-    // can't proxy Q_INVOKABLE methods because they're not part of the
-    // QAbstractItemModel interface that gets remoted.
-    QString displayNameForModule(QString moduleName) override;
-
-
 private:
+    void mirror();
+    void mirrorSelection();
 
-    void refreshPackages();
-
-    // ── intents_module ────────────────────────────────────────────────────
-    // Fetches a request's result once intents_module says it settled.
-    void subscribeIntentsModule();
-    // Ask for `intent`; `onApproved` gets the result's data, anything else goes
-    // to reportActionFailed(names, error).
-    void askIntent(const QString& intent, const QVariantMap& params, const QStringList& names,
-                   std::function<void(const QVariantMap& data)> onApproved);
-    void fetchIntentResult(const QString& handle);
-    struct IntentRequest {
-        QString receipt;
-        QStringList names;
-        std::function<void(const QVariantMap& data)> onApproved;
-    };
-    QHash<QString, IntentRequest> m_intentRequests;   // handle -> request
-    QSet<QString> m_revealDispatches;                 // delivered, not answered yet
-
-    // Per-row install of the releases `approval`'s plan names; `repoUrl`
-    // picks the row to mark. Holds the install lock.
-    void installSinglePackageAsync(const QString& packageName,
-                                   const QString& repoUrl,
-                                   const QVariantMap& approval);
-
-    // A local .lgx the host approved: installed only if it is still the file
-    // the host read (`approval`'s {file}), as `name` at `version`.
-    void installLocalFile(const QString& name, const QString& topLevelName, const QString& version,
-                          const QString& path, const QVariantMap& approval);
-
-    // What a download brought, held to the plan the host approved: every
-    // required package of `requested` (requestedRows()), nothing outside the
-    // plan, and every file signed as approved. `then` gets why not, or empty.
-    void holdToApproval(const QVariantList& rows, const QVariantMap& approval,
-                        const QVariantList& requested,
-                        std::function<void(const QString& refused)> then);
-    void checkSigners(const QVariantList& rows, const QVariantList& plan,
-                      std::function<void(const QString& refused)> then, int index = 0);
-    // Whether the local file at `path` is still the one the host approved
-    // (`approval`'s {file}) as `name` at `version`: `then` gets why not, or empty.
-    void checkLocalFile(const QString& path, const QVariantMap& approval, const QString& name,
-                        const QString& version, std::function<void(const QString& changed)> then);
-
-    // A copy of a picked file in a directory only this user can write, or
-    // empty; it is checked and installed in the file's place.
-    QString stageLocalFile(const QString& path);
-    void dropStaged(const QString& path);
-    // Drops the local file waiting under `name`, and its staged copy.
-    void forgetLocal(const QString& name);
-    std::unique_ptr<QTemporaryDir> m_stagingDir;
-
-    // Sequential per-row install. Each entry runs through installOnePackage,
-    // the loop chains to the next on success. Progress signals carry
-    // `topLevelName` so the UI banner stays anchored to the row the user
-    // clicked, even while transitive deps are mid-install.
-    void installResultsSequential(const QVariantList& results,
-                                  const QString& topLevelName,
-                                  int index);
-
-    // Bulk-mark every entry's row as Installing — fired immediately
-    // after the resolver returns so the UI shows the whole in-flight
-    // batch at once rather than one-row-at-a-time as the sequential
-    // loop reaches each. Skips error rows (those fail before any
-    // install runs and need to surface as Failed, not Installing).
-    void markEntriesInstalling(const QVariantList& entries);
-
-    // Revert remaining entries (entries[fromIndex .. end]) to
-    // NotInstalled. Called when installResultsSequential's loop stops
-    // on a failure — entries we marked Installing upfront but never
-    // got to need to flip back so the row badge isn't stuck.
-    void revertPendingEntries(const QVariantList& entries, int fromIndex);
-
-
-
-
-
-    // Serialise m_installedPackagesCache to the
-    // [{name, version, rootHash}] shape package_downloader.resolveDependencies
-    // expects in its `installedPackagesJson` parameter.
-    QString buildInstalledPackagesJson() const;
-
-    void setPackagesFromVariantList(const QVariantList& packagesArray,
-                                    const QVariantList& installedPackages,
-                                    const QStringList& validVariants);
-
-    // Push categories[selectedCategoryIndex] into the filter proxy
-    // (index 0 / out-of-range / "All" → empty filter).
-    void applyCategoryFilter();
-
-    // Rebuild availableTypes from the built rows ("All" + sorted distinct
-    // types). Clamps selectedTypeIndex to 0 if the prior pick is gone.
-    void recomputeAvailableTypes(const QList<QVariantMap>& rows);
-    void recomputeCategories(const QList<QVariantMap>& rows);
-
-    // Push availableTypes[selectedTypeIndex] into the filter proxy
-    // (index 0 / out-of-range / "All" → empty filter).
-    void applyTypeFilter();
-
-    // Publish the model's per-selection action plan into the .rep PROPs
-    // (`runnableActionCount`, `actionSummary`). Driven by
-    // PackageListModel::hasSelectionChanged on every selection toggle;
-    // no manual call sites. Replaces the old refreshHasSelection that
-    // published the two has*Selection booleans.
-    void refreshActionSummary();
-
-
-    // File-install / file-uninstall events → debounced refreshPackages().
-    // Covers both PMU-initiated and Basecamp-Modules-initiated mutations
-    // since the module is the common point both flow through.
-    void subscribePackageManagerRefreshEvents();
-
-    // Auto-refresh the catalog whenever the package_downloader emits catalogChanged.
-    void subscribePackageDownloaderEvents();
-
-    // One install at a time, whatever starts it: a request that arrives while
-    // one runs waits in m_queuedInstalls, in the order asked. Every install
-    // ends in installEnded(), which starts the next or releases the lock.
-    void installEnded();
-    QList<std::function<void()>> m_queuedInstalls;
-
-    // online, from the platform's reachability. Unknown counts as online.
-    void watchNetwork();
-    // downloadSource and storageState, read from package_downloader.
-    void refreshDownloadStatus();
-    void refreshStorageState();
-
-    // onDone invoked with (success, errorMsg) regardless of outcome.
-    void installOnePackage(const QVariantMap& dl,
-                           std::function<void(bool success, const QString& error)> onDone);
-
-    // Post-install check against the DISK, not against the installer's word.
-    void verifyInstalledArtifact(const QString& packageName,
-                                 const QString& expectedVersion,
-                                 const QString& expectedHash,
-                                 std::function<void(bool success, const QString& error)> onDone);
-
-    // Connection-readiness predicates — wrap the context-ready check + the
-    // per-client isConnected() check that nine call sites in the .cpp need to
-    // gate IPC against.
-    bool clientReady(const char* moduleName) const;
-    bool bothClientsReady() const;        // package_downloader AND package_manager
-    bool packageManagerReady() const;     // package_manager only
-
-    bool resolveRowIdentifier(int proxyRow,
-                              QString* outName,
-                              QString* outRepoUrl) const;
-    int         findPackageRowAtProxyRow(int proxyRow) const;
-    QVariantMap findPackageAtProxyRow(int proxyRow) const;
-
-    // (`versionCmp` now lives in `src/RowActionResolver.h` so both this
-    // file's buildPackageRow AND PackageListModel::setRowVersion can
-    // call it. The per-row Action — surfaced as `rowAction` and bound
-    // by the QML ActionPill — has to flip when the user moves the
-    // dropdown, which is why the comparator can't stay file-local here
-    // anymore.)
-
-    // What of the approved plan to fetch: less what is installed already as
-    // approved, apart from `subject`, the package asked for.
-    QVariantList requestedRows(const QVariantMap& approval, const QString& subject) const;
-    // The package_downloader.downloadResolvedDependencies request for
-    // `requested`, each pinned as approved.
-    static QString requestsJson(const QVariantList& requested);
-
-    // Proxy stack: raw rows → filter (search/state/sort) → paging (page slice;
-    // exposed via the `packages` Q_PROPERTY).
-    PackageListModel*    m_packageModel;
-    PackagesFilterProxy* m_packagesFilterProxy;
-    PackagesPagingProxy* m_packagesPagingProxy;
-    int m_reloadGeneration = 0;
-
-    // URL of the built-in repository, straight from the registry's
-    // isDefault flag. Never inferred from the manifest's `name` — any repo
-    // can claim any name, and one in the wild claims the official repo's.
-    // Empty if the user removed the default. Refreshed every reload.
-    QString m_defaultRepositoryUrl;
-
-    // Rebuild m_defaultRepositoryUrl + the repositoryLabels PROP. Must run
-    // before loadCatalog — the grouping pass reads the former.
-    void applyRepositoryList(const QVariantList& repos);
-
-    // Catalog + installed + variants round-trips, then the model rebuild.
-    void loadCatalog(int currentGeneration);
-
-    // Unfiltered catalog. Category / type filters run on the proxy without a
-    // network round-trip. Reset on each reload.
-    QVariantList m_allPackagesCache;
-    QVariantList m_installedPackagesCache;
-    QStringList  m_validVariantsCache;
-
-    // One upgrade, carried from performUpgrade to its install by value — never
-    // kept where anything else could change it midway.
-    struct PendingUpgradeMeta {
-        // The row's repository, so another repo's copy isn't badged.
-        QString repositoryUrl;
-        QVariantMap approval;
-        // The staged local file, taken out of m_pendingLocalInstalls.
-        QString stagedPath;
-        // The approved replacement, fetched and checked before removing anything.
-        QVariantList downloaded;
-    };
-
-    // Before an upgrade removes anything: an approved plan's replacement is
-    // fetched and checked, a local file checked. `then` gets why it may not go
-    // ahead, or empty and what was fetched.
-    void prepareReplacement(const QString& moduleName, const QString& displayName,
-                            const QString& version, const PendingUpgradeMeta& meta,
-                            std::function<void(const QString& refused,
-                                               const QVariantList& downloaded)> then);
-    void removeForUpgrade(const QString& moduleName, const QString& version, int mode,
-                          const QString& displayName, const PendingUpgradeMeta& upgrade);
-    // Second half of an approved upgrade: the old copy is gone; install the
-    // replacement prepareReplacement checked.
-    void onUpgradeUninstallDone(const QString& moduleName, const QString& releaseTag,
-                                int mode, const PendingUpgradeMeta& upgrade);
-
-    // Local .lgx files awaiting host approval, keyed by the package name
-    // inspectPackage reported (the same name carried in the confirm_install /
-    // confirm_upgrade payload, so it's what comes back on approval).
-    QHash<QString, QString> m_pendingLocalInstalls;
-
-    // Coalesces N rapid file-install / file-uninstall events into one
-    // refreshPackages() — does NOT touch releases or selected-release state.
-    QTimer* m_refreshDebounceTimer = nullptr;
-
-    void finishInitialSetup(int attempt = 0);
-    bool m_initialSetupComplete = false;
-
-    // Defers applyCategoryFilter / applyTypeFilter so click events return
-    // immediately (instant local highlight) and rapid clicks coalesce into
-    // one apply pass. Pending flags pick which apply* runs when the timer fires.
-    QTimer* m_filterApplyTimer = nullptr;
-    bool m_categoryFilterPending = false;
-    bool m_typeFilterPending = false;
+    pmui::Packages* m_packages;
+    std::unique_ptr<pmui::ModuleCalls> m_calls;
+    logos::installer::IntentConsent* m_consent = nullptr;
+    // intents_module's request(intent, "{}") with no one waiting on the
+    // answer, and respond(dispatch, ok, "{}", error).
+    std::function<void(const QString& intent)> m_request;
+    std::function<void(const QString& dispatch, bool ok, const QString& error)> m_respond;
+    // Delivered, not answered yet.
+    QSet<QString> m_revealDispatches;
 };

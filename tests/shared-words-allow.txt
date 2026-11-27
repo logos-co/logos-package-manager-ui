@@ -1,0 +1,4 @@
+# Unrelated uses of words the shared installer files also say. Each line is
+# "<path ending>: <phrase>", the reason after " # ".
+src/qml/Panels/PackageList.qml: Installed # the column of installed versions, not a stage
+src/qml/Panels/TableHeader.qml: Installed # the filter tab's name, not a stage
