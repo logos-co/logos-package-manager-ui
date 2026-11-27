@@ -44,12 +44,12 @@ TEST(sources_make_no_raw_module_calls) {
 }
 
 // A plain fooAsync() hands a timeout over as an empty reply, which reads as
-// "fetched nothing" or "could not uninstall". These take the result-carrying call.
+// "fetched nothing", "not signed as you approved it" or "could not uninstall". These take the result-carrying call.
 TEST(calls_that_report_back_carry_the_call_error) {
     const QString code = codeOf(QStringLiteral(PMUI_SOURCE_DIR "/ModuleCalls.cpp"));
     CHECK(code.contains(QStringLiteral("downloadPinnedAsyncResult(")));
     const QRegularExpression plain(QStringLiteral(
-        R"(\b(downloadPinned|refreshCatalog|inspectPackage|installPlugin|uninstallPackage)Async\()"));
+        R"(\b(downloadPinned|refreshCatalog|verifyPackage|inspectPackage|installPlugin|uninstallPackage)Async\()"));
     QStringList offenders;
     for (auto it = plain.globalMatch(code); it.hasNext();) offenders << it.next().captured(1);
     CHECK_EQ(offenders, QStringList());

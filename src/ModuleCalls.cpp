@@ -90,8 +90,15 @@ void ModuleCalls::downloadPinned(const QString& repositoryUrl, const QString& na
 
 void ModuleCalls::verifyPackage(const QString& path, std::function<void(const QVariantMap&)> done)
 {
-    m_modules.package_manager.verifyPackageAsync(
-        path, [done](const QVariantMap& verified) { done(verified); }, Timeout(kVerifyMs));
+    m_modules.package_manager.verifyPackageAsyncResult(
+        path,
+        [done](logos::AsyncResult<QVariantMap> r) {
+            if (!r.ok())
+                return done({{QStringLiteral("error"),
+                              callFailure(kManager, r.error.code, r.error.message, kVerifyMs)}});
+            done(r.value);
+        },
+        Timeout(kVerifyMs));
 }
 
 void ModuleCalls::inspectPackage(const QString& path, std::function<void(const QVariantMap&)> done)
