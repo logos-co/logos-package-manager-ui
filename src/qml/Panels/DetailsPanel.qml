@@ -21,6 +21,7 @@ Rectangle {
     // version, action and Uninstall: for when the list beside doesn't show
     // them, or isn't beside.
     property var row: null
+    property string hostVariant: ""
     property bool showActions: false
     property bool showHeader: true
 
@@ -191,6 +192,7 @@ Rectangle {
                         objectName: "pmui.DetailsPanel.action"
                         Layout.alignment: Qt.AlignVCenter
                         modelData: root.row
+                        hostVariant: root.hostVariant
                         onActionRequested: function(action) { root.actionRequested(action) }
                     }
 

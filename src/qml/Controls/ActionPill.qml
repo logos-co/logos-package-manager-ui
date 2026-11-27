@@ -38,6 +38,8 @@ Control {
     objectName: "pmui.ActionPill"
 
     required property var modelData
+    // This host's variant: a dev build's words differ (Installer/Availability.js).
+    property string hostVariant: ""
 
     signal actionRequested(int rowAction)
 
@@ -108,7 +110,7 @@ Control {
         function tooltipText(r, a) {
             if (!r) return ""
             if (a === PackageManagerUi.NotAvailable)
-                return Availability.notAvailableText(r.notAvailableReason | 0)
+                return Availability.notAvailableText(r.notAvailableReason | 0, root.hostVariant)
             const transition = Stages.transitionText(r.installedVersion, r.version)
             if (a === PackageManagerUi.Retry)
                 return r.errorMessage || transition
