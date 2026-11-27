@@ -5,6 +5,7 @@
 // one token per caller, so at startup one of the two handshakes loses and its
 // call is refused.
 
+#include "CallFailure.h"
 #include "check.h"
 
 #include <QDir>
@@ -40,6 +41,39 @@ TEST(sources_make_no_raw_module_calls) {
     for (const QString& name : files)
         if (raw.match(codeOf(src.filePath(name))).hasMatch()) offenders << name;
     CHECK_EQ(offenders, QStringList());
+}
+
+// A plain fooAsync() hands a timeout over as an empty reply, which reads as
+// "fetched nothing", "not signed as you approved it" or "could not uninstall". These take the result-carrying call.
+TEST(calls_that_report_back_carry_the_call_error) {
+    const QString code = codeOf(QStringLiteral(PMUI_SOURCE_DIR "/ModuleCalls.cpp"));
+    CHECK(code.contains(QStringLiteral("downloadPinnedAsyncResult(")));
+    const QRegularExpression plain(QStringLiteral(
+        R"(\b(downloadPinned|refreshCatalog|verifyPackage|inspectPackage|installPlugin|uninstallPackage)Async\()"));
+    QStringList offenders;
+    for (auto it = plain.globalMatch(code); it.hasNext();) offenders << it.next().captured(1);
+    CHECK_EQ(offenders, QStringList());
+}
+
+// One package may take every step package_downloader bounds: Logos Storage
+// starting (90 s), its manifest (60 s), a stall (60 s), then HTTP (600 s).
+TEST(a_download_outlasts_the_downloaders_own_limits) {
+    constexpr int bounded = (90 + 60 + 60 + 600) * 1000;
+    CHECK(pmui::kDownloadMs > bounded);
+}
+
+TEST(a_timeout_is_reported_as_one) {
+    const QString module = QStringLiteral("package_downloader");
+    CHECK_EQ(pmui::callFailure(module, "timeout", "call to 'x' timed out after 1800000ms", pmui::kDownloadMs),
+             QStringLiteral("package_downloader did not answer within 30 min."));
+    CHECK_EQ(pmui::callFailure(module, "timeout", "", 30 * 1000),
+             QStringLiteral("package_downloader did not answer within 30 s."));
+    CHECK_EQ(pmui::callFailure(module, "timeout", "", 90 * 1000),
+             QStringLiteral("package_downloader did not answer within 90 s."));
+    CHECK_EQ(pmui::callFailure(module, "transport_error", "connection lost", pmui::kDownloadMs),
+             QStringLiteral("connection lost"));
+    CHECK_EQ(pmui::callFailure(module, "call_failed", "", pmui::kDownloadMs),
+             QStringLiteral("package_downloader did not reply."));
 }
 
 // intents_module by its contract, which metadata.json declares.
