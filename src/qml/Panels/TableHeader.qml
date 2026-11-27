@@ -135,10 +135,10 @@ LogosItemLayout {
                 id: filterButton
                 objectName: "pmui.filterButton"
                 Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth: 40
-                Layout.preferredHeight: 40
-                size: 40
-                iconSize: 16
+                Layout.preferredWidth: Theme.size.controlLarge
+                Layout.preferredHeight: Theme.size.controlLarge
+                size: Theme.size.controlLarge
+                iconSize: Theme.size.iconSmall
                 iconSource: Qt.resolvedUrl("../images/filter.svg")
                 iconColor: root.showUnavailable
                            ? Theme.palette.primary
@@ -175,7 +175,7 @@ LogosItemLayout {
                 id: installLocalBtn
                 objectName: "pmui.installLocalButton"
                 Layout.preferredWidth: 180
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: Theme.size.controlLarge
                 radius: Theme.spacing.radiusLarge
                 text: qsTr("Install Local Package")
                 leadingIcon.source: LogosIcons.install
@@ -191,7 +191,7 @@ LogosItemLayout {
                 id: reloadBtn
                 objectName: "pmui.reloadButton"
                 Layout.preferredWidth: 130
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: Theme.size.controlLarge
                 radius: Theme.spacing.radiusLarge
                 text: qsTr("Reload")
                 leadingIcon.source: LogosIcons.refresh
@@ -204,7 +204,7 @@ LogosItemLayout {
             LogosButton {
                 objectName: "pmui.repositoriesButton"
                 Layout.preferredWidth: 150
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: Theme.size.controlLarge
                 radius: Theme.spacing.radiusLarge
                 text: qsTr("Manage Repositories")
                 onClicked: root.repositoriesClicked()
@@ -217,7 +217,7 @@ LogosItemLayout {
             LogosButton {
                 visible: false
                 Layout.preferredWidth: 160
-                Layout.preferredHeight: 40
+                Layout.preferredHeight: Theme.size.controlLarge
                 radius: Theme.spacing.radiusLarge
                 text: root.runnableActionCount > 0
                       ? qsTr("Run Actions (%1)").arg(root.runnableActionCount)

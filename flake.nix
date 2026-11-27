@@ -139,6 +139,16 @@
               --skip src/qml/Installer --allow tests/shared-words-allow.txt
             touch $out
           '';
+
+          # Colours and sizes come from the design system's Theme; the few with
+          # no token are in tests/theme-literals-allow.txt, each with its reason.
+          theme-literals = pkgs.runCommand "logos-package-manager-ui-theme-literals" {
+            nativeBuildInputs = [ pkgs.python3 ];
+          } ''
+            cd ${./.}
+            python3 tests/theme-literals-check src/qml --allow tests/theme-literals-allow.txt
+            touch $out
+          '';
         };
 
       # The views' QML tests (tests/qml), from a phone's width to a desktop's:

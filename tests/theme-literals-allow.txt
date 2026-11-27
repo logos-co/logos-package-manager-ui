@@ -1,0 +1,11 @@
+# Literals no design-system token fits. Each line is
+# "<path ending>: <line text>", the reason after " # ".
+src/qml/PackageManager.qml: implicitWidth: 36 # the loading spinner, not a control
+src/qml/PackageManager.qml: implicitHeight: 36 # the loading spinner, not a control
+src/qml/Panels/DetailsPanel.qml: iconSize: 14 # no 14 px icon token
+src/qml/Panels/PackageList.qml: preferredWidth: 44 # a table column's width
+src/qml/Panels/PackageList.qml: height: 32 # a section header row, not a control
+src/qml/Panels/PackageList.qml: anchors.leftMargin: 6 # the version picker's inset; no 6 px spacing token
+src/qml/Panels/PackageList.qml: anchors.rightMargin: 6 # the version picker's inset; no 6 px spacing token
+src/qml/Panels/PackageList.qml: iconSize: 18 # no 18 px icon token
+src/qml/Panels/TableHeader.qml: leadingIcon.size: 18 # no 18 px icon token

@@ -48,8 +48,8 @@ Popup {
     background: Rectangle {
         color: Theme.palette.background
         border.color: Theme.palette.border
-        border.width: 1
-        radius: 6
+        border.width: Theme.size.borderWidth
+        radius: Theme.spacing.radiusMedium
     }
 
     QtObject {
@@ -205,7 +205,7 @@ Popup {
 
             LogosButton {
                 text: qsTr("Cancel")
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: Theme.size.controlMedium
                 Layout.preferredWidth: 100
                 radius: Theme.spacing.radiusLarge
                 onClicked: root.close()
@@ -213,7 +213,7 @@ Popup {
 
             LogosButton {
                 text: qsTr("Confirm")
-                Layout.preferredHeight: 36
+                Layout.preferredHeight: Theme.size.controlMedium
                 Layout.preferredWidth: 110
                 radius: Theme.spacing.radiusLarge
                 enabled: d.totalCount(root.summary) > 0

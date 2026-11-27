@@ -163,8 +163,6 @@ Control {
         radius: Theme.spacing.radiusLarge
 
         implicitHeight: 22
-        verticalPadding: 4
-        labelItem.font.pixelSize: 11
         labelItem.lineHeight: 12
         labelItem.lineHeightMode: Text.FixedHeight
 
