@@ -164,6 +164,7 @@ signals:
     // package's label. An uninstall of a package that came with Basecamp
     // is failed(PackageNotUninstallable) at once instead.
     void finished(const QString& name, int outcome, const QString& error);
+    void changeEnded(const QString& change);
     void failed(pmui::Packages::Error error);
 
 private:

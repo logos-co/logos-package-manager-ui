@@ -87,6 +87,8 @@ PackageManagerBackend::PackageManagerBackend(QObject* parent)
                     break;
                 }
             });
+    connect(m_packages, &Packages::changeEnded, this,
+            [this](const QString& change) { emit changeEnded(change); });
     connect(m_packages, &Packages::failed, this,
             [this](Packages::Error error) { emit errorOccurred(static_cast<int>(error)); });
 

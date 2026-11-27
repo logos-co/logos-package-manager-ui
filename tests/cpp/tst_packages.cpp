@@ -85,6 +85,7 @@ struct PageOf {
     Packages packages;
     struct Finished { QString name; int outcome; QString error; };
     QList<Finished> finished;
+    QStringList changesEnded;
     QList<Packages::Error> failures;
 
     PageOf()
@@ -101,6 +102,8 @@ struct PageOf {
                          [this](const QString& name, int o, const QString& error) {
                              finished.append({name, o, error});
                          });
+        QObject::connect(&packages, &Packages::changeEnded, &packages,
+                         [this](const QString& change) { changesEnded << change; });
         QObject::connect(&packages, &Packages::failed, &packages,
                          [this](Packages::Error e) { failures.append(e); });
     }
@@ -348,11 +351,14 @@ TEST(an_install_asks_basecamp_first_and_says_how_it_ended) {
     CHECK(p.changes().isEmpty());
 
     p.basecamp.waiting.takeFirst()(
-        fakes::approve({{"plan", QVariantList{fakes::release(kDefault, "wallet", "1.0.0", "W")}}}));
+        fakes::approve({{"plan", QVariantList{fakes::release(kDefault, "wallet", "1.0.0", "W")}},
+                        {"change", "c1"}}));
     CHECK_EQ(p.changes(), QStringList{"install wallet"});
     CHECK_EQ(p.finished.size(), 1);
     CHECK_EQ(p.finished.last().name, QStringLiteral("Wallet"));
     CHECK_EQ(p.finished.last().outcome, outcome(Installer::Outcome::Done));
+    // Basecamp's change, by the id it gave it.
+    CHECK_EQ(p.changesEnded, QStringList{"c1"});
     CHECK(!p.packages.busy());
 }
 

@@ -173,6 +173,8 @@ class PackageManagerUi
     // How a request ended: Completed, or ProgressFailed with why (Basecamp
     // refused, or the change failed). `packageName` is the package's label.
     SIGNAL(installationProgressUpdated(int progressType, QString packageName, int completed, int total, bool success, QString error))
+    // The change Basecamp approved as `change` is over (Installer::changeEnded).
+    SIGNAL(changeEnded(QString change))
     // Reply to requestPackageDetailsFor.
     SIGNAL(packageDetailsLoaded(QVariantMap details))
 }
