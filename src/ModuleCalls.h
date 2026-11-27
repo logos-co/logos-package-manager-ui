@@ -15,7 +15,7 @@ class ModuleCalls : public logos::installer::PackageModules,
 public:
     explicit ModuleCalls(LogosModules& modules);
 
-    void startDownloader(std::function<void()> done) override;
+    void startDownloader(std::function<void(bool)> done) override;
     void listRepositories(std::function<void(const QVariantList&, bool)> done) override;
     void getCatalog(std::function<void(const QVariantList&, bool)> done) override;
     void refreshCatalog(std::function<void(const QString& error)> done) override;

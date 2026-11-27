@@ -568,4 +568,27 @@ TEST(download_progress_shows_on_the_row_installing) {
     CHECK_EQ(p.finished.last().outcome, outcome(Installer::Outcome::Done));
 }
 
+// Retried before a reload, the row shows the new download, not the failure
+// it left: it said Retry, and took no bytes, while the retry downloaded.
+TEST(a_retry_shows_its_own_download) {
+    PageOf<Holding> p;
+    p.modules.catalog = {pkg(kDefault, "wallet", "1.0.0", "W")};
+    p.packages.load();
+    p.approveAll();
+    // Nothing serves it: the download fails.
+    p.packages.install("wallet", "1.0.0", kDefault);
+    p.modules.finish();
+    CHECK_EQ(p.role("wallet", "rowAction").toInt(), toInt(RowAction::Retry));
+    SPIN(10);
+
+    p.modules.serve("wallet", "1.0.0", "W");
+    p.packages.install("wallet", "1.0.0", kDefault);
+    p.packages.onDownloadProgress("wallet", 10, 100, "http");
+    CHECK_EQ(p.role("wallet", "installStatus").toInt(),
+             toInt(logos::installer::InstallStatus::Installing));
+    CHECK_EQ(p.role("wallet", "downloadReceived").toULongLong(), 10ull);
+    p.modules.finish();
+    CHECK_EQ(p.finished.last().outcome, outcome(Installer::Outcome::Done));
+}
+
 CHECK_MAIN()

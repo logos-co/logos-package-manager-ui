@@ -19,9 +19,13 @@ ModuleCalls::ModuleCalls(LogosModules& modules)
 {
 }
 
-void ModuleCalls::startDownloader(std::function<void()> done)
+void ModuleCalls::startDownloader(std::function<void(bool)> done)
 {
-    m_modules.package_downloader.startAsync([done](const QVariantMap&) { done(); }, Timeout(kReadMs));
+    m_modules.package_downloader.startAsyncResult(
+        [done](logos::AsyncResult<QVariantMap> r) {
+            done(r.ok() && r.value.value(QStringLiteral("success")).toBool());
+        },
+        Timeout(kReadMs));
 }
 
 void ModuleCalls::listRepositories(std::function<void(const QVariantList&, bool)> done)

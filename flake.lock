@@ -16,11 +16,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1795789956,
-        "narHash": "sha256-NemROLHzQ8W/uX6mkxkWTIS6N18KGr2qj3T8Jff+ckw=",
+        "lastModified": 1795795702,
+        "narHash": "sha256-jJE5mDDWroLCo1T12q58Apr4Wox/IbUH0Oa9AolXVjg=",
         "owner": "logos-co",
         "repo": "basecamp-installer-common",
-        "rev": "ccf62d0cc9f465d023ef226ba0cd59a145e41b38",
+        "rev": "eafdfb3bdbe515d301babed2bbcad598eb746d68",
         "type": "github"
       },
       "original": {

@@ -60,10 +60,10 @@ struct Modules : logos::installer::PackageModules, logos::installer::InstallModu
     }
 
     // PackageModules
-    void startDownloader(std::function<void()> done) override
+    void startDownloader(std::function<void(bool)> done) override
     {
         calls << "start";
-        done();
+        done(true);
     }
     void listRepositories(std::function<void(const QVariantList&, bool)> done) override
     {
