@@ -93,6 +93,20 @@ Rectangle {
             message: notice ? notice.message : ""
         }
 
+        // ─── Dev-build notice ── published packages are portable, so a dev
+        // build lists them all as unavailable; this says why, once.
+        LogosNotice {
+            id: devBuildNotice
+            objectName: "pmui.devBuildNotice"
+            readonly property var notice: Availability.devBuildNotice(store.hostVariant)
+            Layout.fillWidth: true
+            closable: true
+            shown: notice !== null
+            severity: LogosNotice.Info
+            title: notice ? notice.title : ""
+            message: notice ? notice.message : ""
+        }
+
         // ─── Failure notice ── the only place a refused or unanswered
         // confirmation becomes visible; without it those outcomes look exactly
         // like nothing having happened.
@@ -150,6 +164,7 @@ Rectangle {
                     showHeader: !detailsPanel.showingPanel
                     details: store.selectedPackageDetails
                     row: store.selectedRow
+                    hostVariant: store.hostVariant
                     // A table row carries its version, action and Uninstall;
                     // a card, or no list beside, leaves them to the details.
                     showActions: !detailsPanel.beside || packageList.showingCards
@@ -324,6 +339,7 @@ Rectangle {
 
                             packagesModel: store.packagesModel
                             repositoryLabels: store.repositoryLabels
+                            hostVariant: store.hostVariant
                             sortRole: store.sortRole
                             sortOrder: store.sortOrder
                             onDetailsRequested: function(i) { store.requestDetails(i) }

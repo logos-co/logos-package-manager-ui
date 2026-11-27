@@ -16,6 +16,7 @@ LogosTable {
     id: root
 
     property var packagesModel
+    property string hostVariant: ""
 
     // sourceKey → display label, from the backend PROP of the same name.
     // Sections group on the repo URL, which is unique but unreadable;
@@ -278,6 +279,7 @@ LogosTable {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 modelData: rowItem
+                hostVariant: root.hostVariant
                 onActionRequested: function(action) {
                     root.actionRequested(rowIndex, action)
                 }
@@ -545,6 +547,7 @@ LogosTable {
 
             property ActionPill cardAction: ActionPill {
                 modelData: card.capturedRowItem
+                hostVariant: root.hostVariant
                 onActionRequested: function(action) {
                     root.actionRequested(card.capturedRowIndex, action)
                 }

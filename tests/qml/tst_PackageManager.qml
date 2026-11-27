@@ -638,6 +638,70 @@ TestCase {
         verify(find(view, "pmui.packageList").visible)
     }
 
+    // ── A dev build ──
+
+    // logos-basecamp#328: published packages are portable, so a dev build
+    // lists them all as unavailable. It says it's the build, not the package.
+    function makeDevBuild() {
+        backend.hostVariant = "linux-arm64-dev"
+        for (const r of backend.all)
+            backend.setRow(r.name, { available: false, notAvailableReason: 2,
+                                     rowAction: PackageManagerUi.NotAvailable })
+        backend.refilter()
+    }
+
+    function test_a_dev_build_says_so_above_the_list() {
+        makeDevBuild()
+        const view = makeView(1280)
+        const notice = find(view, "pmui.devBuildNotice")
+        verify(notice.visible)
+        verify(notice.message.indexOf("#portable-builds") >= 0, notice.message)
+        mouseClick(notice.closeButtonItem)
+        verify(!notice.visible, "dismissed")
+    }
+
+    function test_a_dev_build_fits_data() {
+        return [360, 390, 700, 1280].map(w => ({ tag: String(w), width: w }))
+    }
+    function test_a_dev_build_fits(data) {
+        makeDevBuild()
+        backend.pushShowUnavailable(true)
+        const view = makeView(data.width)
+        const notice = find(view, "pmui.devBuildNotice")
+        verify(notice.visible)
+        verify(notice.messageItem.contentWidth <= notice.messageItem.width + 0.5,
+               "the link wraps: " + notice.messageItem.contentWidth + " > " + notice.messageItem.width)
+        const over = FitChecks.overflow(view)
+        compare(over.map(item => FitChecks.describe(item, view)).join("; "), "", "past the sides")
+    }
+
+    function test_a_portable_build_has_no_dev_build_notice() {
+        const view = makeView(1280)
+        verify(!find(view, "pmui.devBuildNotice").visible)
+    }
+
+    function test_a_dev_build_with_nothing_shown_names_the_build() {
+        makeDevBuild()
+        const view = makeView(1280)
+        const empty = find(view, "pmui.nothingForThisHostView")
+        verify(empty.visible)
+        compare(empty.words.title, "Nothing installable on a dev build")
+    }
+
+    function test_a_dev_builds_packages_need_a_portable_build_data() {
+        return [{ tag: "table", width: 1280 }, { tag: "phone", width: 390 }]
+    }
+    function test_a_dev_builds_packages_need_a_portable_build(data) {
+        makeDevBuild()
+        backend.pushShowUnavailable(true)
+        const view = makeView(data.width)
+        const pill = find(view, "pmui.ActionPill")
+        compare(pill.helpText, "Needs a portable build of Basecamp.")
+        openDetails(view, "waku_module")
+        if (data.tag === "phone")
+            compare(find(view, "pmui.DetailsPanel.action").helpText, "Needs a portable build of Basecamp.")
+    }
+
     // ── The test's own stub ──
 
     // The enums the views read are the backend's: the stub these tests run
