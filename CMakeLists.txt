@@ -23,6 +23,7 @@ logos_module(
         src/PackageManagerBackend.cpp
         src/Packages.h
         src/Packages.cpp
+        src/CallFailure.h
         src/ModuleCalls.h
         src/ModuleCalls.cpp
         ${BASECAMP_INSTALLER_COMMON_SOURCES}

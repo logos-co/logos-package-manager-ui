@@ -1,16 +1,14 @@
 #include "ModuleCalls.h"
 
+#include "CallFailure.h"
 #include "logos_sdk.h"
 
 namespace pmui {
 
 namespace {
 
-// A download or an install can take minutes; the rest answers at once.
-constexpr int kReadMs = 30 * 1000;
-constexpr int kDownloadMs = 5 * 60 * 1000;
-constexpr int kVerifyMs = 2 * 60 * 1000;
-constexpr int kInstallMs = 5 * 60 * 1000;
+const QString kDownloader = QStringLiteral("package_downloader");
+const QString kManager = QStringLiteral("package_manager");
 
 }  // namespace
 
@@ -42,8 +40,11 @@ void ModuleCalls::getCatalog(std::function<void(const QVariantList&, bool)> done
 
 void ModuleCalls::refreshCatalog(std::function<void(const QString&)> done)
 {
-    m_modules.package_downloader.refreshCatalogAsync(
-        [done](const QVariantMap& reply) { done(reply.value(QStringLiteral("error")).toString()); },
+    m_modules.package_downloader.refreshCatalogAsyncResult(
+        [done](logos::AsyncResult<QVariantMap> r) {
+            if (!r.ok()) return done(callFailure(kDownloader, r.error.code, r.error.message, kDownloadMs));
+            done(r.value.value(QStringLiteral("error")).toString());
+        },
         Timeout(kDownloadMs));
 }
 
@@ -75,14 +76,14 @@ void ModuleCalls::downloadPinned(const QString& repositoryUrl, const QString& na
                                  const QString& version, const QString& rootHash,
                                  std::function<void(const QVariantMap&)> done)
 {
-    m_modules.package_downloader.downloadPinnedAsync(
+    m_modules.package_downloader.downloadPinnedAsyncResult(
         repositoryUrl, name, version, rootHash,
-        [done, name](const QVariantMap& reply) {
-            if (reply.isEmpty())
-                done({{QStringLiteral("name"), name},
-                      {QStringLiteral("error"), QStringLiteral("package_downloader did not reply")}});
-            else
-                done(reply);
+        [done, name](logos::AsyncResult<QVariantMap> r) {
+            if (!r.ok())
+                return done({{QStringLiteral("name"), name},
+                             {QStringLiteral("error"),
+                              callFailure(kDownloader, r.error.code, r.error.message, kDownloadMs)}});
+            done(r.value);
         },
         Timeout(kDownloadMs));
 }
@@ -95,22 +96,24 @@ void ModuleCalls::verifyPackage(const QString& path, std::function<void(const QV
 
 void ModuleCalls::inspectPackage(const QString& path, std::function<void(const QVariantMap&)> done)
 {
-    m_modules.package_manager.inspectPackageAsync(
-        path, [done](const QVariantMap& inspected) { done(inspected); }, Timeout(kVerifyMs));
+    m_modules.package_manager.inspectPackageAsyncResult(
+        path,
+        [done](logos::AsyncResult<QVariantMap> r) {
+            if (!r.ok())
+                return done({{QStringLiteral("error"),
+                              callFailure(kManager, r.error.code, r.error.message, kVerifyMs)}});
+            done(r.value);
+        },
+        Timeout(kVerifyMs));
 }
 
 void ModuleCalls::installPlugin(const QString& path, const QString& source,
                                 std::function<void(const QVariantMap&, const QString&)> done)
 {
-    // The result-carrying call: a reply that never came is not an empty one.
     m_modules.package_manager.installPluginAsyncResult(
         path, false, source,
         [done](logos::AsyncResult<QVariantMap> r) {
-            if (!r.ok()) {
-                const QString message = QString::fromStdString(r.error.message);
-                done({}, message.isEmpty() ? QStringLiteral("package_manager did not reply") : message);
-                return;
-            }
+            if (!r.ok()) return done({}, callFailure(kManager, r.error.code, r.error.message, kInstallMs));
             done(r.value, {});
         },
         Timeout(kInstallMs));
@@ -118,8 +121,16 @@ void ModuleCalls::installPlugin(const QString& path, const QString& source,
 
 void ModuleCalls::uninstallPackage(const QString& name, std::function<void(const QVariantMap&)> done)
 {
-    m_modules.package_manager.uninstallPackageAsync(
-        name, [done](const QVariantMap& reply) { done(reply); }, Timeout(kInstallMs));
+    m_modules.package_manager.uninstallPackageAsyncResult(
+        name,
+        [done](logos::AsyncResult<QVariantMap> r) {
+            if (!r.ok())
+                return done({{QStringLiteral("success"), false},
+                             {QStringLiteral("error"),
+                              callFailure(kManager, r.error.code, r.error.message, kInstallMs)}});
+            done(r.value);
+        },
+        Timeout(kInstallMs));
 }
 
 void ModuleCalls::readInstalledPackages(std::function<void(const QVariantList&, bool)> done)

@@ -9,7 +9,8 @@ namespace pmui {
 
 // package_downloader and package_manager, as the library asks for them,
 // through the backend's generated wrappers (modules()). Each call has a
-// deadline, and a call that fails answers as the library expects: empty.
+// deadline. A call that fails answers in the shape the library expects:
+// empty, or with an error that says why, a timeout as a timeout.
 class ModuleCalls : public logos::installer::PackageModules,
                     public logos::installer::InstallModules {
 public:
