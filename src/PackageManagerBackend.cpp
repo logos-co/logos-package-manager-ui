@@ -33,6 +33,12 @@ PackageManagerBackend::PackageManagerBackend(QObject* parent)
     mirror();
 
     connect(m_packages, &Packages::loadingChanged, this, [this] { setIsLoading(m_packages->loading()); });
+    connect(m_packages, &Packages::loadStateChanged, this, [this] {
+        setLoaded(m_packages->loaded());
+        setLoadError(m_packages->loadError());
+    });
+    connect(m_packages, &Packages::loadFailed, this,
+            [this](const QString& error) { emit loadFailed(error); });
     connect(m_packages, &Packages::onlineChanged, this, [this] { setOnline(m_packages->online()); });
     connect(m_packages, &Packages::downloadStateChanged, this, [this] {
         setDownloadSource(m_packages->downloadSource());
@@ -305,6 +311,8 @@ void PackageManagerBackend::manageRepositories()
 void PackageManagerBackend::mirror()
 {
     setIsLoading(m_packages->loading());
+    setLoaded(m_packages->loaded());
+    setLoadError(m_packages->loadError());
     setOnline(m_packages->online());
     setDownloadSource(m_packages->downloadSource());
     setStorageState(m_packages->storageState());

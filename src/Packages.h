@@ -101,6 +101,9 @@ public:
     int availableHereCount() const;
 
     bool loading() const;
+    // The catalog has been read once; what the last read couldn't read, or "".
+    bool loaded() const;
+    QString loadError() const;
     bool online() const;
     QString downloadSource() const;
     QString storageState() const;
@@ -144,6 +147,9 @@ public:
 
 signals:
     void loadingChanged();
+    void loadStateChanged();
+    // Every read that failed, `error` as loadError() has it.
+    void loadFailed(const QString& error);
     void onlineChanged();
     void downloadStateChanged();
     void hostVariantChanged();

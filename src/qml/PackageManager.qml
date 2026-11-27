@@ -208,15 +208,34 @@ Rectangle {
                             onRepositoriesClicked: store.navigateToRepositories()
                         }
 
+                        // The first read failed: nothing is known, not "none".
+                        LogosStateView {
+                            objectName: "pmui.loadErrorView"
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            visible: store.loadFailed
+                            title: qsTr("Couldn't load the packages")
+                            message: store.loadFailed ? qsTr("Couldn't read %1.").arg(store.loadError) : ""
+                            rightActions: [
+                                LogosButton {
+                                    objectName: "pmui.loadErrorView.retry"
+                                    text: qsTr("Try again")
+                                    onClicked: store.refreshCatalog()
+                                }
+                            ]
+                        }
+
                         // Empty state — only when no repositories are configured
                         // AND there are no local-only installed packages to fall
                         // back on. Any local rows keep the list rendered.
                         Item {
+                            objectName: "pmui.noRepositoriesView"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             visible: store.repositoryCount === 0
                                      && store.totalCount === 0
                                      && !store.isLoading
+                                     && !store.loadFailed
 
                             ColumnLayout {
                                 anchors.centerIn: parent

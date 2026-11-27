@@ -21,6 +21,7 @@ QtObject {
     property int repositoryRequests: 0
     function manageRepositories() { repositoryRequests += 1 }
     signal errorOccurred(int code)
+    signal loadFailed(string error)
 
     property ListModel model: ListModel {}
     property var shown: []
@@ -370,6 +371,8 @@ QtObject {
     }
     property bool isInstalling: false
     property bool isLoading: false
+    property bool loaded: true
+    property string loadError: ""
     property bool online: true
     property string downloadSource: "any"
     property string storageState: ""

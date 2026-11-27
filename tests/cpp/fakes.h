@@ -27,6 +27,8 @@ struct Modules : logos::installer::PackageModules, logos::installer::InstallModu
     QStringList variants{QStringLiteral("linux-x86_64")};
     QString downloadSource = QStringLiteral("any");
     QVariantMap storage{{"state", "running"}};
+    // Reads whose call fails ("getCatalog", ...).
+    QStringList failing;
 
     // Installed packages by name, as getInstalledPackages reports them.
     QHash<QString, QVariantMap> installed;
@@ -66,12 +68,14 @@ struct Modules : logos::installer::PackageModules, logos::installer::InstallModu
     void listRepositories(std::function<void(const QVariantList&, bool)> done) override
     {
         calls << "listRepositories";
-        done(repositories, true);
+        const bool read = !failing.contains("listRepositories");
+        done(read ? repositories : QVariantList{}, read);
     }
     void getCatalog(std::function<void(const QVariantList&, bool)> done) override
     {
         calls << "getCatalog";
-        done(catalog, true);
+        const bool read = !failing.contains("getCatalog");
+        done(read ? catalog : QVariantList{}, read);
     }
     void refreshCatalog(std::function<void(const QString&)> done) override
     {
@@ -82,9 +86,14 @@ struct Modules : logos::installer::PackageModules, logos::installer::InstallModu
     void getStorageState(std::function<void(const QVariantMap&)> done) override { done(storage); }
     void getInstalledPackages(std::function<void(const QVariantList&, bool)> done) override
     {
-        done(installedList(), true);
+        const bool read = !failing.contains("getInstalledPackages");
+        done(read ? installedList() : QVariantList{}, read);
     }
-    void getValidVariants(std::function<void(const QStringList&, bool)> done) override { done(variants, true); }
+    void getValidVariants(std::function<void(const QStringList&, bool)> done) override
+    {
+        const bool read = !failing.contains("getValidVariants");
+        done(read ? variants : QStringList{}, read);
+    }
 
     // InstallModules
     void downloadPinned(const QString& repositoryUrl, const QString& name, const QString& version,

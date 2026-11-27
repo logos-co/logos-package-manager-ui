@@ -100,6 +100,11 @@ void Packages::setModules(PackageModules* packages, InstallModules* installs, Co
     if (m_clearDelayMs >= 0) m_installer->setClearDelay(m_clearDelayMs);
 
     connect(m_catalog, &CatalogClient::loadingChanged, this, &Packages::loadingChanged);
+    connect(m_catalog, &CatalogClient::loaded, this, &Packages::loadStateChanged);
+    connect(m_catalog, &CatalogClient::loadFailed, this, [this] {
+        emit loadStateChanged();
+        emit loadFailed(m_catalog->loadError());
+    });
     connect(m_catalog, &CatalogClient::repositoriesChanged, this, [this] {
         m_filter->setSourceOrder(m_catalog->sourceOrder());
         emit repositoriesChanged();
@@ -323,6 +328,16 @@ int Packages::availableHereCount() const
 bool Packages::loading() const
 {
     return m_catalog && m_catalog->isLoading();
+}
+
+bool Packages::loaded() const
+{
+    return m_catalog && m_catalog->hasLoaded();
+}
+
+QString Packages::loadError() const
+{
+    return m_catalog ? m_catalog->loadError() : QString();
 }
 
 bool Packages::online() const

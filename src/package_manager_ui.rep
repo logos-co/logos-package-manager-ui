@@ -86,6 +86,11 @@ class PackageManagerUi
     PROP(QVariantList actionPlanItems READONLY)
     PROP(bool isInstalling READONLY)
     PROP(bool isLoading READONLY)
+    // The catalog has been read once; and what the last read couldn't read
+    // ("the catalog", ...), "" when it read everything. A read that failed
+    // leaves the list as it was.
+    PROP(bool loaded READONLY)
+    PROP(QString loadError READONLY)
     // Why downloads may not work right now, for the notice at the top.
     // `online` is false only when the platform says there is no internet;
     // downloadSource and storageState are package_downloader's, "" until it
@@ -161,6 +166,8 @@ class PackageManagerUi
     SIGNAL(revealRequested(QString dispatch, QString intent, QString name))
     SLOT(void answerReveal(QString dispatch, bool ok, QString error))
 
+    // Each read of the catalog that failed, `error` as loadError has it.
+    SIGNAL(loadFailed(QString error))
     // User-actionable error; errorType maps to the ErrorType enum.
     SIGNAL(errorOccurred(int errorType))
     // How a request ended: Completed, or ProgressFailed with why (Basecamp

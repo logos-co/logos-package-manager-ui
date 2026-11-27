@@ -601,6 +601,43 @@ TestCase {
         verify(find(view, "pmui.DetailsPanel.uninstall").visible, "the user's now: it can go again")
     }
 
+    // ── Loading ──
+
+    // A first load that failed knows nothing: not "no repositories".
+    function test_a_first_load_that_failed_says_so_and_retries() {
+        const view = makeView(1280)
+        backend.repositoryCount = 0
+        backend.totalCount = 0
+        backend.loaded = false
+        backend.loadError = "the catalog"
+        const failed = find(view, "pmui.loadErrorView")
+        verify(failed.visible)
+        compare(failed.message, "Couldn't read the catalog.")
+        compare(find(view, "pmui.noRepositoriesView").visible, false)
+        mouseClick(find(view, "pmui.loadErrorView.retry"))
+        compare(backend.reloads, 1)
+        backend.totalCount = 0
+        backend.loaded = true
+        backend.loadError = ""
+        compare(failed.visible, false)
+        verify(find(view, "pmui.noRepositoriesView").visible)
+    }
+
+    // A reload that failed keeps the list, and says so.
+    function test_a_reload_that_failed_keeps_the_list_and_says_so() {
+        const view = makeView(1280)
+        const notice = find(view, "pmui.messageNotice")
+        backend.loaded = false
+        backend.loadFailed("the catalog")
+        compare(notice.shown, false, "a first load's failure is the page's to say")
+        backend.loaded = true
+        backend.loadFailed("the catalog")
+        tryVerify(() => notice.shown)
+        compare(notice.message,
+                "Couldn't reload the packages: couldn't read the catalog. The list is the one from before.")
+        verify(find(view, "pmui.packageList").visible)
+    }
+
     // ── The test's own stub ──
 
     // The enums the views read are the backend's: the stub these tests run

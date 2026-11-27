@@ -470,6 +470,31 @@ TEST(reload_fetches_every_repository_again_and_forgets_what_failed) {
     CHECK_EQ(p.role("wallet", "rowAction").toInt(), toInt(RowAction::Install));
 }
 
+// A read that failed is not an empty catalog: it says so, and the next good
+// one clears it. The page said "No repositories configured".
+TEST(a_failed_load_says_so_until_one_reads_everything) {
+    Page p;
+    p.modules.catalog = {pkg(kDefault, "wallet", "1.0.0", "W")};
+    p.modules.failing << "getCatalog";
+    QSignalSpy failed(&p.packages, &Packages::loadFailed);
+    p.packages.load();
+    CHECK(!p.packages.loaded());
+    CHECK_EQ(p.packages.loadError(), QStringLiteral("the catalog"));
+    CHECK_EQ(failed.count(), 1);
+    CHECK_EQ(failed.at(0).at(0).toString(), QStringLiteral("the catalog"));
+    p.modules.failing.clear();
+    p.packages.refresh();
+    CHECK(p.packages.loaded());
+    CHECK_EQ(p.packages.loadError(), QString());
+    CHECK_EQ(p.names(), QStringList{"wallet"});
+    // A reload that fails keeps the list, and says so again.
+    p.modules.failing << "getCatalog";
+    p.packages.refresh();
+    CHECK_EQ(failed.count(), 2);
+    CHECK(p.packages.loaded());
+    CHECK_EQ(p.names(), QStringList{"wallet"});
+}
+
 TEST(without_the_package_modules_nothing_is_asked) {
     Packages packages;
     QList<Packages::Error> failures;
