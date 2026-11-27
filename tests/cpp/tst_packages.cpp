@@ -401,26 +401,31 @@ TEST(an_uninstall_asks_basecamp_then_removes) {
     CHECK_EQ(p.finished.last().outcome, outcome(Installer::Outcome::Done));
 }
 
+// Known by its install type, not by the words package_manager refuses it
+// with: a package that came with Basecamp can't go, and Basecamp isn't
+// asked.
 TEST(a_package_that_came_with_basecamp_cant_be_uninstalled_and_says_so) {
     PageOf<Refusing> p;
     p.modules.refusal = "Cannot uninstall embedded package: wallet";
-    p.modules.catalog = {pkg(kDefault, "wallet", "1.0.0", "W")};
+    p.modules.catalog = {pkg(kDefault, "wallet", "1.0.0", "W"), pkg(kDefault, "notes", "1.0.0", "N")};
     p.modules.addInstalled("wallet", "1.0.0", "W", "embedded");
+    p.modules.addInstalled("notes", "1.0.0", "N");
     p.packages.load();
     p.approveAll();
     p.packages.uninstall("wallet");
     CHECK_EQ(p.failures.size(), 1);
     CHECK_EQ(static_cast<int>(p.failures.first()), static_cast<int>(Packages::Error::PackageNotUninstallable));
+    CHECK(p.basecamp.asked.isEmpty());
     CHECK(p.finished.isEmpty());
-    SPIN(10);
 
-    // Any other failure says what package_manager said.
-    p.modules.refusal = "Permission denied";
-    p.packages.uninstall("wallet");
+    // The user's own: what package_manager says is what it said, "embedded"
+    // in it or not.
+    p.modules.refusal = "Cannot uninstall: an embedded copy is in use";
+    p.packages.uninstall("notes");
     CHECK_EQ(p.failures.size(), 1);
     CHECK_EQ(p.finished.size(), 1);
     CHECK_EQ(p.finished.last().outcome, outcome(Installer::Outcome::Failed));
-    CHECK(p.finished.last().error.contains("Permission denied"));
+    CHECK(p.finished.last().error.contains("an embedded copy is in use"));
 }
 
 TEST(a_local_file_is_shown_to_basecamp_and_anything_else_is_refused_at_once) {

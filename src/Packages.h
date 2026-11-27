@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QObject>
-#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariantList>
@@ -162,13 +161,16 @@ signals:
     void selectionChanged();
     void busyChanged();
     // `outcome`: logos::installer::Installer::Outcome as an int; `name` the
-    // package's label. A built-in package that can't be uninstalled is
-    // failed(PackageNotUninstallable) instead.
+    // package's label. An uninstall of a package that came with Basecamp
+    // is failed(PackageNotUninstallable) at once instead.
     void finished(const QString& name, int outcome, const QString& error);
     void failed(pmui::Packages::Error error);
 
 private:
     int modelRowOf(int pageRow) const;
+    // How what is installed as `moduleName` was ("user", "embedded"), or ""
+    // when no row says.
+    QString installTypeOf(const QString& moduleName) const;
     void takeCategories();
     void takeTypes();
     void countAvailable();
@@ -189,7 +191,6 @@ private:
     QString m_type;
     QStringList m_types;
     int m_availableHere = 0;
-    QSet<QString> m_uninstalling;
 
     int m_runnable = 0;
     QVariantMap m_summary;

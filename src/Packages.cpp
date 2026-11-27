@@ -114,12 +114,6 @@ void Packages::setModules(PackageModules* packages, InstallModules* installs, Co
     connect(m_installer, &Installer::busyChanged, this, &Packages::busyChanged);
     connect(m_installer, &Installer::finished, this,
             [this](const QString& name, Installer::Outcome outcome, const QString& error) {
-                // package_manager keeps what came with Basecamp.
-                if (m_uninstalling.remove(name) && outcome == Installer::Outcome::Failed
-                    && error.contains(QStringLiteral("embedded"), Qt::CaseInsensitive)) {
-                    emit failed(Error::PackageNotUninstallable);
-                    return;
-                }
                 emit finished(displayNameFor(name), static_cast<int>(outcome), error);
             });
 }
@@ -422,6 +416,17 @@ QVariantMap Packages::details(const QString& name, const QString& repositoryUrl)
     return row >= 0 ? m_model->rowAt(row) : QVariantMap{};
 }
 
+QString Packages::installTypeOf(const QString& moduleName) const
+{
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        const QModelIndex at = m_model->index(row);
+        if (at.data(PackageModel::ModuleNameRole).toString() != moduleName) continue;
+        const QString type = at.data(PackageModel::InstallTypeRole).toString();
+        if (!type.isEmpty()) return type;
+    }
+    return {};
+}
+
 QString Packages::displayNameFor(const QString& moduleName) const
 {
     for (int row = 0; row < m_model->rowCount(); ++row) {
@@ -468,7 +473,13 @@ void Packages::uninstall(const QString& moduleName)
         emit failed(Error::PackageManagerNotConnected);
         return;
     }
-    m_uninstalling.insert(moduleName);
+    // package_manager keeps what came with Basecamp: known by its install
+    // type, not by the words it refuses it with, and Basecamp isn't asked.
+    const QString type = installTypeOf(moduleName);
+    if (!type.isEmpty() && type != QLatin1String("user")) {
+        emit failed(Error::PackageNotUninstallable);
+        return;
+    }
     m_installer->uninstall({moduleName});
 }
 
