@@ -47,8 +47,11 @@ JavaScript, the words both apps share: change them there, then run
 PMU changes nothing on its own. Install, upgrade, downgrade, reinstall and
 uninstall each raise `basecamp.packages.confirm_install` / `confirm_upgrade` /
 `confirm_uninstall`, and Basecamp shows the one dialog: what the change brings
-or removes, who signed it, and which running apps it stops. One request is
-asked at a time, in the order asked. A cancel is silent. Rows follow what
+or removes, who signed it, and which running apps it stops. One change runs
+at a time, in the order asked. An install or upgrade asked for meanwhile is
+put to Basecamp at once and says Queued until its turn; Basecamp asks again
+first if what it was planned over changed. A file or an uninstall is asked
+about at its turn. A cancel is silent. Rows follow what
 lands on disk through package_manager's `corePluginFileInstalled` /
 `uiPluginFileInstalled` / `corePluginUninstalled` / `uiPluginUninstalled`
 events, read debounced. How each request ended reaches QML as
