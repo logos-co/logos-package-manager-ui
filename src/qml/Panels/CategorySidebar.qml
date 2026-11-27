@@ -77,7 +77,7 @@ Item {
                 Layout.fillWidth: true
                 Layout.topMargin: Theme.spacing.xlarge
                 Layout.bottomMargin: Theme.spacing.xlarge
-                height: 1
+                height: Theme.size.borderWidth
                 color: Theme.palette.borderSubtle
             }
 

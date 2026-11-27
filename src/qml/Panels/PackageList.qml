@@ -404,7 +404,7 @@ LogosTable {
 
             Row {
                 anchors.centerIn: parent
-                spacing: 8
+                spacing: Theme.spacing.small
                 Repeater {
                     objectName: "pmui.sourceIcons." + (rowItem ? rowItem.name : "")
                     model: sourceCell.shownSources()
@@ -589,15 +589,15 @@ LogosTable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                height: 1
+                height: Theme.size.borderWidth
                 color: Theme.palette.border
             }
 
             LogosText {
                 anchors.left: parent.left
-                anchors.leftMargin: 16
+                anchors.leftMargin: Theme.spacing.large
                 anchors.right: parent.right
-                anchors.rightMargin: 16
+                anchors.rightMargin: Theme.spacing.large
                 anchors.verticalCenter: parent.verticalCenter
                 text: sectionHeader.label
                 elide: Text.ElideRight
@@ -618,7 +618,7 @@ LogosTable {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 6
                 anchors.rightMargin: 6
-                height: Math.min(parent.height - 8, 32)
+                height: Math.min(parent.height - Theme.spacing.small, Theme.size.controlSmall)
                 visible: versions.length > 0
                 row: rowItem
                 onVersionPicked: function(versionIndex) {
@@ -634,7 +634,7 @@ LogosTable {
             // is never an empty "..." dropdown.
             LogosText {
                 anchors.fill: parent
-                anchors.margins: 8
+                anchors.margins: Theme.spacing.small
                 visible: versionPicker.versions.length === 0
                 text: {
                     if (!rowItem) return ""
@@ -660,7 +660,7 @@ LogosTable {
             visible: PackageRows.canUninstall(rowItem)
             LogosIconButton {
                 anchors.centerIn: parent
-                size: 32
+                size: Theme.size.controlSmall
                 iconSize: 18
                 iconSource: LogosIcons.trash
                 background: Item {}

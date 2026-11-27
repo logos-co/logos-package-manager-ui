@@ -182,13 +182,16 @@ result/
 ```bash
 nix build .#checks.<system>.unit-tests -L              # e.g. aarch64-darwin
 nix build .#checks.<system>.shared-installer-words -L
+nix build .#checks.<system>.theme-literals -L
 ```
 
 `tests/cpp` runs `src/Packages` on the library with fake package modules and
 a fake Basecamp, and checks the sources make no raw module calls.
 `shared-installer-words` checks `src/qml/Installer` is the pinned library's
 JavaScript and that no view writes out a phrase it says (exceptions, with
-reasons, in `tests/shared-words-allow.txt`).
+reasons, in `tests/shared-words-allow.txt`). `theme-literals` checks the
+views take colours and sizes from the design system's `Theme` (literals no
+token fits, with reasons, in `tests/theme-literals-allow.txt`).
 
 ### View tests (QML)
 
